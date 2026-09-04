@@ -1,0 +1,20 @@
+openapi: 3.1.0
+info:
+  title: __SVC_ID__
+  version: 0.1.0
+paths:
+  __MOUNT__/public/ping:
+    get:
+      summary: 公开探活
+      responses:
+        "200": { description: OK }
+  __MOUNT__/me:
+    get:
+      summary: 返回当前用户身份（脚手架示例，按业务替换）
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: 当前身份 }
+        "401": { description: 未认证 }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }

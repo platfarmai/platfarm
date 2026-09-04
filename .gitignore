@@ -1,0 +1,30 @@
+# 环境与密钥
+.env
+*.secret
+
+# 生成物（platctl sync 产出，不进版本库？——进！生成物入库便于 review 与回滚）
+# gateway/kong.yml 与 docker-compose.services.yml 有意纳入版本控制
+
+# 构建产物
+tools/platctl/platctl
+tools/platctl/platctl.exe
+**/__pycache__/
+*.pyc
+
+# IDE / OS
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+
+# 本地杂项
+*.log
+tmp/
+
+# \u5bc6\u94a5\u4e0e\u63d2\u4ef6\u51ed\u636e
+.keys/
+.env.plugins/
+
+# \u672c\u5730\u5de5\u5177\u76ee\u5f55
+.codegraph/
+.omo/

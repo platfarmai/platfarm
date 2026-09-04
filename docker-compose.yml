@@ -1,0 +1,53 @@
+# Platfarm 平台基座编排（手维护）
+# gateway / plugin-pg / 业务服务在 docker-compose.services.yml —— platctl sync 生成，勿手改
+# （gateway 在生成文件的原因：其 networks 列表随插件网络增减，附录 H.4）
+include:
+  - docker-compose.services.yml
+
+services:
+  # ── 底座层：auth（唯一底座，仅身份；RS256 私钥仅此容器持有） ──
+  auth:
+    build: ./platform/auth
+    environment:
+      DATABASE_URL: ${DATABASE_URL} # 三种模式见 .env.example
+      JWT_PRIVATE_KEY_FILE: /keys/pf-auth.pem
+    volumes:
+      - ./.keys:/keys
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # 宿主机/外部数据库模式需要
+    networks:
+      - core-net
+
+  # ── 可选：捆绑数据库（开箱模式，--profile bundled-db 启用） ──
+  postgres:
+    image: postgres:18-alpine
+    profiles: ["bundled-db"]
+    environment:
+      POSTGRES_USER: platfarm
+      POSTGRES_PASSWORD: ${BUNDLED_DB_PASSWORD:-platfarm_local}
+      POSTGRES_DB: pf_auth
+    volumes:
+      - pf-pg-data:/var/lib/postgresql # postgres:18+ 挂载点
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platfarm"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - core-net
+
+  # ── 可选：捆绑 Redis（多实例限流/吊销黑名单/插件租约，--profile bundled-redis） ──
+  redis:
+    image: redis:7-alpine
+    profiles: ["bundled-redis"]
+    volumes:
+      - pf-redis-data:/data
+    networks:
+      - core-net
+
+networks:
+  core-net: # 平台核心网络；插件网络（net-plugin-*）由 platctl sync 生成
+
+volumes:
+  pf-pg-data:
+  pf-redis-data:

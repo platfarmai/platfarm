@@ -1,0 +1,28 @@
+# svc-oauth：第三方登录能力服务（specs/changes/001）
+# 整个挂载点公开：OAuth 舞步全程处于未登录态；安全性由 state/一次性兑换码保证
+id: svc-oauth
+version: 0.1.0
+lang: py
+
+mount:
+  path: /api/oauth
+  strip_path: false
+
+auth:
+  required: false
+  accept_service_tokens: []
+
+limits:
+  rate_per_minute: 60
+
+runtime:
+  port: 8080
+  health: /healthz
+  env:
+    - PF_CLIENT_ID
+    - PF_CLIENT_SECRET
+    - GITHUB_CLIENT_ID
+    - GITHUB_CLIENT_SECRET
+
+test:
+  command: python3 tests/contract/contract_test.py
