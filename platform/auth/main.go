@@ -240,7 +240,7 @@ func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func handlePlatformInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"platform": "Platfarm",
-		"docs":     "https://github.com/osindex/platfarm",
+		"docs":     "https://github.com/platfarmai/platfarm",
 		"login":    "POST /auth/login",
 		"jwks":     "GET /auth/.well-known/jwks.json",
 		"services": "业务服务挂载于 /api/*（清单见仓库 services/*/service.yaml）",

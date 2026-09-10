@@ -28,7 +28,7 @@ Full design & 17 ADRs: [docs/architecture-v2.md](docs/architecture-v2.md)
 ### 2.1 One-command bootstrap (a clean machine with only Docker)
 
 ```bash
-git clone git@github.com:osindex/platfarm.git platfarm && cd platfarm
+git clone git@github.com:platfarmai/platfarm.git platfarm && cd platfarm
 cp .env.example .env                          # defaults to the bundled database
 docker compose --profile bundled-db up -d --build
 ```
