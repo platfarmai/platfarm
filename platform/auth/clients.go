@@ -12,7 +12,7 @@ import (
 )
 
 // 服务/插件身份（002 Stage 4）：client_credentials → 短时效 service token。
-// 凭据由 platctl install 通过 register-client CLI 开出（附录 H）。
+// 凭据由 pctl install 通过 register-client CLI 开出（附录 H）。
 
 func migrateClients(db *pgxpool.Pool) error {
 	_, err := db.Exec(context.Background(), `
@@ -55,7 +55,7 @@ func (s *server) handleServiceToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // registerClientCLI 一次性 CLI（docker compose exec auth /auth -register-client <id> -scopes a,b）。
-// 生成随机 secret，落库 bcrypt 哈希，明文只打印一次——由 platctl install 捕获写入插件 env。
+// 生成随机 secret，落库 bcrypt 哈希，明文只打印一次——由 pctl install 捕获写入插件 env。
 func registerClientCLI(db *pgxpool.Pool, clientID, scopes string) error {
 	secret := newTokenID() + newTokenID()
 	hash, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)

@@ -1,6 +1,6 @@
 """Platfarm 契约测试三件套：无 token 401 / 有效 token 200 且身份正确 / 篡改 token 401。
 
-测的是平台契约不是业务；在服务容器内执行（platctl check --e2e），经网关内网地址访问。
+测的是平台契约不是业务；在服务容器内执行（pctl check --e2e），经网关内网地址访问。
 """
 
 import json

@@ -21,7 +21,7 @@ func runInstall(root, pluginDir string) error {
 	}
 	destDir := filepath.Join(root, "services", m.ID)
 	if _, err := os.Stat(destDir); err == nil {
-		return fmt.Errorf("%s 已存在（升级用 platctl upgrade）", destDir)
+		return fmt.Errorf("%s 已存在（升级用 pctl upgrade）", destDir)
 	}
 	if err := copyDir(pluginDir, destDir); err != nil {
 		return err
@@ -128,7 +128,7 @@ func runToggle(root, id string, enable bool) error {
 	marker := filepath.Join(root, "services", id, ".disabled")
 	if enable {
 		_ = os.Remove(marker)
-	} else if err := os.WriteFile(marker, []byte("disabled by platctl\n"), 0o644); err != nil {
+	} else if err := os.WriteFile(marker, []byte("disabled by pctl\n"), 0o644); err != nil {
 		return err
 	}
 	if err := runSync(root); err != nil {

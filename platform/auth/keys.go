@@ -16,7 +16,7 @@ import (
 const keyID = "pf-auth-1"
 
 // loadOrCreateKeys 加载 RSA 私钥；不存在则生成并落盘（私钥 + 公钥 PEM）。
-// platctl sync 也会做同样的生成（幂等，以文件存在为准），公钥供网关与服务验签。
+// pctl sync 也会做同样的生成（幂等，以文件存在为准），公钥供网关与服务验签。
 func loadOrCreateKeys(privPath string) (*rsa.PrivateKey, error) {
 	if raw, err := os.ReadFile(privPath); err == nil {
 		block, _ := pem.Decode(raw)

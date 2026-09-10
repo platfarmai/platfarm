@@ -2,12 +2,12 @@
 .env
 *.secret
 
-# 生成物（platctl sync 产出，不进版本库？——进！生成物入库便于 review 与回滚）
+# 生成物（pctl sync 产出，不进版本库？——进！生成物入库便于 review 与回滚）
 # gateway/kong.yml 与 docker-compose.services.yml 有意纳入版本控制
 
 # 构建产物
-tools/platctl/platctl
-tools/platctl/platctl.exe
+tools/pctl/pctl
+tools/pctl/pctl.exe
 **/__pycache__/
 *.pyc
 
@@ -28,3 +28,6 @@ tmp/
 # \u672c\u5730\u5de5\u5177\u76ee\u5f55
 .codegraph/
 .omo/
+
+# console \u5ba1\u8ba1\u65e5\u5fd7
+.console-audit.jsonl

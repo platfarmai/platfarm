@@ -1,6 +1,6 @@
 # Platfarm 设计：LinaPro 设计思维 × 容器级可插拔平台
 
-> 项目名：**Platfarm**（CLI：`platctl`，资源前缀：`pf_`）；本地目录暂为 `E:\work\platfarm`
+> 项目名：**Platfarm**（CLI：`pctl`，资源前缀：`pf_`）；本地目录暂为 `E:\work\platfarm`
 
 > 版本：v2.0（2026-09-03），**取代** [architecture.md](architecture.md)（v1 = LinaPro 整体作底座方案，保留作参照）
 > 定位：不复用 LinaPro 代码，只移植它的设计思维；底座自建、极薄
@@ -15,10 +15,10 @@ LinaPro 的插拔单位是**进程内插件**，我们的插拔单位是**容器
 | LinaPro 的设计 | 它解决什么 | Platfarm 的转译 |
 |---|---|---|
 | ① `plugin.yaml` 声明式清单 | 插件自描述：路由、菜单、生命周期资源全在清单里，宿主只做同步与校验 | **`service.yaml` 服务清单**：每个服务容器自描述路由挂载/鉴权要求/限流/依赖，网关配置由清单生成 |
-| ② `linactl` 聚合工具 | 扫描插件清单，自动聚合进构建，人不手改宿主 | **`platctl` 平台工具**：扫描 `services/*/service.yaml` 生成 kong.yml 与 compose 片段，校验路由冲突 |
+| ② `linactl` 聚合工具 | 扫描插件清单，自动聚合进构建，人不手改宿主 | **`pctl` 平台工具**：扫描 `services/*/service.yaml` 生成 kong.yml 与 compose 片段，校验路由冲突 |
 | ③ 宿主只持有"稳定表面" | 宿主拥有顶级目录/契约，插件声明挂载点，缺失父级直接拒绝，避免孤儿 | **网关持有路由命名空间**：保留段（`/auth`、`/platform`）不可占用；服务声明挂载路径，冲突即拒绝同步 |
 | ④ 治理内置（JWT·吊销·代持·审计） | 身份是框架能力而非业务负担 | **auth 底座**照抄其 token 设计：access/refresh 分离、tokenId 吊销、isImpersonation 代持、tenantId 预留 |
-| ⑤ 规范驱动 + 强制 E2E | 每次变更锚定增量规范与 E2E 测试，AI 主导实现、人控方向 | **`specs/` 变更流** + 服务模板自带**契约测试**（401/200/403 三件套），`platctl check` 强制跑通才算接入 |
+| ⑤ 规范驱动 + 强制 E2E | 每次变更锚定增量规范与 E2E 测试，AI 主导实现、人控方向 | **`specs/` 变更流** + 服务模板自带**契约测试**（401/200/403 三件套），`pctl check` 强制跑通才算接入 |
 
 一句话：**LinaPro 把"可插拔"做成了工程纪律而非口号——清单、工具、稳定面、治理、规范五件套。我们把这套纪律搬到容器边界上。**
 
@@ -31,7 +31,7 @@ LinaPro 的插拔单位是**进程内插件**，我们的插拔单位是**容器
                          │
                 ┌────────▼─────────┐
                 │   gateway (Kong)  │  唯一对外端口
-                │  由 platctl 生成配置│
+                │  由 pctl 生成配置│
                 └──┬──────┬─────┬──┘
           内网（业务容器零暴露端口）
         ┌──────┤          │         └───────────┐
@@ -56,7 +56,7 @@ LinaPro 的插拔单位是**进程内插件**，我们的插拔单位是**容器
 
 | 层 | 成员 | 纪律 |
 |---|---|---|
-| 入口层 | gateway | 配置只能由 `platctl sync` 生成，禁止手改 |
+| 入口层 | gateway | 配置只能由 `pctl sync` 生成，禁止手改 |
 | 底座层 | auth（唯一底座） | 只放"身份"；任何业务概念不得进入 |
 | 能力层 | svc-file 及未来的通用能力（通知、搜索…） | 与业务服务同级、同接入方式，无特权 |
 | 业务层 | svc-*（AI 服务为主） | 任意技术栈；细粒度权限自判；数据自持 |
@@ -105,7 +105,7 @@ LinaPro 的插拔单位是**进程内插件**，我们的插拔单位是**容器
 | 层 | 判什么 | 实现 |
 |---|---|---|
 | L1 网关 | 签名有效、未过期、`iss` 正确 | Kong jwt 插件（claims 带 iss，v1 的阻塞点已消除） |
-| L2 路由 | 该路径是否免登录 / 是否仅 admin | `service.yaml` 的 `public_routes` / `admin_routes` 声明，platctl 生成对应网关规则 |
+| L2 路由 | 该路径是否免登录 / 是否仅 admin | `service.yaml` 的 `public_routes` / `admin_routes` 声明，pctl 生成对应网关规则 |
 | L3 服务 | 资源归属与操作权（"42 能否删文件 1001"） | 各服务内嵌，查自己的表 |
 | L4 平台 | 用户/角色管理操作 | auth 底座内部（仅 admin） |
 
@@ -140,7 +140,7 @@ limits:
   rate_per_minute: 120       # 生成网关 rate-limiting 配置
 
 docs:
-  openapi: ./openapi.yaml    # 接口契约（借鉴 smart-park/LinaPro 契约先行）；platctl sync 聚合到网关 /docs
+  openapi: ./openapi.yaml    # 接口契约（借鉴 smart-park/LinaPro 契约先行）；pctl sync 聚合到网关 /docs
 
 grpc:                        # 可选：服务间 gRPC（附录 E）
   port: 9090                 # 仅内网，不经网关
@@ -154,10 +154,10 @@ runtime:
     - S3_ENDPOINT
 
 data:
-  database: pf_svc_file  # 声明自有库；跨服务共享表被 platctl check 拒绝
+  database: pf_svc_file  # 声明自有库；跨服务共享表被 pctl check 拒绝
 ```
 
-**纪律（platctl check 强制执行）**：
+**纪律（pctl check 强制执行）**：
 
 1. `mount.path` 不得与既有服务冲突、不得占用保留段（对应 LinaPro"缺失父级即拒绝"）
 2. 声明 `database` 的服务只能连自己的库；跨服务数据必须走 API
@@ -217,9 +217,9 @@ specs/
 └── archive/                  # 完成后归档
 ```
 
-**流程**：探索 → 提案（proposal.md）→ 实现（AI 主导，锚定 tasks.md）→ 审查（platctl check + 契约测试）→ 归档。
+**流程**：探索 → 提案（proposal.md）→ 实现（AI 主导，锚定 tasks.md）→ 审查（pctl check + 契约测试）→ 归档。
 
-**强制契约测试（每个服务模板自带，platctl check 执行）**：
+**强制契约测试（每个服务模板自带，pctl check 执行）**：
 
 1. 无 token → 401
 2. 有效 token → 200 且返回身份与 claims 一致
@@ -229,22 +229,22 @@ specs/
 
 ---
 
-## 7. 平台工具：platctl
+## 7. 平台工具：pctl
 
 > `linactl` 的容器级对应物。一个单文件 CLI（Go 或 TS 均可），平台的"纪律执行器"。
 
 | 命令 | 行为 |
 |---|---|
-| `platctl new <id> --lang py\|go\|ts` | 从 `templates/` 生成服务骨架：Dockerfile + JWT 中间件 + service.yaml + 契约测试 + healthz |
-| `platctl sync` | 扫描 `services/*/service.yaml` → 生成 `gateway/kong.yml` + `docker-compose.services.yml`；聚合各服务 openapi.yaml → 网关 `/docs`；路由冲突/保留段占用 → 报错退出 |
-| `platctl check [id]` | 清单校验 + 起容器跑契约测试三件套 |
-| `platctl list` | 平台服务清单总览（id/挂载点/版本/健康状态） |
+| `pctl new <id> --lang py\|go\|ts` | 从 `templates/` 生成服务骨架：Dockerfile + JWT 中间件 + service.yaml + 契约测试 + healthz |
+| `pctl sync` | 扫描 `services/*/service.yaml` → 生成 `gateway/kong.yml` + `docker-compose.services.yml`；聚合各服务 openapi.yaml → 网关 `/docs`；路由冲突/保留段占用 → 报错退出 |
+| `pctl check [id]` | 清单校验 + 起容器跑契约测试三件套 |
+| `pctl list` | 平台服务清单总览（id/挂载点/版本/健康状态） |
 
 **AI 接入闭环**（平台的最终目的）：
 
 ```
-AI 拿到需求 → platctl new svc-x → 在骨架内写业务 → platctl sync && docker compose up -d
-→ platctl check svc-x 全绿 → 服务上线，全程零人工改平台文件
+AI 拿到需求 → pctl new svc-x → 在骨架内写业务 → pctl sync && docker compose up -d
+→ pctl check svc-x 全绿 → 服务上线，全程零人工改平台文件
 ```
 
 ---
@@ -254,10 +254,10 @@ AI 拿到需求 → platctl new svc-x → 在骨架内写业务 → platctl sync
 ```
 E:\work\platfarm\
 ├── docker-compose.yml            # 基座：gateway/auth/redis/minio（手维护）
-├── docker-compose.services.yml   # 业务服务编排（platctl sync 生成，勿手改）
+├── docker-compose.services.yml   # 业务服务编排（pctl sync 生成，勿手改）
 ├── .env                          # JWT_SECRET 等（gitignore）
 ├── gateway/
-│   └── kong.yml                  # platctl sync 生成，勿手改
+│   └── kong.yml                  # pctl sync 生成，勿手改
 ├── platform/
 │   └── auth/                     # 底座源码（Go）
 ├── contracts/                    # 服务间 gRPC 契约（buf.yaml + <svc>/v1/*.proto）
@@ -267,8 +267,8 @@ E:\work\platfarm\
 │       ├── Dockerfile
 │       ├── src/...
 │       └── tests/contract/       # 契约测试三件套
-├── templates/                    # platctl new 的骨架（py/go/ts）
-├── tools/platctl/                # 平台 CLI
+├── templates/                    # pctl new 的骨架（py/go/ts）
+├── tools/pctl/                # 平台 CLI
 ├── specs/                        # 变更规范流（§6）
 └── docs/
     ├── architecture.md           # v1（已废弃，留档）
@@ -285,9 +285,9 @@ E:\work\platfarm\
 - [ ] 基座 compose：gateway + auth + redis 跑通；共享 PG 实例建 `pf_auth` 库
 - **验收**：curl 走网关完成 login → me → logout → 旧 token 调 introspect 显示已吊销
 
-### Phase 2 — platctl 最小版（1~2 天）
+### Phase 2 — pctl 最小版（1~2 天）
 - [ ] `new` / `sync` / `check` 三命令；kong.yml 从 service.yaml 生成
-- **验收**：`platctl new svc-demo --lang py` → sync → up → check 全绿，全程未手改任何平台文件
+- **验收**：`pctl new svc-demo --lang py` → sync → up → check 全绿，全程未手改任何平台文件
 
 ### Phase 3 — svc-file 能力服务 + gRPC 契约基建（2~3 天）
 - [ ] MinIO 容器 + svc-file（§5），作为能力服务参考实现
@@ -301,7 +301,8 @@ E:\work\platfarm\
 - [ ] 日志管道：各服务 JSON 日志 → stdout → Vector/Filebeat 收集 → **Loki（推荐，轻）或 ELK**，按 `X-Request-Id` 关联全链路（附录 B）
 - [ ] 若性能排障需要 span 级耗时瀑布：OTel SDK + Jaeger/Tempo（日志管道的升级，非替代）
 - [ ] 评估 RS256（接第三方前置）/ Casdoor UI（需要用户管理界面时）
-- [ ] 响应加密：网关加密插件 + auth 下发 dataKey + 前端解密 SDK + `platctl decrypt`（附录 F；依赖 platctl sync 就绪）
+- [ ] 响应加密：网关加密插件 + auth 下发 dataKey + 前端解密 SDK + `pctl decrypt`（附录 F；依赖 pctl sync 就绪）
+- [ ] SDK 目录化：`sdk/<lang>/` 收敛验签中间件唯一实现，`pctl new` 生成期 vendor + service.yaml 记 sdk_version，`check` 检测漂移；插件市场阶段升级为真实包发布（pypi/crates/packagist/go module）
 
 ### Phase 5 — 第三方登录（1~2 天，提案：specs/changes/001）
 - [ ] auth：`external_identities` 表 + `/internal/auth/external-login` + `/auth/bind-external`
@@ -310,11 +311,14 @@ E:\work\platfarm\
 
 ### Phase 6 — 第三方插件体系 MVP（4~6 天，提案：specs/changes/002）
 - [ ] **RS256 + JWKS**（硬前置，独立可先做）：auth 换签发 + Kong 公钥验签 + 服务模板改 JWKS 验签
-- [ ] 一插件一网络：platctl sync 生成 networks + gateway 多宿主
+- [ ] 一插件一网络：pctl sync 生成 networks + gateway 多宿主
 - [ ] plugin-pg 独立实例 + 安装时自动开号（REVOKE CONNECT FROM PUBLIC）
-- [ ] `platctl install/enable/disable/uninstall/upgrade` + 安装闸门流水线
+- [ ] `pctl install/enable/disable/uninstall/upgrade` + 安装闸门流水线
 - [ ] 插件 service token（client_credentials + scopes）+ 网关 calls 放行
 - [ ] svc-console 最小版（列表/安装/启停/审计）
+
+### Phase 7 — 插件市场（按需）
+设计定稿见 [docs/features/plugin-marketplace.md](features/plugin-marketplace.md)（OCI 分发 + git 索引 + cosign 供应链 + 审查管线自动化，M1~M4 切分），实施时转 specs/changes/003 提案。
 
 ---
 
@@ -326,18 +330,19 @@ E:\work\platfarm\
 | 2 | 底座唯一且只含身份 | 底座越薄插拔越纯；防止"小 LinaPro 化"（单体底座不断吸业务） | — |
 | 3 | 文件管理为平级能力服务 | 负载特征独立；兼作接入规范的参考实现（对标 Supabase Storage/GoTrue 分离） | — |
 | 4 | 权限不设中央服务 | L3 归属判定天然属于资源所在服务 | 出现跨服务协作/共享模型 |
-| 5 | service.yaml + platctl 为可插拔核心 | 声明式清单+工具校验是 LinaPro 可插拔的本质，比"文档约定"强制得多 | — |
+| 5 | service.yaml + pctl 为可插拔核心 | 声明式清单+工具校验是 LinaPro 可插拔的本质，比"文档约定"强制得多 | — |
 | 6 | claims 含 iss、access 2h | 消除 v1 网关验签阻塞点；缩吊销窗口 | — |
 | 7 | HS256 起步 | 全第一方容器；RS256 升级路径已预留 | 接第三方服务前 |
-| 8 | 项目名 Platfarm、CLI `platctl`、资源前缀 `pf_` | 直白易记；已知代价：项目名与 Docker/Kong 两个实现技术耦合 | 网关更换（APISIX）、迁移 K8s 或对外开源时 |
+| 8 | 项目名 Platfarm、CLI `pctl`、资源前缀 `pf_` | 直白易记；已知代价：项目名与 Docker/Kong 两个实现技术耦合 | 网关更换（APISIX）、迁移 K8s 或对外开源时 |
 | 9 | **双协议**：对外 REST（经网关），服务间可选 gRPC（内网直连） | 流式/推送场景（订单推送等）需要 streaming 语义；契约集中 `contracts/` + buf 统一 codegen 把异构接入摩擦降到最低；对外保住 curl 可调试性。注意：鉴权仍是本地验签，**禁止**因上 gRPC 把鉴权改为每请求调 auth | 扇出/解耦推送需求成熟时评估 MQ（NATS/Redis Streams） |
 | 10 | 可观测性日志先行：JSON 日志 + X-Request-Id → Loki/ELK | 覆盖 80% 排障需求，成本远低于全员埋 OTel；追踪是升级路径非替代 | 需要 span 级耗时分析时加 OTel |
 | 11 | 响应加密在网关层实现，密钥 HKDF 从 tokenId 派生（附录 F） | 服务零感知保住插拔纯度；零存储、会话隔离、随 token 生命周期自动轮换；定位是反爬/提高逆向成本，非密码学保密（密钥终在前端） | 流式接口需要加密时、或出现请求签名/防重放需求时 |
 | 12 | 第三方登录：OAuth 舞步在 svc-oauth，auth 只加 external-login 兑换端点（附录 G） | auth 底座不吸第三方 SDK；加第 N 个提供方零平台改动；验证与兑换职责分离（LinaPro ExternalLoginInput 模式） | — |
 | 13 | 第三方插件沙箱 = 容器 + 一插件一网络 + 独立 plugin-pg，不做 WASM 进程内插件（附录 H） | 容器即沙箱：任意语言/GPU 依赖、TCP 层隔离平台数据；WASM 跑不了重型 AI 负载 | 插件密度极高、容器开销成为瓶颈时 |
 | 14 | RS256 + JWKS 提前至第三方接入前置（兑现 #7 触发条件） | 第三方不能持有对称密钥；JWKS 后 JWT_SECRET 概念整体退役，第一方也受益 | — |
-| 15 | 插件管理后台 svc-console = platctl 的 Web 外壳，全平台唯一持有 docker socket | 文件仍是唯一真相源；最高权限组件收敛为一个第一方 admin-only 服务 | — |
+| 15 | 插件管理后台 svc-console = pctl 的 Web 外壳，全平台唯一持有 docker socket | 文件仍是唯一真相源；最高权限组件收敛为一个第一方 admin-only 服务 | — |
 | 16 | 插件必须无状态；状态出口 = 自库 / Redis 租约 | 多副本扩缩容的前提；leader 选举/定时任务防重跑用 Redis lease（mmom Coordinator 实证） | — |
+| 17 | 服务模板语言优先级 Go > Rust > Python > PHP，`pctl new` 默认 go | 基础能力服务重性能与长期稳定；py 留给 LLM/IO 密集与快速迭代；php 为极简模板（零 composer 依赖）服务简单接口与存量团队；语言按容器粒度可逆 | — |
 
 ---
 
@@ -370,7 +375,7 @@ E:\work\platfarm\
 | 中型 | 双机主备 + rate-limiting policy 改 redis + auth 吊销黑名单改 Redis | 单机资源吃紧或需要高可用 |
 | 大型 | Kubernetes（Ingress/Gateway API 替代 Kong DB-less 或 Kong Ingress Controller） | 服务数 >20、需要弹性伸缩/滚动发布 |
 
-原则：**不为想象中的规模提前换形态**；service.yaml 契约在三种形态下不变，platctl 换生成目标即可。
+原则：**不为想象中的规模提前换形态**；service.yaml 契约在三种形态下不变，pctl 换生成目标即可。
 
 ### D. 写敏感服务 checklist（支付/扣费/删除类服务模板附录）
 
@@ -383,7 +388,7 @@ E:\work\platfarm\
 
 **定位**：对外一律 REST（经网关，保住 curl 可调试性）；服务间可选 gRPC（内网直连，不经网关），流式/推送场景（如订单推送）优先 gRPC streaming。
 
-1. **端口约定**：HTTP `8080`（网关面）+ gRPC `9090`（仅内网）；`service.yaml` 的 `grpc` 块声明后 platctl check 校验 proto 存在
+1. **端口约定**：HTTP `8080`（网关面）+ gRPC `9090`（仅内网）；`service.yaml` 的 `grpc` 块声明后 pctl check 校验 proto 存在
 2. **契约集中**：`contracts/<svc>/v1/*.proto`，buf 管理（lint + breaking-change 检测 + 多语言 codegen）；服务目录不各自散放 proto
 3. **身份传递**：六步约定不变，token 放 gRPC metadata `authorization: Bearer <jwt>`（用户上下文透传用户 JWT；后台调用用 service token）
 4. **鉴权红线**：验签仍是各服务本地 HMAC 解码（微秒级、零网络）。禁止把鉴权做成每请求调 auth 的 RPC——那会重造中心瓶颈，gRPC 再快也是负优化
@@ -428,11 +433,11 @@ crypto:
 **强制豁免三类**：公开路由（无 token 无 key）、SSE/流式推送（逐 chunk 加密暂不支持）、文件下载（MinIO 预签名 URL 不过网关）。
 
 **调试配套（必须同步交付）**：
-- `platctl decrypt --token <jwt> <ciphertext>` 一键解密排障
+- `pctl decrypt --token <jwt> <ciphertext>` 一键解密排障
 - 开发环境 `PF_CRYPTO=off` 全局开关；契约测试跑明文
 
 **扩展位**：同一套 dataKey 可复用于请求体加密与请求签名/防重放，需求出现再加。
-**排期**：Phase 4 之后（依赖 platctl sync 生成插件配置）；主要工作量为 Kong 自定义插件（body transform + HKDF，约 2~3 天）。
+**排期**：Phase 4 之后（依赖 pctl sync 生成插件配置）；主要工作量为 Kong 自定义插件（body transform + HKDF，约 2~3 天）。
 
 ### G. 第三方登录（svc-oauth 能力服务）
 
@@ -467,7 +472,7 @@ CREATE TABLE external_identities (
 
 ```yaml
 id: svc-plugin-translate
-trust: third-party            # platctl 据此套沙箱策略
+trust: third-party            # pctl 据此套沙箱策略
 source:
   type: image                 # 第一方 build: / 第三方 image:
   image: ghcr.io/vendor/translate:1.2.0
@@ -500,7 +505,7 @@ services:
     read_only: true
     security_opt: ["no-new-privileges:true"]
   gateway:
-    networks: [core-net, net-plugin-x, ...]  # platctl sync 维护
+    networks: [core-net, net-plugin-x, ...]  # pctl sync 维护
 networks:
   net-plugin-x: { internal: true }           # 默认断外网
 ```
@@ -516,13 +521,13 @@ networks:
 | 插件后台任务 | 仅 service token（client_credentials 换短时效 token，scopes = 清单 permissions） |
 | 插件自身配置 | `.env.plugins/<id>.env`，改后重启生效——不引入配置中心（与 ADR 决策一致） |
 
-**H.6 管理后台：svc-console = platctl 的 Web 外壳**
+**H.6 管理后台：svc-console = pctl 的 Web 外壳**
 
-所有写操作经 platctl 落文件，UI 不存在第二真相源。能力：插件列表/状态/资源、安装（展示权限清单如手机装 App）、启停、升级（**权限 diff 高亮**）、配置编辑、日志只读投影、操作审计（pf_console 库）。console 是全平台唯一持有 docker socket 的容器——必须第一方、core-net、全路由 admin-only。
+所有写操作经 pctl 落文件，UI 不存在第二真相源。能力：插件列表/状态/资源、安装（展示权限清单如手机装 App）、启停、升级（**权限 diff 高亮**）、配置编辑、日志只读投影、操作审计（pf_console 库）。console 是全平台唯一持有 docker socket 的容器——必须第一方、core-net、全路由 admin-only。
 
 **安装闸门（顺序固定，失败自动回滚）**：校验清单 → 锁 digest → 建库开号 → 建网 → staged 启动 → 契约测试三件套 → 管理员确认权限 → enable 挂路由。
 
-生命周期：`platctl install / enable / disable / uninstall [--purge] / upgrade`（upgrade 重跑契约测试 + 权限 diff）。
+生命周期：`pctl install / enable / disable / uninstall [--purge] / upgrade`（upgrade 重跑契约测试 + 权限 diff）。
 
 **H.7 多副本与无状态纪律**
 

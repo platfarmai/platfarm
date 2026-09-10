@@ -5,7 +5,7 @@ import os
 import jwt
 from fastapi import FastAPI, Header, HTTPException
 
-# RS256 公钥由平台挂载（platctl sync 生成的 compose 注入；公钥非密）
+# RS256 公钥由平台挂载（pctl sync 生成的 compose 注入；公钥非密）
 PUB = open(os.environ.get("JWT_PUBLIC_KEY_FILE", "/pf/jwt.pub")).read()
 ISSUER = "pf-auth"
 MOUNT = "__MOUNT__"

@@ -14,7 +14,7 @@ func runNew(root, id, lang string) error {
 	}
 	templateDir := filepath.Join(root, "templates", lang+"-service")
 	if _, err := os.Stat(templateDir); err != nil {
-		return fmt.Errorf("模板 %s 不存在（当前支持: py）: %w", templateDir, err)
+		return fmt.Errorf("模板 %s 不存在（当前支持: go/rust/py/php）: %w", templateDir, err)
 	}
 	destDir := filepath.Join(root, "services", id)
 	if _, err := os.Stat(destDir); err == nil {
@@ -47,6 +47,6 @@ func runNew(root, id, lang string) error {
 	}
 
 	fmt.Printf("已生成 %s（挂载点 %s）\n", destDir, mount)
-	fmt.Println("下一步：实现业务 → platctl sync → docker compose up -d --build → platctl check")
+	fmt.Println("下一步：实现业务 → pctl sync → docker compose up -d --build → pctl check")
 	return nil
 }

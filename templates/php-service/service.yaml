@@ -1,11 +1,10 @@
 # Platfarm 服务清单（契约见 docs/architecture-v2.md §3）
-# 试运行阶段 gateway/kong.yml 为手写；pctl sync 就绪后由本清单生成
-id: svc-demo
+id: __SVC_ID__
 version: 0.1.0
-lang: py
+lang: php
 
 mount:
-  path: /api/demo
+  path: __MOUNT__
   strip_path: false
   public_routes:
     - GET /public/*
@@ -15,7 +14,7 @@ auth:
   accept_service_tokens: []
 
 limits:
-  rate_per_minute: 30
+  rate_per_minute: 60
 
 runtime:
   port: 8080
@@ -23,4 +22,4 @@ runtime:
   env: [] # RS256 公钥由平台挂载，无需密钥环境变量
 
 test:
-  command: python3 tests/contract/contract_test.py
+  command: php /app/tests/contract/contract_test.php

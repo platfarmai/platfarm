@@ -6,7 +6,7 @@
 - [x] auth：service token 签发（`POST /auth/service-token`，client_credentials；凭据由 `-register-client` CLI 开出）
 - [x] svc-oauth：GitHub provider + **mock provider**（开发/E2E 用，无需外部账号）
 - [x] svc-oauth：state 防 CSRF（内存 TTL）+ 一次性兑换码 `POST /api/oauth/exchange`
-- [x] 契约测试：mock 全流程 / 兑换码复用 401 / 伪造 state 401 —— `platctl check --e2e` 全绿
+- [x] 契约测试：mock 全流程 / 兑换码复用 401 / 伪造 state 401 —— `pctl check --e2e` 全绿
 - [x] docs：README §2.4 试玩流程；adding-a-service.md FAQ 更新
 - [x] 验收：mock 登录自动建号（`mock_mock-user-1`）、二次登录同 userId（幂等）、`/internal/*` 网关外 404
 

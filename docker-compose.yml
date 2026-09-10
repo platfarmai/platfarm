@@ -1,5 +1,5 @@
 # Platfarm 平台基座编排（手维护）
-# gateway / plugin-pg / 业务服务在 docker-compose.services.yml —— platctl sync 生成，勿手改
+# gateway / plugin-pg / 业务服务在 docker-compose.services.yml —— pctl sync 生成，勿手改
 # （gateway 在生成文件的原因：其 networks 列表随插件网络增减，附录 H.4）
 include:
   - docker-compose.services.yml
@@ -15,6 +15,26 @@ services:
       - ./.keys:/keys
     extra_hosts:
       - "host.docker.internal:host-gateway" # 宿主机/外部数据库模式需要
+    networks:
+      - core-net
+
+  # ── 管理控制台：pctl 的 Web 外壳（附录 H.6），仅本机 18001，admin-only ──
+  console:
+    build:
+      context: ./tools/pctl
+      dockerfile: Dockerfile.console
+    ports:
+      - "127.0.0.1:18001:8080" # 仅本机可访问；远程用 SSH 隧道
+    environment:
+      PLATFARM_ROOT: /workspace
+      AUTH_URL: http://auth:8080
+      JWT_PUBLIC_KEY_FILE: /workspace/.keys/pf-auth.pem.pub
+      PF_COMPOSE_PROJECT: platfarm
+    volumes:
+      - .:/workspace                            # 真相源文件（sync/启停标记）
+      - /var/run/docker.sock:/var/run/docker.sock # 全平台唯一持有 socket 的容器
+    depends_on:
+      - auth
     networks:
       - core-net
 
@@ -46,7 +66,7 @@ services:
       - core-net
 
 networks:
-  core-net: # 平台核心网络；插件网络（net-plugin-*）由 platctl sync 生成
+  core-net: # 平台核心网络；插件网络（net-plugin-*）由 pctl sync 生成
 
 volumes:
   pf-pg-data:

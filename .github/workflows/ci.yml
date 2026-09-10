@@ -18,7 +18,7 @@ jobs:
           go-version: "1.25.x"
           cache-dependency-path: |
             platform/auth/go.sum
-            tools/platctl/go.sum
+            tools/pctl/go.sum
 
       - name: auth 底座 vet + build
         working-directory: platform/auth
@@ -27,15 +27,15 @@ jobs:
           go vet ./...
           CGO_ENABLED=0 go build -o /dev/null .
 
-      - name: platctl vet + build
-        working-directory: tools/platctl
+      - name: pctl vet + build
+        working-directory: tools/pctl
         run: |
           go mod tidy
           go vet ./...
-          go build -o platctl .
+          go build -o pctl .
 
-      - name: 服务清单校验（platctl check）
-        run: ./tools/platctl/platctl check
+      - name: 服务清单校验（pctl check）
+        run: ./tools/pctl/pctl check
 
   docker:
     name: 镜像构建

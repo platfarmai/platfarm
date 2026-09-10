@@ -62,7 +62,7 @@ type Manifest struct {
 
 func (m Manifest) IsThirdParty() bool { return m.Trust == "third-party" }
 
-// IsEnabled 以 .disabled 标记文件为准（platctl enable/disable 管理）。
+// IsEnabled 以 .disabled 标记文件为准（pctl enable/disable 管理）。
 func (m Manifest) IsEnabled() bool {
 	_, err := os.Stat(filepath.Join(m.Dir, ".disabled"))
 	return err != nil

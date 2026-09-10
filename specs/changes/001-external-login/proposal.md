@@ -22,7 +22,7 @@
 
 - `platform/auth`：+1 表、+2 端点（预计 +150 行内）
 - 新服务 `services/svc-oauth`
-- 网关配置：platctl sync 自动生成，无手工改动
+- 网关配置：pctl sync 自动生成，无手工改动
 - 现有服务：零影响
 
 ## 验收标准
@@ -30,7 +30,7 @@
 ```bash
 # GitHub 全流程（手动）：/api/oauth/github/authorize → 授权 → 落地页拿一次性码 → exchange 得 token 对
 # 自动化：
-platctl check --e2e                          # 存量契约不回归
+pctl check --e2e                          # 存量契约不回归
 curl -X POST .../internal/auth/external-login  # 网关外 404；内网无 service token 401
 # 同一 externalId 二次登录返回同一 userId（幂等）
 ```

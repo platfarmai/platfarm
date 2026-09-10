@@ -1,4 +1,4 @@
-// platctl — Platfarm 平台工具：new / sync / check / list。
+// pctl — Platfarm 平台工具：new / sync / check / list。
 // 纪律执行器：网关与服务编排配置只能由本工具从 service.yaml 生成。
 package main
 
@@ -11,7 +11,7 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "platctl:", err)
+		fmt.Fprintln(os.Stderr, "pctl:", err)
 		os.Exit(1)
 	}
 }
@@ -26,7 +26,7 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "new":
-		id, lang := "", "py"
+		id, lang := "", "go" // 语言优先级：go > rust > py（ADR #17）
 		for i := 1; i < len(args); i++ {
 			if args[i] == "--lang" && i+1 < len(args) {
 				lang = args[i+1]
@@ -36,7 +36,7 @@ func run(args []string) error {
 			id = args[i]
 		}
 		if id == "" {
-			return fmt.Errorf("用法: platctl new <svc-id> [--lang py]")
+			return fmt.Errorf("用法: pctl new <svc-id> [--lang py]")
 		}
 		return runNew(root, id, lang)
 	case "sync":
@@ -48,23 +48,25 @@ func run(args []string) error {
 		return runList(root)
 	case "install":
 		if len(args) < 2 {
-			return fmt.Errorf("用法: platctl install <插件目录>")
+			return fmt.Errorf("用法: pctl install <插件目录>")
 		}
 		return runInstall(root, args[1])
 	case "enable", "disable":
 		if len(args) < 2 {
-			return fmt.Errorf("用法: platctl %s <svc-id>", args[0])
+			return fmt.Errorf("用法: pctl %s <svc-id>", args[0])
 		}
 		return runToggle(root, args[1], args[0] == "enable")
 	case "uninstall":
 		if len(args) < 2 {
-			return fmt.Errorf("用法: platctl uninstall <svc-id> [--purge]")
+			return fmt.Errorf("用法: pctl uninstall <svc-id> [--purge]")
 		}
 		purge := len(args) > 2 && args[2] == "--purge"
 		return runUninstall(root, args[1], purge)
+	case "serve":
+		return runServe(root)
 	case "upgrade":
 		if len(args) < 3 {
-			return fmt.Errorf("用法: platctl upgrade <svc-id> <新插件目录>")
+			return fmt.Errorf("用法: pctl upgrade <svc-id> <新插件目录>")
 		}
 		if err := runUninstall(root, args[1], false); err != nil {
 			return err
@@ -77,18 +79,23 @@ func run(args []string) error {
 
 func usageError() error {
 	return fmt.Errorf(`用法:
-  platctl new <svc-id> [--lang py]    从模板生成第一方服务骨架
-  platctl sync                         清单 → kong.yml + compose 片段（含密钥自举）
-  platctl check [--e2e]                清单校验（--e2e 附加运行容器内契约测试）
-  platctl list                         平台服务总览
-  platctl install <插件目录>            安装第三方插件（开库开号+发凭据+契约测试闸门）
-  platctl enable|disable <svc-id>      启停服务/插件（摘挂路由）
-  platctl uninstall <svc-id> [--purge] 卸载（--purge 连数据一起删）
-  platctl upgrade <svc-id> <新目录>     升级（卸载保数据 + 重装）`)
+  pctl new <svc-id> [--lang go|rust|py|php]  从模板生成第一方服务骨架（默认 go）
+  pctl sync                         清单 → kong.yml + compose 片段（含密钥自举）
+  pctl check [--e2e]                清单校验（--e2e 附加运行容器内契约测试）
+  pctl list                         平台服务总览
+  pctl install <插件目录>            安装第三方插件（开库开号+发凭据+契约测试闸门）
+  pctl enable|disable <svc-id>      启停服务/插件（摘挂路由）
+  pctl uninstall <svc-id> [--purge] 卸载（--purge 连数据一起删）
+  pctl serve                      启动 Web 控制台（容器内运行，见 compose console 服务）
+  pctl upgrade <svc-id> <新目录>     升级（卸载保数据 + 重装）`)
 }
 
 // findRoot 从当前目录向上找平台根（以 gateway/ 目录 + docker-compose.yml 为标志）。
+// 容器内运行（console）用 PLATFARM_ROOT 直指挂载点。
 func findRoot() (string, error) {
+	if v := os.Getenv("PLATFARM_ROOT"); v != "" {
+		return v, nil
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err

@@ -71,6 +71,8 @@ func main() {
 	mux.HandleFunc("POST /internal/auth/bind-external", s.handleBindExternal)
 	mux.HandleFunc("POST /internal/auth/introspect", s.handleIntrospect)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /{$}", handlePlatformInfo)
+	mux.HandleFunc("/", handleNotFound) // 网关兜底路由指向 auth：未匹配路径返回平台风格 JSON 404
 
 	log.Println("pf-auth (RS256) listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
@@ -233,6 +235,20 @@ func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func handlePlatformInfo(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, 200, map[string]any{
+		"platform": "Platfarm",
+		"docs":     "https://github.com/osindex/platfarm",
+		"login":    "POST /auth/login",
+		"jwks":     "GET /auth/.well-known/jwks.json",
+		"services": "业务服务挂载于 /api/*（清单见仓库 services/*/service.yaml）",
+	})
+}
+
+func handleNotFound(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 404, map[string]string{"error": "not found", "path": r.URL.Path, "hint": "GET / 查看平台入口"})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
