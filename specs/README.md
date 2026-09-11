@@ -1,23 +1,35 @@
-# specs/ — 变更规范流
+# specs/ — Change Spec Workflow
 
-轻量规范驱动工作流（设计见 docs/architecture-v2.md §6）：探索 → 提案 → 实现 → 审查 → 归档。
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+Lightweight specification-driven workflow (see docs/architecture-v2.md §6): explore → propose → implement → review → archive.
 
 ```
 specs/
-├── changes/NNN-短名/
-│   ├── proposal.md    # 动机、影响面、service.yaml 差异
-│   └── tasks.md       # 实施清单（AI 执行的锚点）
-└── archive/           # 完成后整目录移入
+├── changes/NNN-short-name/
+│   ├── proposal.md        # English (primary): motivation, blast radius, service.yaml diffs
+│   ├── proposal.zh-CN.md  # Chinese
+│   ├── tasks.md           # English (primary): implementation checklist (AI execution anchors)
+│   └── tasks.zh-CN.md     # Chinese
+└── archive/               # Move the whole directory here when done
 ```
 
-## 提案模板（proposal.md）
+## Language convention
+
+Same as the repository README: **English is primary, Chinese is secondary**.
+
+- `proposal.md` / `tasks.md` — English, the canonical source AI agents and CI read
+- `proposal.zh-CN.md` / `tasks.zh-CN.md` — Chinese, kept in sync for human readers
+- Both files open with a language switcher link
+
+## Proposal template (`proposal.md`)
 
 ```md
-# NNN: <标题>
-## 动机
-## 方案（含 service.yaml / 契约变更 diff）
-## 影响面（涉及哪些服务/平台文件）
-## 验收标准（可执行的验证命令）
+# NNN: <Title>
+## Motivation
+## Design (include service.yaml / contract diffs)
+## Blast radius (services / platform files touched)
+## Acceptance (executable verification commands)
 ```
 
-规则：涉及**平台契约**（claims 结构、service.yaml 字段、网关行为、保留路由段）的变更必须走提案；单服务内部业务变更不强制。
+Rule: changes that touch the **platform contract** (claims shape, service.yaml fields, gateway behaviour, reserved route prefixes) **must** go through a proposal. Purely internal business changes inside a single service do not.

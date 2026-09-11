@@ -1,5 +1,6 @@
 # Platfarm 服务清单（契约见 docs/architecture-v2.md §3）
 # 试运行阶段 gateway/kong.yml 为手写；pctl sync 就绪后由本清单生成
+manifest: v1
 id: svc-demo
 version: 0.1.0
 lang: py

@@ -1,4 +1,5 @@
 # Platfarm 服务清单（契约见 docs/architecture-v2.md §3）
+manifest: v1
 id: __SVC_ID__
 version: 0.1.0
 lang: go

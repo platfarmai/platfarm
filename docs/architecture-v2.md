@@ -142,6 +142,15 @@ limits:
 docs:
   openapi: ./openapi.yaml    # 接口契约（借鉴 smart-park/LinaPro 契约先行）；pctl sync 聚合到网关 /docs
 
+# ── 权限声明规范 v1（specs/003）：只声明"存在什么"，判定规则永远在服务代码 ──
+roles:                       # ② 我定义什么角色给用户（svc-grants/成员 UI/市场弹窗的数据源）
+  vocabulary:
+    - { name: editor, desc: 编辑并发布全部内容 }
+  bootstrap: platform-admin=editor   # 仅允许此形式；角色须在 vocabulary 内
+exposes:                     # ③ 我暴露什么 scope；他人 calls 引用须命中此处（pctl 跨清单校验）
+  scopes:
+    - { name: read, desc: 读取已发布内容 }
+
 grpc:                        # 可选：服务间 gRPC（附录 E）
   port: 9090                 # 仅内网，不经网关
   proto: contracts/svc-file/v1/  # 契约位置（buf 统一管理与 codegen）
@@ -343,6 +352,7 @@ E:\work\platfarm\
 | 15 | 插件管理后台 svc-console = pctl 的 Web 外壳，全平台唯一持有 docker socket | 文件仍是唯一真相源；最高权限组件收敛为一个第一方 admin-only 服务 | — |
 | 16 | 插件必须无状态；状态出口 = 自库 / Redis 租约 | 多副本扩缩容的前提；leader 选举/定时任务防重跑用 Redis lease（mmom Coordinator 实证） | — |
 | 17 | 服务模板语言优先级 Go > Rust > Python > PHP，`pctl new` 默认 go | 基础能力服务重性能与长期稳定；py 留给 LLM/IO 密集与快速迭代；php 为极简模板（零 composer 依赖）服务简单接口与存量团队；语言按容器粒度可逆 | — |
+| 18 | 清单权限声明三面向（needs/roles/exposes，specs/003），业务角色分配集中（未来 svc-grants）、判定语义留服务代码 | 成员表/邀请流/管理 UI 不随服务复制 N 遍；calls 的 scope 从裸字符串变为跨清单校验的契约；"分配 vs 语义"分离守住 L3 红线（Casbin 讨论结论） | 需要运营可配置判定规则时，p-policy 迁中央 PDP |
 
 ---
 

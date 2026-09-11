@@ -14,10 +14,11 @@ import (
 // Manifest：service.yaml（第一方）/ plugin.yaml（第三方，超集）的类型化表示。
 // 契约见 docs/architecture-v2.md §3 + 附录 H.1。
 type Manifest struct {
-	ID      string `yaml:"id"`
-	Version string `yaml:"version"`
-	Lang    string `yaml:"lang"`
-	Trust   string `yaml:"trust"` // ""/first-party | third-party
+	SpecVersion string `yaml:"manifest"` // 权限声明规范版本（specs/003）；空 = v1
+	ID          string `yaml:"id"`
+	Version     string `yaml:"version"`
+	Lang        string `yaml:"lang"`
+	Trust       string `yaml:"trust"` // ""/first-party | third-party
 	Source  struct {
 		Type   string `yaml:"type"` // build（默认）| image
 		Image  string `yaml:"image"`
@@ -53,11 +54,24 @@ type Manifest struct {
 	Data struct {
 		Database string `yaml:"database"`
 	} `yaml:"data"`
+	Roles struct { // ② 我定义什么角色给用户（specs/003；语义永远在服务代码）
+		Vocabulary []NamedDecl `yaml:"vocabulary"`
+		Bootstrap  string      `yaml:"bootstrap"` // 仅允许 platform-admin=<role>
+	} `yaml:"roles"`
+	Exposes struct { // ③ 我暴露什么 scope 给其它服务（calls 的校验目标）
+		Scopes []NamedDecl `yaml:"scopes"`
+	} `yaml:"exposes"`
 	Test struct {
 		Command string `yaml:"command"`
 	} `yaml:"test"`
 
 	Dir string `yaml:"-"`
+}
+
+// NamedDecl 角色/scope 声明：name 给机器，desc 给通用 UI 与市场弹窗渲染。
+type NamedDecl struct {
+	Name string `yaml:"name"`
+	Desc string `yaml:"desc"`
 }
 
 func (m Manifest) IsThirdParty() bool { return m.Trust == "third-party" }
@@ -161,6 +175,7 @@ func validateManifests(manifests []Manifest) error {
 			}
 		}
 	}
+	problems = append(problems, validatePermissionDecls(manifests)...)
 	if len(problems) > 0 {
 		return errors.New("清单校验失败:\n  - " + strings.Join(problems, "\n  - "))
 	}

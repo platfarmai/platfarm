@@ -1,46 +1,48 @@
-# 002: 第三方插件体系 MVP（容器即沙箱）
+# 002: Third-party Plugin System MVP (container-as-sandbox)
 
-## 动机
+[English](proposal.md) | [简体中文](proposal.zh-CN.md)
 
-可插拔从"第一方 AI 服务"推向"外部开发者交付的插件"。第三方只信契约不信代码，现有设计有三个洞：HS256 共享密钥可伪造 token、扁平内网可绕过网关、pctl 假设源码在 services/。
+## Motivation
 
-## 方案
+Pluggability expands from "first-party AI services" to "plugins delivered by external developers". Third parties are trusted by contract, not by code. The existing design had three holes: HS256 shared secrets could forge tokens, a flat internal network could bypass the gateway, and pctl assumed source lived under `services/`.
 
-设计定稿见 [architecture-v2.md 附录 H](../../../docs/architecture-v2.md)。要点：
+## Design
 
-1. **RS256 + JWKS**（硬前置）：`JWT_SECRET` 退役，全员公钥验签
-2. **plugin.yaml**：service.yaml 超集（trust / source.image+digest / permissions / resources）
-3. **一插件一网络**：插件只见 gateway 与自己的 plugin-pg；`internal: true` 断外网
-4. **数据双层隔离**：独立角色+库（REVOKE CONNECT FROM PUBLIC）+ 独立 plugin-pg 实例
-5. **双 token 上下文**：service token（我是谁/scope）+ X-PF-User-Token（代表谁）
-6. **svc-console**：pctl 的 Web 外壳，唯一持有 docker socket，admin-only
-7. **无状态铁律**：状态出口 = 自库 / Redis 租约
+Final design: [architecture-v2.md Appendix H](../../../docs/architecture-v2.md). Key points:
 
-### 契约变更（平台级，必须走本提案）
+1. **RS256 + JWKS** (hard prerequisite): `JWT_SECRET` retires; everyone verifies with the public key
+2. **plugin.yaml**: service.yaml superset (`trust` / `source.image+digest` / `permissions` / `resources`)
+3. **One network per plugin**: plugin sees only gateway + its own plugin-pg; `internal: true` cuts egress
+4. **Two-layer data isolation**: dedicated role + DB (`REVOKE CONNECT FROM PUBLIC`) + separate plugin-pg instance
+5. **Dual-token context**: service token (who I am / scopes) + `X-PF-User-Token` (who I act for)
+6. **svc-console**: pctl's web shell, sole holder of the docker socket, admin-only
+7. **Stateless iron rule**: state exits to own DB / Redis leases
 
-- claims 无结构变化，但签名算法 HS256 → RS256（**所有服务模板与存量服务需改 JWKS 验签**——本提案最大的迁移面）
-- service.yaml 新增 `trust` / `source` / `permissions` / `resources` 字段（第一方默认值向后兼容）
-- pctl 新增 install/enable/disable/uninstall/upgrade 子命令
+### Contract changes (platform-level — this proposal is mandatory)
 
-## 影响面
+- Claims shape unchanged, but signing algorithm HS256 → RS256 (**every service template and existing service must switch to JWKS verification** — the biggest migration surface)
+- service.yaml gains `trust` / `source` / `permissions` / `resources` (first-party defaults stay backward compatible)
+- pctl gains `install/enable/disable/uninstall/upgrade`
 
-- auth（签发/JWKS）、gateway 配置生成、pctl（大改）、templates（验签方式）、存量 svc-demo（验签方式）
-- 新增：plugin-pg 服务、svc-console 服务、.env.plugins/ 目录
+## Blast radius
 
-## 验收标准
+- auth (signing/JWKS), gateway config generation, pctl (major), templates (verification), existing svc-demo
+- New: plugin-pg service, console service, `.env.plugins/` directory
+
+## Acceptance
 
 ```bash
-# 恶意插件演习（用一个故意越权的测试插件验证沙箱）：
-docker compose exec svc-plugin-evil ping svc-demo        # 应不可达（DNS 无此名）
-docker compose exec svc-plugin-evil psql <平台PG>        # 应连接超时（无路由）
-curl 网关 /api/file/... -H "Authorization: <插件token>"  # calls 未声明 → 403
-# 正常路径：
-pctl install ./test-plugin && pctl check --e2e         # 安装闸门全绿
-docker compose up -d --scale svc-plugin-test=3           # 多副本轮询正常
-# 迁移回归：
-pctl check --e2e                                        # RS256 切换后存量服务契约不回归
+# Malicious-plugin drill (a deliberately overreaching test plugin validates the sandbox):
+docker compose exec svc-plugin-evil ping svc-demo        # unreachable (no DNS name)
+docker compose exec svc-plugin-evil psql <platform PG>   # connection timeout (no route)
+curl gateway /api/file/... -H "Authorization: <plugin token>"  # undeclared calls → 403
+# Happy path:
+pctl install ./test-plugin && pctl check --e2e           # install gate green
+docker compose up -d --scale svc-plugin-test=3           # multi-replica round-robin works
+# Migration regression:
+pctl check --e2e                                         # existing contracts stay green after RS256 switch
 ```
 
-## 分阶段（每步独立可合）
+## Phasing (each step independently mergeable)
 
-RS256+JWKS → 网络分段 → plugin-pg+开号 → pctl 生命周期 → client_credentials+scope 放行 → svc-console
+RS256+JWKS → network segmentation → plugin-pg + provisioning → pctl lifecycle → client_credentials + scope allow → svc-console

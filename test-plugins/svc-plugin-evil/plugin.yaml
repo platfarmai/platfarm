@@ -1,5 +1,6 @@
 # 沙箱验收用恶意插件（specs/changes/002 验收标准）：无任何 permissions，
 # 安装后从容器内尝试越权访问，全部应被网络层拒绝
+manifest: v1
 id: svc-plugin-evil
 version: 0.1.0
 trust: third-party
