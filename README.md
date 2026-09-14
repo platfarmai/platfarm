@@ -30,12 +30,12 @@ Full design & 17 ADRs: [docs/architecture-v2.md](docs/architecture-v2.md)
 ### 2.1 One-command bootstrap (a clean machine with only Docker)
 
 ```bash
-git clone git@github.com:platfarmai/platfarm.git platfarm && cd platfarm
+git clone --recurse-submodules git@github.com:platfarmai/platfarm.git platfarm && cd platfarm
 cp .env.example .env                          # defaults to the bundled database
 docker compose --profile bundled-db up -d --build
 ```
 
-**Pre-built images (no `--build`):** [docs/consuming-images.md](docs/consuming-images.md) · `deploy/compose.release.yml`.
+**Pre-built images (no `--build`):** download `pctl` from [Releases](https://github.com/platfarmai/pctl/releases), then `pctl init` + `deploy/compose.release.yml`. Guide: [docs/docker-compose-quickstart.md](docs/docker-compose-quickstart.md) Path B · [docs/consuming-images.md](docs/consuming-images.md).
 
 Verify (dev seed accounts `admin/admin123`, `alice/user123`):
 
@@ -56,7 +56,9 @@ Already have PostgreSQL (host instance / AWS RDS)? Set `DATABASE_URL` in `.env` 
 ### 2.2 Build the platform CLI (once)
 
 ```bash
+git submodule update --init --recursive   # if clone was without --recurse-submodules
 cd tools/pctl && go build -o pctl . && cd ../..
+# Or download a release binary from https://github.com/platfarmai/pctl/releases
 ```
 
 ### 2.3 Add a first-party service (30 seconds)

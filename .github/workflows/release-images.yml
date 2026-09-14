@@ -46,6 +46,8 @@ jobs:
             file: images/runtime-rust/Dockerfile
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: docker/setup-buildx-action@v3
 

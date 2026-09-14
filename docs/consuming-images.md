@@ -2,96 +2,51 @@
 
 [English](consuming-images.md) | [简体中文](consuming-images.zh-CN.md)
 
-On every `v*` git tag (or manual **Release images** workflow), GitHub Actions pushes to [GHCR](https://github.com/orgs/platfarmai/packages):
+**Split releases**
 
-| Image | Role |
-|---|---|
-| `ghcr.io/platfarmai/auth` | Identity service (login, JWT, JWKS) |
-| `ghcr.io/platfarmai/console` | Admin UI (`pctl serve`) |
-| `ghcr.io/platfarmai/runtime-go` | Alpine + wget — `FROM` for Go binaries |
-| `ghcr.io/platfarmai/runtime-python` | Python 3 + FastAPI/uvicorn/PyJWT + wget |
-| `ghcr.io/platfarmai/runtime-php` | PHP 8.3 CLI + wget |
-| `ghcr.io/platfarmai/runtime-rust` | Alpine + wget — `FROM` for Rust binaries |
+| Repo | On `v*` tag | Artifacts |
+|---|---|---|
+| [platfarmai/platfarm](https://github.com/platfarmai/platfarm) | **Release images** | GHCR: `auth`, `console`, `runtime-*` |
+| [platfarmai/pctl](https://github.com/platfarmai/pctl) | **Release pctl** | Multi-platform `pctl_*` binaries + `SHA256SUMS.txt` |
 
-Tags: `v1.2.3`, `1.2`, `latest`, and the git SHA. Images are public once the package visibility is set to public in GHCR (org → Packages → each package → Change visibility).
-
-Gateway is still `kong:3.9` from Docker Hub; Postgres/Redis are official images.
+Do **not** commit binaries into either repo. Download CLI from [pctl Releases](https://github.com/platfarmai/pctl/releases). Gateway remains `kong:3.9`. Set GHCR package visibility to **Public** after the first platfarm image release.
 
 ---
 
-## A. Run the platform without cloning the repo (pre-built)
-
-You still need a **workspace** (keys + `gateway/kong.yml`). Minimal path:
+## A. Run without a Go toolchain
 
 ```bash
 mkdir platfarm-run && cd platfarm-run
+VER=v0.0.1   # pctl CLI version (independent of platfarm image tags)
+curl -fsSL -o pctl "https://github.com/platfarmai/pctl/releases/download/${VER}/pctl_${VER}_linux_amd64"
+chmod +x pctl
 curl -fsSL https://raw.githubusercontent.com/platfarmai/platfarm/main/deploy/compose.release.yml -o compose.yml
 curl -fsSL https://raw.githubusercontent.com/platfarmai/platfarm/main/deploy/env.release.example -o .env
-# kong.yml: copy from a platfarm checkout after `pctl sync`, or clone once:
-git clone --depth 1 https://github.com/platfarmai/platfarm.git _src
-cp _src/gateway/kong.yml ./gateway/kong.yml
-# keys: generate with pctl from a checkout, then:
-#   mkdir -p .keys && cp _src/.keys/pf-auth.pem* .keys/
+./pctl init .
 docker compose --profile bundled-db up -d
 ```
 
-Set `PF_IMAGE_TAG=v0.1.0` in `.env` to pin a release. Default `latest` tracks the last tagged (or manually dispatched) build.
+`pctl init` creates `.keys/` and a minimal `gateway/kong.yml`. Details: [docker-compose-quickstart.md](docker-compose-quickstart.md) Path B.
 
-**Required local files**
+**Why not “copy .keys from a machine that has pctl”?** That was an awkward doc path: Path B should not assume a developer checkout. The release binary *is* pctl.
 
-| Path | Purpose |
-|---|---|
-| `.keys/pf-auth.pem` | RS256 **private** key (auth only, never commit) |
-| `.keys/pf-auth.pem.pub` | Public key (gateway JWT plugin + services) |
-| `gateway/kong.yml` | Declarative Kong config from `pctl sync` |
-
-Without those, auth cannot sign tokens and Kong cannot verify them.
-
-**First-time key generation** (one machine with Go):
-
-```bash
-git clone https://github.com/platfarmai/platfarm.git && cd platfarm
-cp .env.example .env
-go run ./tools/pctl sync   # writes .keys/ if missing
-```
-
-Copy `.keys/` into the run directory. Do not publish the private key.
+Auth can also create keys on first boot if the volume is empty — but Kong still needs the matching public key in `kong.yml`, so `pctl init` (or `pctl sync`) remains the supported bootstrap.
 
 ---
 
 ## B. Build a business service on a runtime image
 
-Go (after `CGO_ENABLED=0 go build -o server .`):
-
 ```dockerfile
 FROM ghcr.io/platfarmai/runtime-go:latest
 COPY --chown=platfarm:platfarm server /server
-COPY --chown=platfarm:platfarm contract-test /contract-test
 ENTRYPOINT ["/server"]
 ```
 
-Python:
-
-```dockerfile
-FROM ghcr.io/platfarmai/runtime-python:latest
-COPY --chown=platfarm:platfarm . /app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--timeout-graceful-shutdown", "25"]
-```
-
-Mount the platform public key in compose (same as first-party services):
-
-```yaml
-volumes:
-  - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
-```
-
-Implement `GET /healthz` and `GET /readyz` (see specs/005). Verify JWTs with RS256 and `iss=pf-auth`.
-
-PHP / Rust: `FROM ghcr.io/platfarmai/runtime-php` or `runtime-rust`, then COPY the app or binary.
+Mount `./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro`. Implement `/healthz` and `/readyz`. Verify JWT with RS256 and `iss=pf-auth`.
 
 ---
 
-## C. Pull auth only (embed in another compose)
+## C. Pull auth only
 
 ```yaml
 services:
@@ -106,13 +61,3 @@ services:
 ```
 
 JWKS: `GET http://auth:8080/auth/.well-known/jwks.json`.
-
----
-
-## Packages visibility
-
-GHCR packages default to private for new orgs. After the first release workflow:
-
-GitHub → **platfarmai** → **Packages** → each image → **Package settings** → **Change visibility** → Public.
-
-Until then, consumers need `docker login ghcr.io` with a PAT (`read:packages`).

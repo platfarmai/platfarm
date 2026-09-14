@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-go@v5
         with:
@@ -27,7 +29,7 @@ jobs:
           go vet ./...
           CGO_ENABLED=0 go build -o /dev/null .
 
-      - name: pctl vet + build
+      - name: pctl vet + build (submodule platfarmai/pctl)
         working-directory: tools/pctl
         run: |
           go mod tidy
@@ -42,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: 准备环境文件
         run: cp .env.example .env

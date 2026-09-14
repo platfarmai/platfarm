@@ -32,12 +32,12 @@ PlatFarm 是基于容器服务的**融合开发模式**：一个 API 网关对�
 ### 2.1 一键开箱（只需 Docker 的干净机器）
 
 ```bash
-git clone https://github.com/platfarmai/platfarm.git platfarm && cd platfarm
+git clone --recurse-submodules https://github.com/platfarmai/platfarm.git platfarm && cd platfarm
 cp .env.example .env                          # 默认指向捆绑数据库
 docker compose --profile bundled-db up -d --build
 ```
 
-**拉已发布镜像（不要 `--build`）：** [docs/consuming-images.zh-CN.md](docs/consuming-images.zh-CN.md) · `deploy/compose.release.yml`。
+**拉已发布镜像（不要 `--build`）：** 从 [Releases](https://github.com/platfarmai/pctl/releases) 下载 `pctl` → `pctl init` → `deploy/compose.release.yml`。见 [docs/docker-compose-quickstart.zh-CN.md](docs/docker-compose-quickstart.zh-CN.md) 路径 B。
 
 验证（开发种子账号 `admin/admin123`、`alice/user123`）：
 
@@ -58,7 +58,9 @@ curl -s http://localhost:18000/api/demo/public/ping
 ### 2.2 构建平台 CLI（首次一次）
 
 ```bash
+git submodule update --init --recursive   # clone 未加 --recurse-submodules 时
 cd tools/pctl && go build -o pctl.exe . && cd ../..
+# 或从 https://github.com/platfarmai/pctl/releases 下载二进制
 ```
 
 ### 2.3 新增一个第一方服务（30 秒）

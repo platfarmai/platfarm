@@ -2,9 +2,9 @@
 
 [English](docker-compose-quickstart.md) | [简体中文](docker-compose-quickstart.zh-CN.md)
 
-两种跑法：**路径 A** 从本仓库源码构建（开发默认）；**路径 B** 打 `v*` 后拉 GHCR 镜像（不编译业务代码）。
+**路径 A**：源码构建。**路径 B**：拉 GHCR 镜像，用 **Release 里的 `pctl` 二进制**生成密钥——**不需要**本机装 Go，也**不要**把二进制或 `.keys/` 提交进仓库根目录。
 
-需要 Docker Compose v2。Podman：见 `.env.example` 的 `PF_CONTAINER_CLI`。
+需要 Docker Compose v2。Podman 见 `.env.example`。
 
 ---
 
@@ -17,15 +17,11 @@ cp .env.example .env
 docker compose --profile bundled-db up -d --build
 ```
 
-等 `auth` healthy（`docker compose ps`）后：
-
 | 地址 | 作用 |
 |---|---|
-| http://localhost:18000/ | 平台入口 JSON |
-| http://localhost:18000/api/demo/public/ping | 演示服务（无需 token） |
-| http://localhost:18001/ | 管理台（仅本机；`admin` / `admin123`） |
-
-登录：
+| http://localhost:18000/ | 平台入口 |
+| http://localhost:18000/api/demo/public/ping | 演示（无需 token） |
+| http://localhost:18001/ | 管理台（`admin` / `admin123`） |
 
 ```bash
 curl -s -X POST http://localhost:18000/auth/login \
@@ -33,78 +29,47 @@ curl -s -X POST http://localhost:18000/auth/login \
   -d '{"Username":"admin","Password":"admin123"}'
 ```
 
-`accessToken` 放到 `Authorization: Bearer …` 调 `/api/demo/me`。另一个种子用户：`alice` / `user123`。
-
-**`--profile bundled-db`：** 启动自带 Postgres（库 `pf_auth`）。已有数据库则在 `.env` 写 `DATABASE_URL`（见 `.env.example` 模式 B/C），不要加 profile：
+`--profile bundled-db` 启动自带 Postgres；已有库则改 `DATABASE_URL` 并去掉 profile。密钥由首次 `pctl sync` / auth 启动写入 `.keys/`。
 
 ```bash
-docker compose up -d --build
-```
-
-**密钥：** 首次 `pctl sync` 或 auth 启动会写 `.keys/`（已 gitignore），不要提交。
-
-**停止：**
-
-```bash
-docker compose --profile bundled-db down          # 保留数据卷
-docker compose --profile bundled-db down -v      # 清空 Postgres/Redis
-```
-
-**多副本**（栈内已有 Redis）：
-
-```bash
+docker compose --profile bundled-db down
 docker compose up -d --scale auth=2 --scale svc-demo=2
 ```
 
 ---
 
-## 路径 B — 拉已发布镜像（不要 `--build`）
+## 路径 B — 镜像 + `pctl` 二进制（不用 Go）
 
-需已跑过 [Release images](../.github/workflows/release-images.yml)。本地仍要 **密钥 + `gateway/kong.yml`**。
+打 `v*` 后，[Releases](https://github.com/platfarmai/pctl/releases) 有各平台 `pctl_*`，GHCR 有 `auth` / `console`。
 
 ```bash
 mkdir platfarm-run && cd platfarm-run
+VER=v0.0.1   # pctl 版本（见 platfarmai/pctl Releases，与平台镜像 v* 独立）
+curl -fsSL -o pctl "https://github.com/platfarmai/pctl/releases/download/${VER}/pctl_${VER}_linux_amd64"
+chmod +x pctl
+
 curl -fsSL https://raw.githubusercontent.com/platfarmai/platfarm/main/deploy/compose.release.yml -o compose.yml
 curl -fsSL https://raw.githubusercontent.com/platfarmai/platfarm/main/deploy/env.release.example -o .env
-mkdir -p gateway .keys
-# 从已跑过路径 A 的目录拷贝：
-#   cp .../gateway/kong.yml gateway/
-#   cp .../.keys/pf-auth.pem* .keys/
+
+./pctl init .          # 生成 .keys/ 与 gateway/kong.yml（无需 clone、无需 Go）
 docker compose --profile bundled-db up -d
 ```
 
-`.env` 里 `PF_IMAGE_TAG=v0.1.0` 可钉版本。
+`pctl init` 产出：`.keys/pf-auth.pem`（私钥，勿提交）、`.keys/pf-auth.pem.pub`、`gateway/kong.yml`（仅 auth 路由，足够登录/JWKS）。以后在完整仓库里 `pctl sync` 再换完整 kong 配置。
 
-GHCR 包若仍是私有：`docker login ghcr.io`，或在组织 Packages 改为 Public。
+Windows：`pctl_${VER}_windows_amd64.exe`。macOS ARM：`darwin_arm64`。
 
-镜像列表与业务 `FROM runtime-*`：[consuming-images.zh-CN.md](consuming-images.zh-CN.md)。
+旧说法「在有 pctl 的开发机上 sync 再拷贝 `.keys/`」绕了一圈；Release 附件本身就是 pctl，应在运行目录直接 `pctl init`。
+
+镜像与业务 `FROM runtime-*`：[consuming-images.zh-CN.md](consuming-images.zh-CN.md)。
 
 ---
 
-## 端口与文件（两条路径相同）
+## 端口与常见问题
 
 | 端口 | 绑定 | 服务 |
 |---|---|---|
-| 18000 | `0.0.0.0` | Kong（唯一对外入口） |
-| 18001 | `127.0.0.1` | 管理台 |
-| 无宿主机端口 | 内网 | auth、redis、postgres、业务服务 |
+| 18000 | 公网 | Kong |
+| 18001 | 本机 | 管理台 |
 
-| 文件 | 作用 |
-|---|---|
-| `docker-compose.yml` | 基座：auth、console、redis、可选 postgres |
-| `docker-compose.services.yml` | **生成物**（`pctl sync`），勿手改 |
-| `gateway/kong.yml` | **生成物** Kong 配置 |
-| `.env` | 从 `.env.example` 复制 |
-| `.keys/` | RS256 密钥对 |
-
----
-
-## 常见问题
-
-| 现象 | 原因 |
-|---|---|
-| `auth` 一直不 healthy | 连不上 Postgres：检查 `DATABASE_URL` / 是否加了 `bundled-db` |
-| 登录 502 | 等 gateway **healthy** |
-| `/api/demo/me` 401 | 没带或过期了 Bearer，重新 login |
-| 拷贝密钥后 Kong JWT 失败 | `kong.yml` 里公钥须与 `.keys/*.pub` 一致，在源码树执行 `pctl sync` |
-| 18000 被占用 | 停掉占用进程或改 compose 宿主机端口 |
+路径 B 默认**没有** svc-demo；只有 auth/console/redis/postgres。要演示 API 请用路径 A，或自行加服务后再 `pctl sync`。
