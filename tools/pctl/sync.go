@@ -36,7 +36,12 @@ func runSync(root string) error {
 		}
 	}
 
-	kong := renderKong(enabled, pubPEM)
+	if v := envFromRoot(root, "PF_REDIS_URL"); v != "" {
+		os.Setenv("PF_REDIS_URL", v)
+	} else {
+		os.Setenv("PF_REDIS_URL", "redis://redis:6379/0")
+	}
+	kong := renderKong(enabled, pubPEM, redisRateLimit())
 	if err := os.WriteFile(filepath.Join(root, "gateway", "kong.yml"), []byte(kong), 0o644); err != nil {
 		return fmt.Errorf("write kong.yml: %w", err)
 	}
@@ -78,28 +83,58 @@ func ensureKeys(root string) (string, error) {
 	return string(pubPEM), nil
 }
 
-func renderKong(manifests []Manifest, pubPEM string) string {
+func readEnvVar(path, key string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == key {
+			return strings.Trim(strings.TrimSpace(v), `"'`), nil
+		}
+	}
+	return "", fmt.Errorf("%s not in %s", key, path)
+}
+
+func envFromRoot(root, key string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	v, err := readEnvVar(filepath.Join(root, ".env"), key)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
+}
+
+func redisRateLimit() bool {
+	v := strings.TrimSpace(os.Getenv("PF_REDIS_URL"))
+	return v != "" && v != "0" && strings.ToLower(v) != "false"
+}
+
+func rateLimitYAML(minute int, indent string) string {
+	if redisRateLimit() {
+		return fmt.Sprintf("%s- name: rate-limiting\n%s  config: { minute: %d, policy: redis, redis: { host: redis, port: 6379, timeout: 2000 }, limit_by: ip }\n", indent, indent, minute)
+	}
+	return fmt.Sprintf("%s- name: rate-limiting\n%s  config: { minute: %d, policy: local, limit_by: ip }\n", indent, indent, minute)
+}
+
+func renderKong(manifests []Manifest, pubPEM string, _ bool) string {
 	var b strings.Builder
 	b.WriteString("_format_version: \"3.0\"\n\n")
 	b.WriteString(generatedHeader)
-	b.WriteString(`
-services:
-  # ── auth 底座（平台静态部分）：/auth 公开，/internal 不路由 ──
-  - name: auth
-    url: http://auth:8080
-    routes:
-      - name: auth-route
-        paths: ["/auth"]
-        strip_path: false
-        plugins:
-          - name: rate-limiting
-            config: { minute: 60, policy: local, limit_by: ip }
-      - name: platform-root # 根路径平台信息 + 未匹配路径的 JSON 404 兜底（auth 处理）
-        paths: ["/"]
-        strip_path: false
-`)
+	b.WriteString("services:\n")
+	b.WriteString("  - name: auth\n    url: http://auth:8080\n    retries: 2\n    routes:\n")
+	b.WriteString("      - name: auth-route\n        paths: [\"/auth\"]\n        strip_path: false\n        plugins:\n")
+	b.WriteString(rateLimitYAML(60, "          "))
+	b.WriteString("      - name: platform-root\n        paths: [\"/\"]\n        strip_path: false\n")
 	for _, m := range manifests {
-		fmt.Fprintf(&b, "\n  - name: %s\n    url: http://%s:%d\n    routes:\n", m.ID, m.ID, m.Runtime.Port)
+		fmt.Fprintf(&b, "\n  - name: %s\n    url: http://%s:%d\n    retries: 2\n    routes:\n", m.ID, m.ID, m.Runtime.Port)
 		for i, p := range publicPrefixes(m) {
 			fmt.Fprintf(&b, "      - name: %s-public-%d\n        paths: [\"%s\"]\n        strip_path: %v\n", m.ID, i, p, m.Mount.StripPath)
 		}
@@ -111,7 +146,7 @@ services:
 			b.WriteString("          - name: jwt\n            config: { key_claim_name: iss, claims_to_verify: [\"exp\"] }\n")
 		}
 		if m.Limits.RatePerMinute > 0 {
-			fmt.Fprintf(&b, "          - name: rate-limiting\n            config: { minute: %d, policy: local, limit_by: ip }\n", m.Limits.RatePerMinute)
+			b.WriteString(rateLimitYAML(m.Limits.RatePerMinute, "          "))
 		}
 	}
 	b.WriteString(`

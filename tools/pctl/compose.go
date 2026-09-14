@@ -49,12 +49,14 @@ func renderGateway(b *strings.Builder, pluginNets []string) {
       KONG_PROXY_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_LISTEN: "127.0.0.1:8001"
-      KONG_NGINX_WORKER_PROCESSES: "1" # 单机限流精确；多实例改 redis policy
+      KONG_NGINX_WORKER_PROCESSES: ${KONG_NGINX_WORKER_PROCESSES:-1} # Redis 限流时可改为 auto
     ports:
       - "18000:8000"
     volumes:
       - ./gateway/kong.yml:/kong/kong.yml:ro
-    depends_on: [auth]
+    depends_on:
+      auth:
+        condition: service_healthy` + redisDepends() + `
     healthcheck:
       test: ["CMD", "kong", "health"]
       interval: 5s
@@ -103,6 +105,10 @@ func renderService(b *strings.Builder, m Manifest) {
 	if len(m.Runtime.Env) > 0 || len(m.Auth.AcceptServiceTokens) > 0 {
 		b.WriteString("    environment:\n")
 		for _, v := range m.Runtime.Env {
+			if v == "PF_REDIS_URL" {
+				fmt.Fprintf(b, "      %s: ${PF_REDIS_URL:-redis://redis:6379/0}\n", v)
+				continue
+			}
 			fmt.Fprintf(b, "      %s: ${%s}\n", v, v)
 		}
 		if len(m.Auth.AcceptServiceTokens) > 0 {
@@ -113,7 +119,26 @@ func renderService(b *strings.Builder, m Manifest) {
 	if !m.IsThirdParty() || m.Permissions.NeedsIdentity {
 		b.WriteString("    volumes:\n      - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro\n")
 	}
+	drain := m.Runtime.DrainSeconds
+	if drain <= 0 {
+		drain = 25
+	}
+	port := m.Runtime.Port
+	if port <= 0 {
+		port = 8080
+	}
+	fmt.Fprintf(b, "    stop_grace_period: %ds\n", drain+5)
+	fmt.Fprintf(b, "    healthcheck:\n      test: [\"CMD\", \"wget\", \"-qO-\", \"http://127.0.0.1:%d/readyz\"]\n      interval: 5s\n      timeout: 3s\n      retries: 3\n      start_period: 15s\n", port)
 	b.WriteString("    networks:\n" + netList([]string{m.NetworkName()}))
+}
+
+func redisDepends() string {
+	if redisRateLimit() {
+		return `
+      redis:
+        condition: service_started`
+	}
+	return ""
 }
 
 func netList(nets []string) string {

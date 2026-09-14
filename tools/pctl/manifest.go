@@ -47,9 +47,10 @@ type Manifest struct {
 		Cpus   string `yaml:"cpus"`
 	} `yaml:"resources"`
 	Runtime struct {
-		Port   int      `yaml:"port"`
-		Health string   `yaml:"health"`
-		Env    []string `yaml:"env"`
+		Port         int      `yaml:"port"`
+		Health       string   `yaml:"health"`
+		DrainSeconds int      `yaml:"drain_seconds"` // SIGTERM 排空上限，默认 25（specs/005）
+		Env          []string `yaml:"env"`
 	} `yaml:"runtime"`
 	Data struct {
 		Database string `yaml:"database"`
