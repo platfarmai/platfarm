@@ -25,6 +25,8 @@ Full design & 17 ADRs: [docs/architecture-v2.md](docs/architecture-v2.md)
 
 ## 2. Getting Started
 
+**Compose one-pager** (source build vs GHCR pull, ports, teardown, scale): [docs/docker-compose-quickstart.md](docs/docker-compose-quickstart.md).
+
 ### 2.1 One-command bootstrap (a clean machine with only Docker)
 
 ```bash
@@ -32,6 +34,8 @@ git clone git@github.com:platfarmai/platfarm.git platfarm && cd platfarm
 cp .env.example .env                          # defaults to the bundled database
 docker compose --profile bundled-db up -d --build
 ```
+
+**Pre-built images (no `--build`):** [docs/consuming-images.md](docs/consuming-images.md) · `deploy/compose.release.yml`.
 
 Verify (dev seed accounts `admin/admin123`, `alice/user123`):
 
@@ -157,6 +161,6 @@ docs/                         architecture & tutorials
 
 ## 6. Status & Roadmap
 
-Shipped: auth base (RS256+JWKS), gateway verification/rate limiting, the full pctl command set, third-party login (mock/GitHub), the third-party plugin sandbox (dedicated networks + isolated plugin-pg + credential system), admin console, multi-replica compatibility, four verified language templates.
+Shipped: auth base (RS256+JWKS), gateway verification/rate limiting, the full pctl command set, third-party login (mock/GitHub), the third-party plugin sandbox, admin console, multi-replica Redis, four language templates, GHCR image release on `v*` tags.
 
 Roadmap (Phase 4+ remainder: response encryption, log pipeline, SDK consolidation): architecture-v2.md §9. Plugin marketplace design: [docs/features/plugin-marketplace.md](docs/features/plugin-marketplace.md).

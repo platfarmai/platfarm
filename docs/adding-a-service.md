@@ -16,7 +16,7 @@
 |---|---|
 | `service.yaml` | 服务清单：挂载点、公开路由、限流、环境变量声明（平台唯一读取的契约） |
 | `main.py` | FastAPI 骨架，内置六步验签中间件（`identity()`）与 `/me` `/public/ping` 示例路由 |
-| `Dockerfile` | alpine + python3，可整体替换为任意技术栈（保住 8080 端口与 /healthz 即可） |
+| `Dockerfile` | alpine + python3；也可 `FROM ghcr.io/platfarmai/runtime-python`（见 [consuming-images](consuming-images.md)） |
 | `tests/contract/contract_test.py` | 契约测试三件套，`pctl check --e2e` 在容器内执行 |
 | `openapi.yaml` | 接口契约，pctl sync 聚合到网关 `/docs`（规划中） |
 

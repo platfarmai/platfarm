@@ -1,3 +1,4 @@
+# Release images: FROM ghcr.io/platfarmai/runtime-php:${PF_IMAGE_TAG:-latest}
 FROM php:8.3-cli-alpine
 RUN apk add --no-cache wget
 WORKDIR /app

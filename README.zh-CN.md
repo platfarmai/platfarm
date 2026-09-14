@@ -27,13 +27,17 @@ PlatFarm 是基于容器服务的**融合开发模式**：一个 API 网关对�
 
 ## 2. 上手流程
 
+**Compose 一键说明**（源码构建 / 拉镜像、端口、停止、扩容）：[docs/docker-compose-quickstart.zh-CN.md](docs/docker-compose-quickstart.zh-CN.md)。
+
 ### 2.1 一键开箱（只需 Docker 的干净机器）
 
 ```bash
-git clone <repo> platfarm && cd platfarm
+git clone https://github.com/platfarmai/platfarm.git platfarm && cd platfarm
 cp .env.example .env                          # 默认指向捆绑数据库
 docker compose --profile bundled-db up -d --build
 ```
+
+**拉已发布镜像（不要 `--build`）：** [docs/consuming-images.zh-CN.md](docs/consuming-images.zh-CN.md) · `deploy/compose.release.yml`。
 
 验证（开发种子账号 `admin/admin123`、`alice/user123`）：
 

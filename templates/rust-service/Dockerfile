@@ -8,6 +8,7 @@ COPY . .
 RUN cargo build --release --bins
 
 FROM alpine:3.20
+# Release images: FROM ghcr.io/platfarmai/runtime-rust:${PF_IMAGE_TAG:-latest}
 RUN apk add --no-cache wget
 COPY --from=build /src/target/release/server /server
 COPY --from=build /src/target/release/contract-test /contract-test
