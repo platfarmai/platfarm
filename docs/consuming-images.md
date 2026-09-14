@@ -6,10 +6,12 @@
 
 | Repo | On `v*` tag | Artifacts |
 |---|---|---|
-| [platfarmai/platfarm](https://github.com/platfarmai/platfarm) | **Release images** | GHCR: `auth`, `console`, `runtime-*` |
-| [platfarmai/pctl](https://github.com/platfarmai/pctl) | **Release pctl** | Multi-platform `pctl_*` binaries + `SHA256SUMS.txt` |
+| [platfarmai/platfarm](https://github.com/platfarmai/platfarm) | **Release images** | GHCR: `auth`, `console` |
+| [platfarmai/pctl](https://github.com/platfarmai/pctl) | **Release pctl** | Multi-platform `pctl_*` binaries |
 
-Do **not** commit binaries into either repo. Download CLI from [pctl Releases](https://github.com/platfarmai/pctl/releases). Gateway remains `kong:3.9`. Set GHCR package visibility to **Public** after the first platfarm image release.
+We do **not** publish language `runtime-*` base images. Service templates already ship self-contained Dockerfiles (`alpine` / `php:cli` + app). Extra GHCR bases would only duplicate that.
+
+Download CLI from [pctl Releases](https://github.com/platfarmai/pctl/releases). Gateway remains `kong:3.9`. Set GHCR package visibility to **Public** after the first platfarm image release.
 
 ---
 
@@ -28,17 +30,21 @@ docker compose --profile bundled-db up -d
 
 `pctl init` creates `.keys/` and a minimal `gateway/kong.yml`. Details: [docker-compose-quickstart.md](docker-compose-quickstart.md) Path B.
 
-**Why not “copy .keys from a machine that has pctl”?** That was an awkward doc path: Path B should not assume a developer checkout. The release binary *is* pctl.
-
-Auth can also create keys on first boot if the volume is empty — but Kong still needs the matching public key in `kong.yml`, so `pctl init` (or `pctl sync`) remains the supported bootstrap.
-
 ---
 
-## B. Build a business service on a runtime image
+## B. Build your own business service
+
+Use the Dockerfiles under `templates/*-service` (or your own). Typical Go pattern:
 
 ```dockerfile
-FROM ghcr.io/platfarmai/runtime-go:latest
-COPY --chown=platfarm:platfarm server /server
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/server .
+
+FROM alpine:3.20
+RUN apk add --no-cache wget
+COPY --from=build /out/server /server
 ENTRYPOINT ["/server"]
 ```
 

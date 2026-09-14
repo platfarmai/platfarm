@@ -26,24 +26,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Platform components only — language "runtime-*" bases are just thin Alpine
+          # wrappers; services keep self-contained Dockerfiles in templates/.
           - name: auth
             context: platform/auth
             file: platform/auth/Dockerfile
           - name: console
             context: tools/pctl
             file: tools/pctl/Dockerfile.console
-          - name: runtime-go
-            context: images/runtime-go
-            file: images/runtime-go/Dockerfile
-          - name: runtime-python
-            context: images/runtime-python
-            file: images/runtime-python/Dockerfile
-          - name: runtime-php
-            context: images/runtime-php
-            file: images/runtime-php/Dockerfile
-          - name: runtime-rust
-            context: images/runtime-rust
-            file: images/runtime-rust/Dockerfile
     steps:
       - uses: actions/checkout@v4
         with:

@@ -7,7 +7,6 @@ RUN go mod tidy \
     && CGO_ENABLED=0 go build -o /out/contract-test ./tests/contract
 
 FROM alpine:3.20
-# Release images: FROM ghcr.io/platfarmai/runtime-go:${PF_IMAGE_TAG:-latest}
 RUN apk add --no-cache wget
 COPY --from=build /out/server /server
 COPY --from=build /out/contract-test /contract-test

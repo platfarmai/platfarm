@@ -3,7 +3,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/platfarmai/platfarm/main/deploy/compose.release.yml -o compose.yml
 #   docker compose --env-file .env -f compose.yml --profile bundled-db up -d
 #
-# Images: ghcr.io/platfarmai/auth, console, runtime-*  (tag = git tag, e.g. v0.1.0)
+# Images: ghcr.io/platfarmai/auth, console  (tag = git tag, e.g. v0.1.0)
 # Gateway remains public kong:3.9; Redis/Postgres are official images.
 
 name: platfarm

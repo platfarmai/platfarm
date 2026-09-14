@@ -61,7 +61,7 @@ Windows：`pctl_${VER}_windows_amd64.exe`。macOS ARM：`darwin_arm64`。
 
 旧说法「在有 pctl 的开发机上 sync 再拷贝 `.keys/`」绕了一圈；Release 附件本身就是 pctl，应在运行目录直接 `pctl init`。
 
-镜像与业务 `FROM runtime-*`：[consuming-images.zh-CN.md](consuming-images.zh-CN.md)。
+镜像说明（仅 auth/console）：[consuming-images.zh-CN.md](consuming-images.zh-CN.md)。
 
 ---
 

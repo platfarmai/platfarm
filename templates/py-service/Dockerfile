@@ -1,4 +1,3 @@
-# Release images: FROM ghcr.io/platfarmai/runtime-python:${PF_IMAGE_TAG:-latest}
 FROM alpine:3.20
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/repositories \
     && apk add --no-cache python3 py3-pip py3-cryptography wget \
