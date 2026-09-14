@@ -8,6 +8,7 @@ COPY . .
 RUN cargo build --release --bins
 
 FROM alpine:3.20
+RUN apk add --no-cache wget
 COPY --from=build /src/target/release/server /server
 COPY --from=build /src/target/release/contract-test /contract-test
 EXPOSE 8080

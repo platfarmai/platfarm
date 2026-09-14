@@ -78,6 +78,7 @@ $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 match ($path) {
     MOUNT . '/public/ping' => respond(200, ['pong' => true, 'service' => '__SVC_ID__', 'auth' => 'not required']),
     '/healthz' => respond(200, ['ok' => true]),
+    '/readyz' => respond(200, ['ok' => true]), // php -S 无 SIGTERM drain；stop_grace_period 到期可能切断在途请求（specs/005）
     MOUNT . '/me' => (function () {
         try {
             $c = identity(getallheaders());

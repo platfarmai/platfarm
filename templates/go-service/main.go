@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -9,7 +10,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -35,6 +41,7 @@ type Claims struct {
 var (
 	pubKey         *rsa.PublicKey
 	acceptServices = map[string]bool{}
+	draining       atomic.Bool
 )
 
 func mustLoadPub() {
@@ -132,7 +139,32 @@ func main() {
 	})
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	r.GET("/readyz", func(c *gin.Context) {
+		if draining.Load() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "draining"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
 
-	log.Println("__SVC_ID__ listening on :8080")
-	log.Fatal(r.Run(":8080"))
+	srv := &http.Server{Addr: ":8080", Handler: r}
+	go func() {
+		log.Println("__SVC_ID__ listening on :8080")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	<-ch
+	draining.Store(true)
+	n := 25
+	if v := os.Getenv("PF_DRAIN_SECONDS"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			n = p
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(n)*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
 }
