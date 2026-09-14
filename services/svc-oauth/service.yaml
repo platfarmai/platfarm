@@ -24,6 +24,7 @@ runtime:
     - PF_CLIENT_SECRET
     - GITHUB_CLIENT_ID
     - GITHUB_CLIENT_SECRET
+    - PF_REDIS_URL
 
 test:
   command: python3 tests/contract/contract_test.py

@@ -1,9 +1,28 @@
 """svc-demo — Platfarm 业务服务（接入约定见 docs/architecture-v2.md §2.2 + 附录 H.5）。"""
 
 import os
+import signal
+from contextlib import asynccontextmanager
 
 import jwt
 from fastapi import FastAPI, Header, HTTPException
+
+_draining = False
+
+
+def _begin_drain(*_args):
+    global _draining
+    _draining = True
+
+
+signal.signal(signal.SIGTERM, _begin_drain)
+signal.signal(signal.SIGINT, _begin_drain)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    _begin_drain()
 
 # RS256 公钥由平台挂载（pctl sync 生成的 compose 注入；公钥非密）
 PUB = open(os.environ.get("JWT_PUBLIC_KEY_FILE", "/pf/jwt.pub")).read()
@@ -12,7 +31,7 @@ MOUNT = "/api/demo"
 # 允许用 service token 调本服务的调用方白名单（service.yaml accept_service_tokens 注入）
 ACCEPT_SERVICES = {s for s in os.environ.get("PF_ACCEPT_SERVICE_TOKENS", "").split(",") if s}
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 
 def decode(token: str) -> dict:
@@ -65,5 +84,12 @@ def me(
 
 @app.get("/healthz")
 def healthz():
+    return {"ok": True}
+
+
+@app.get("/readyz")
+def readyz():
+    if _draining:
+        raise HTTPException(503, "draining")
     return {"ok": True}
 

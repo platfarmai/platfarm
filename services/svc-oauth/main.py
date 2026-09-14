@@ -10,27 +10,87 @@ import time
 import urllib.parse
 import urllib.request
 
+import signal
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
+
+_draining = False
+
+
+def _begin_drain(*_args):
+    global _draining
+    _draining = True
+
+
+signal.signal(signal.SIGTERM, _begin_drain)
+signal.signal(signal.SIGINT, _begin_drain)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    _begin_drain()
 
 AUTH_URL = os.environ.get("AUTH_URL", "http://auth:8080")
 CLIENT_ID = os.environ.get("PF_CLIENT_ID", "svc-oauth")
 CLIENT_SECRET = os.environ.get("PF_CLIENT_SECRET", "")
 SELF_URL = os.environ.get("SELF_URL", "http://localhost:18000")  # 回调外部地址
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
-# 内存 TTL 存储（单实例；多副本按无状态铁律换 Redis，附录 H.7）
-_states: dict[str, float] = {}  # state -> 过期时间戳
-_codes: dict[str, tuple[float, dict]] = {}  # 一次性兑换码 -> (过期, token对)
+# 内存 TTL；PF_REDIS_URL 设置后改 Redis，供 --scale 多副本共享
+_states: dict[str, float] = {}
+_codes: dict[str, tuple[float, dict]] = {}
 STATE_TTL, CODE_TTL = 600, 30
+_rdb = None
+if os.environ.get("PF_REDIS_URL"):
+    import redis as _redis
+
+    _rdb = _redis.Redis.from_url(os.environ["PF_REDIS_URL"], decode_responses=True)
 
 
 def _sweep() -> None:
+    if _rdb is not None:
+        return
     now = time.time()
     for d in (_states, _codes):
         for k in [k for k, v in d.items() if (v if isinstance(v, float) else v[0]) < now]:
             d.pop(k, None)
+
+
+def _put_state(state: str) -> None:
+    if _rdb is not None:
+        _rdb.setex("pf:oauth:state:" + state, STATE_TTL, "1")
+        return
+    _states[state] = time.time() + STATE_TTL
+
+
+def _take_state(state: str) -> bool:
+    if _rdb is not None:
+        return bool(_rdb.delete("pf:oauth:state:" + state))
+    exp = _states.pop(state, 0)
+    return exp >= time.time()
+
+
+def _put_code(code: str, tokens: dict) -> None:
+    if _rdb is not None:
+        _rdb.setex("pf:oauth:code:" + code, CODE_TTL, json.dumps(tokens))
+        return
+    _codes[code] = (time.time() + CODE_TTL, tokens)
+
+
+def _take_code(code: str) -> dict | None:
+    if _rdb is not None:
+        raw = _rdb.getdel("pf:oauth:code:" + code)
+        if not raw:
+            return None
+        return json.loads(raw)
+    entry = _codes.pop(code, None)
+    if entry is None or entry[0] < time.time():
+        return None
+    return entry[1]
 
 
 def _post_json(url: str, body: dict, headers: dict | None = None) -> dict:
@@ -111,7 +171,7 @@ def authorize(provider: str):
         raise HTTPException(404, "unknown provider")
     _sweep()
     state = secrets.token_urlsafe(24)
-    _states[state] = time.time() + STATE_TTL
+    _put_state(state)
     return RedirectResponse(PROVIDERS[provider][0](state), status_code=302)
 
 
@@ -119,25 +179,31 @@ def authorize(provider: str):
 def callback(provider: str, code: str, state: str):
     if provider not in PROVIDERS:
         raise HTTPException(404, "unknown provider")
-    if _states.pop(state, 0) < time.time():
+    if not _take_state(state):
         raise HTTPException(401, "invalid or expired state")  # 防 CSRF
     external_id, display = PROVIDERS[provider][1](code)
     tokens = exchange_external(provider, external_id, display)
-    # 禁止 JWT 进重定向 URL：发 30s 一次性兑换码（附录 G）
     once = secrets.token_urlsafe(24)
-    _codes[once] = (time.time() + CODE_TTL, tokens)
+    _put_code(once, tokens)
     return {"exchangeCode": once, "expiresIn": CODE_TTL}
 
 
 @app.post("/api/oauth/exchange")
 def exchange(body: dict):
     _sweep()
-    entry = _codes.pop(body.get("code", ""), None)  # pop = 只能用一次
-    if entry is None or entry[0] < time.time():
+    tokens = _take_code(body.get("code", ""))
+    if tokens is None:
         raise HTTPException(401, "invalid or expired exchange code")
-    return entry[1]
+    return tokens
 
 
 @app.get("/healthz")
 def healthz():
+    return {"ok": True}
+
+
+@app.get("/readyz")
+def readyz():
+    if _draining:
+        raise HTTPException(503, "draining")
     return {"ok": True}
