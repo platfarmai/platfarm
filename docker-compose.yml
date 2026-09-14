@@ -11,10 +11,21 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL} # 三种模式见 .env.example
       JWT_PRIVATE_KEY_FILE: /keys/pf-auth.pem
+      PF_REDIS_URL: ${PF_REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./.keys:/keys
     extra_hosts:
       - "host.docker.internal:host-gateway" # 宿主机/外部数据库模式需要
+    depends_on:
+      redis:
+        condition: service_healthy
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
     networks:
       - core-net
 
@@ -30,11 +41,13 @@ services:
       AUTH_URL: http://auth:8080
       JWT_PUBLIC_KEY_FILE: /workspace/.keys/pf-auth.pem.pub
       PF_COMPOSE_PROJECT: platfarm
+      PF_CONTAINER_HOST: unix:///var/run/docker.sock
     volumes:
       - .:/workspace                            # 真相源文件（sync/启停标记）
-      - /var/run/docker.sock:/var/run/docker.sock # 全平台唯一持有 socket 的容器
+      - ${PF_CONTAINER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock # Podman: PF_CONTAINER_SOCKET=/run/user/$UID/podman/podman.sock
     depends_on:
-      - auth
+      auth:
+        condition: service_healthy
     networks:
       - core-net
 
@@ -56,12 +69,16 @@ services:
     networks:
       - core-net
 
-  # ── 可选：捆绑 Redis（多实例限流/吊销黑名单/插件租约，--profile bundled-redis） ──
+  # ── Redis：--scale 多副本时限流/吊销/oauth state 共享（单副本也可连，空则回退内存） ──
   redis:
     image: redis:7-alpine
-    profiles: ["bundled-redis"]
     volumes:
       - pf-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - core-net
 

@@ -8,12 +8,16 @@ services:
       KONG_PROXY_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_LISTEN: "127.0.0.1:8001"
-      KONG_NGINX_WORKER_PROCESSES: "1" # 单机限流精确；多实例改 redis policy
+      KONG_NGINX_WORKER_PROCESSES: ${KONG_NGINX_WORKER_PROCESSES:-1} # Redis 限流时可改为 auto
     ports:
       - "18000:8000"
     volumes:
       - ./gateway/kong.yml:/kong/kong.yml:ro
-    depends_on: [auth]
+    depends_on:
+      auth:
+        condition: service_healthy
+      redis:
+        condition: service_started
     healthcheck:
       test: ["CMD", "kong", "health"]
       interval: 5s
@@ -25,6 +29,13 @@ services:
     build: ./services/svc-demo
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
     networks:
       - core-net
   svc-oauth:
@@ -34,7 +45,15 @@ services:
       PF_CLIENT_SECRET: ${PF_CLIENT_SECRET}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      PF_REDIS_URL: ${PF_REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
     networks:
       - core-net
