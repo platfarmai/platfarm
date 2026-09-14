@@ -117,3 +117,4 @@ Runtimes for your own services: [consuming-images.md](consuming-images.md).
 | `401` on `/api/demo/me` | Path B has no demo service until you add one / use Path A |
 | JWT verify fails | `kong.yml` public key ≠ `.keys/*.pub` — re-run `pctl init` or `pctl sync` |
 | Port 18000 busy | Change host port or stop the other process |
+| Redis AUTH errors / Kong rate-limit fail | Set `PF_REDIS_URL=redis://:password@host:6379/0`, run `pctl sync`, recreate gateway — **no need to rebuild auth/oauth images** |

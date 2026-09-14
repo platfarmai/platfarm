@@ -73,3 +73,5 @@ Windows：`pctl_${VER}_windows_amd64.exe`。macOS ARM：`darwin_arm64`。
 | 18001 | 本机 | 管理台 |
 
 路径 B 默认**没有** svc-demo；只有 auth/console/redis/postgres。要演示 API 请用路径 A，或自行加服务后再 `pctl sync`。
+
+Redis 有密码：`.env` 设 `PF_REDIS_URL=redis://:密码@host:6379/0`，然后 `pctl sync` 并重启 gateway。**不必重打 auth/oauth 镜像**（它们读整串 URL；Kong 配置由 sync 生成）。
