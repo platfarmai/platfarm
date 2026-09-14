@@ -125,34 +125,6 @@ func (s *server) bearerRaw(r *http.Request) (*Claims, error) {
 	return s.parse(strings.TrimPrefix(h, "Bearer "))
 }
 
-// ── 吊销黑名单（单实例内存；多实例换 Redis，见附录 C）──
-
-func (s *server) revoke(c *Claims) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.revoked[c.TokenId] = c.ExpiresAt.Time
-}
-
-func (s *server) isRevoked(tokenID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, ok := s.revoked[tokenID]
-	return ok
-}
-
-func (s *server) janitor() {
-	for range time.Tick(10 * time.Minute) {
-		now := time.Now()
-		s.mu.Lock()
-		for id, exp := range s.revoked {
-			if now.After(exp) {
-				delete(s.revoked, id)
-			}
-		}
-		s.mu.Unlock()
-	}
-}
-
 type tokenPair struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken"`
