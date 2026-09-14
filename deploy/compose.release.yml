@@ -1,0 +1,109 @@
+# Consume published GHCR images (no local build).
+# One-pager: docs/docker-compose-quickstart.md (Path B)
+#   curl -fsSL https://raw.githubusercontent.com/platfarmai/platfarm/main/deploy/compose.release.yml -o compose.yml
+#   docker compose --env-file .env -f compose.yml --profile bundled-db up -d
+#
+# Images: ghcr.io/platfarmai/auth, console, runtime-*  (tag = git tag, e.g. v0.1.0)
+# Gateway remains public kong:3.9; Redis/Postgres are official images.
+
+name: platfarm
+
+services:
+  gateway:
+    image: kong:3.9
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: "127.0.0.1:8001"
+      KONG_NGINX_WORKER_PROCESSES: ${KONG_NGINX_WORKER_PROCESSES:-1}
+    ports:
+      - "18000:8000"
+    volumes:
+      - ${KONG_YAML:-./gateway/kong.yml}:/kong/kong.yml:ro
+    depends_on:
+      auth:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [core-net]
+
+  auth:
+    image: ghcr.io/platfarmai/auth:${PF_IMAGE_TAG:-latest}
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_PRIVATE_KEY_FILE: /keys/pf-auth.pem
+      PF_REDIS_URL: ${PF_REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ${PF_KEYS_DIR:-./.keys}:/keys:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks: [core-net]
+
+  console:
+    image: ghcr.io/platfarmai/console:${PF_IMAGE_TAG:-latest}
+    ports:
+      - "127.0.0.1:18001:8080"
+    environment:
+      PLATFARM_ROOT: /workspace
+      AUTH_URL: http://auth:8080
+      JWT_PUBLIC_KEY_FILE: /workspace/.keys/pf-auth.pem.pub
+      PF_COMPOSE_PROJECT: platfarm
+      PF_CONTAINER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - ${PF_WORKSPACE:-.}:/workspace
+      - ${PF_CONTAINER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    depends_on:
+      auth:
+        condition: service_healthy
+    networks: [core-net]
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - pf-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [core-net]
+
+  postgres:
+    image: postgres:18-alpine
+    profiles: ["bundled-db"]
+    environment:
+      POSTGRES_USER: platfarm
+      POSTGRES_PASSWORD: ${BUNDLED_DB_PASSWORD:-platfarm_local}
+      POSTGRES_DB: pf_auth
+    volumes:
+      - pf-pg-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platfarm"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [core-net]
+
+networks:
+  core-net:
+
+volumes:
+  pf-pg-data:
+  pf-redis-data:
