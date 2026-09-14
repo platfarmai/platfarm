@@ -21,7 +21,8 @@ var dockerHTTP = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", "/var/run/docker.sock")
+			network, addr := engineSocket()
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
 		},
 	},
 }

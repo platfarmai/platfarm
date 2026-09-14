@@ -214,7 +214,7 @@ func restartGateway(root string) error {
 }
 
 func dockerRun(root string, args ...string) error {
-	cmd := exec.Command("docker", args...)
+	cmd := exec.Command(containerCLI(), args...)
 	cmd.Dir = root
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -223,7 +223,7 @@ func dockerRun(root string, args ...string) error {
 
 func composeExecCapture(root string, cmdArgs ...string) (string, error) {
 	args := append([]string{"compose", "exec", "-T"}, cmdArgs...)
-	cmd := exec.Command("docker", args...)
+	cmd := exec.Command(containerCLI(), args...)
 	cmd.Dir = root
 	var out bytes.Buffer
 	cmd.Stdout = &out

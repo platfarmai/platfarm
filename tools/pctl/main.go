@@ -152,7 +152,7 @@ func runList(root string) error {
 
 func composeExec(root string, cmdArgs ...string) error {
 	args := append([]string{"compose", "exec", "-T"}, cmdArgs...)
-	cmd := exec.Command("docker", args...)
+	cmd := exec.Command(containerCLI(), args...)
 	cmd.Dir = root
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
