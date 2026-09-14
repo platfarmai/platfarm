@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -29,6 +30,7 @@ type server struct {
 	db            *pgxpool.Pool
 	key           *rsa.PrivateKey
 	loginServices map[string]bool
+	rdb           *redis.Client
 	mu            sync.Mutex
 	revoked       map[string]time.Time
 }
@@ -57,7 +59,10 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-	s := &server{db: db, key: key, loginServices: loginServiceWhitelist(), revoked: map[string]time.Time{}}
+	s := &server{
+		db: db, key: key, loginServices: loginServiceWhitelist(),
+		rdb: openRedis(), revoked: map[string]time.Time{},
+	}
 	go s.janitor()
 
 	mux := http.NewServeMux()
@@ -71,11 +76,12 @@ func main() {
 	mux.HandleFunc("POST /internal/auth/bind-external", s.handleBindExternal)
 	mux.HandleFunc("POST /internal/auth/introspect", s.handleIntrospect)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /{$}", handlePlatformInfo)
 	mux.HandleFunc("/", handleNotFound) // 网关兜底路由指向 auth：未匹配路径返回平台风格 JSON 404
 
 	log.Println("pf-auth (RS256) listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	serveHTTP(mux)
 }
 
 func requireEnv(name string) string {
