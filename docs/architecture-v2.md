@@ -353,6 +353,8 @@ E:\work\platfarm\
 | 16 | 插件必须无状态；状态出口 = 自库 / Redis 租约 | 多副本扩缩容的前提；leader 选举/定时任务防重跑用 Redis lease（mmom Coordinator 实证） | — |
 | 17 | 服务模板语言优先级 Go > Rust > Python > PHP，`pctl new` 默认 go | 基础能力服务重性能与长期稳定；py 留给 LLM/IO 密集与快速迭代；php 为极简模板（零 composer 依赖）服务简单接口与存量团队；语言按容器粒度可逆 | — |
 | 18 | 清单权限声明三面向（needs/roles/exposes，specs/003），业务角色分配集中（未来 svc-grants）、判定语义留服务代码 | 成员表/邀请流/管理 UI 不随服务复制 N 遍；calls 的 scope 从裸字符串变为跨清单校验的契约；"分配 vs 语义"分离守住 L3 红线（Casbin 讨论结论） | 需要运营可配置判定规则时，p-policy 迁中央 PDP |
+| 19 | 有序进出用 `/readyz` + SIGTERM drain，发现仍用 Compose/K8s DNS；运行时兼容 Docker/Podman/nerdctl（Compose 规范 + 引擎 API），不上 Nacos | 要解决的是摘流量与排空在途请求，不是再注册一遍地址；引擎差异收敛为 `PF_CONTAINER_CLI` / `PF_CONTAINER_HOST` | K8s 生成器落地时探针映射为 readinessProbe + preStop |
+| 20 | `--scale` 多副本共享状态走 Redis（`PF_REDIS_URL`）：auth 吊销、oauth state/兑换码、Kong `rate-limiting policy: redis` | 内存状态按副本分裂；Redis 是多实例的最小共享面，不是配置中心 | 无 Redis 时仍回退内存（仅单副本安全） |
 
 ---
 
