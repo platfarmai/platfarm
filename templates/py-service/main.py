@@ -34,6 +34,11 @@ ACCEPT_SERVICES = {s for s in os.environ.get("PF_ACCEPT_SERVICE_TOKENS", "").spl
 app = FastAPI(lifespan=lifespan)
 
 
+def table(name: str) -> str:
+    """可选表前缀（specs/007）：默认空 → 原样；设 PF_TABLE_PREFIX=cms_ → cms_<name>。"""
+    return os.environ.get("PF_TABLE_PREFIX", "") + name
+
+
 def decode(token: str) -> dict:
     try:
         return jwt.decode(token, PUB, algorithms=["RS256"], issuer=ISSUER)

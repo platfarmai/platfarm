@@ -44,6 +44,10 @@ var (
 	draining       atomic.Bool
 )
 
+// tableName 给业务表名加上可选前缀（specs/007）。默认空 → 原样返回。
+// 用法：tableName("users") → "users" 或 "cms_users"。
+func tableName(name string) string { return os.Getenv("PF_TABLE_PREFIX") + name }
+
 func mustLoadPub() {
 	path := os.Getenv("JWT_PUBLIC_KEY_FILE")
 	if path == "" {
