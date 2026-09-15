@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/platfarmai/platfarm/main/deploy/env
 docker compose --profile bundled-db up -d
 ```
 
-`pctl init` 产出：`.keys/pf-auth.pem`（私钥，勿提交）、`.keys/pf-auth.pem.pub`、`gateway/kong.yml`（仅 auth 路由，足够登录/JWKS）。以后在完整仓库里 `pctl sync` 再换完整 kong 配置。
+`pctl init` 产出：`.keys/pf-auth.pem`（私钥，勿提交）、`.keys/pf-auth.pem.pub`、`gateway/kong.yml`（仅 auth 路由，足够登录/JWKS）。以后在**完整源码仓**里 `pctl sync`（它只扫 `services/*/{service,plugin}.yaml`），再把生成的 `kong.yml` 拷回运行目录。不要在 `platfarm-run/` 里 sync 指望出现 `svc-*`。路径 B 挂第一方服务：[adding-a-service-on-path-b.md](adding-a-service-on-path-b.md)。
 
 Windows：`pctl_${VER}_windows_amd64.exe`。macOS ARM：`darwin_arm64`。
 
@@ -72,6 +72,13 @@ Windows：`pctl_${VER}_windows_amd64.exe`。macOS ARM：`darwin_arm64`。
 | 18000 | 公网 | Kong |
 | 18001 | 本机 | 管理台 |
 
-路径 B 默认**没有** svc-demo；只有 auth/console/redis/postgres。要演示 API 请用路径 A，或自行加服务后再 `pctl sync`。
+路径 B 默认**没有** svc-demo；只有 auth/console/redis/postgres。要演示 API 请用路径 A。要在路径 B 上挂自己的 `svc-*`，不要 `docker compose up svc-xxx`（会 `no such service`），见 [adding-a-service-on-path-b.md](adding-a-service-on-path-b.md)。
 
 Redis 有密码：`.env` 设 `PF_REDIS_URL=redis://:密码@host:6379/0`，然后 `pctl sync` 并重启 gateway。**不必重打 auth/oauth 镜像**（它们读整串 URL；Kong 配置由 sync 生成）。
+
+| 现象 | 原因 |
+|---|---|
+| `no such service: svc-xxx` | 路径 B 的 `compose.yml` 没有插件服务；`-f compose.yml` 也不会读 `docker-compose.override.yml` |
+| `pctl sync` 服务数不变 | 在没有 `services/` 的运行目录 sync |
+| auth 用户表空了 / 连错库 | `.env` 的 `DATABASE_URL` 被改成了插件库 |
+| 容器 unhealthy 但在听 8080 | 健康检查是 `wget /readyz` 或 `CMD /server` |

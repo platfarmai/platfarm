@@ -70,7 +70,7 @@ docker compose up -d --build && docker compose restart gateway
 ./tools/pctl/pctl check --e2e                # contract-test trio gate
 ```
 
-Tutorial: [docs/adding-a-service.md](docs/adding-a-service.md)
+Tutorial: [docs/adding-a-service.md](docs/adding-a-service.md). Path B image deploy (no `services/` tree): [docs/adding-a-service-on-path-b.md](docs/adding-a-service-on-path-b.md).
 
 ### 2.4 Try third-party login (mock provider, no external account needed)
 

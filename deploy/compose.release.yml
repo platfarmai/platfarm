@@ -3,6 +3,11 @@
 #   curl -fsSL https://raw.githubusercontent.com/platfarmai/platfarm/main/deploy/compose.release.yml -o compose.yml
 #   docker compose --env-file .env -f compose.yml --profile bundled-db up -d
 #
+# This file is auth + gateway + console only. First-party plugins are NOT listed.
+# `docker compose -f compose.yml up svc-xxx` → "no such service".
+# Attach plugins with a second file: docker compose -f compose.yml -f compose.<svc>.yml …
+# See docs/adding-a-service-on-path-b.md
+#
 # Images: ghcr.io/platfarmai/auth, console  (tag = git tag, e.g. v0.1.0)
 # Gateway remains public kong:3.9; Redis/Postgres are official images.
 

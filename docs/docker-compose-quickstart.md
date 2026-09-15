@@ -79,7 +79,7 @@ docker compose --profile bundled-db up -d
 | `.keys/pf-auth.pem.pub` | Public key |
 | `gateway/kong.yml` | Auth routes + JWT consumer (enough for login/JWKS) |
 
-When you later add services from a full checkout, run `pctl sync` there and replace `gateway/kong.yml`.
+When you later add services from a full checkout, run `pctl sync` **in that checkout** (it looks for `services/*/plugin.yaml`) and copy the resulting `gateway/kong.yml` here. Do **not** run `pctl sync` inside `platfarm-run/` expecting `svc-*` to appear — Path B has no `services/` tree. Adding a first-party plugin on Path B: [adding-a-service-on-path-b.md](adding-a-service-on-path-b.md).
 
 Windows: download `pctl_${VER}_windows_amd64.exe`, then `.\pctl.exe init .`.
 
@@ -118,3 +118,6 @@ Runtimes for your own services: [consuming-images.md](consuming-images.md).
 | JWT verify fails | `kong.yml` public key ≠ `.keys/*.pub` — re-run `pctl init` or `pctl sync` |
 | Port 18000 busy | Change host port or stop the other process |
 | Redis AUTH errors / Kong rate-limit fail | Set `PF_REDIS_URL=redis://:password@host:6379/0`, run `pctl sync`, recreate gateway — **no need to rebuild auth/oauth images** |
+| `no such service: svc-xxx` | Path B `compose.yml` has no plugin services; `-f compose.yml` also skips `docker-compose.override.yml`. See [adding-a-service-on-path-b.md](adding-a-service-on-path-b.md) |
+| `pctl sync` service count unchanged | Ran sync in `platfarm-run/` with no `services/` |
+| Auth empty / wrong tables | `.env` `DATABASE_URL` was pointed at a plugin database |
