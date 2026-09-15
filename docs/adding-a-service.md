@@ -2,6 +2,8 @@
 
 平台可插拔的核心承诺：**新增服务 = 一个目录 + 一次 sync，不改任何平台文件与已有服务。**
 
+本文默认 **路径 A**（完整 git 仓库 + `docker-compose.yml` include 生成片段）。若生产是 **路径 B**（`deploy/compose.release.yml` → `platfarm-run/compose.yml`，没有 `services/`），`pctl sync` 扫不到插件，`docker compose up svc-xxx` 会报 `no such service`。接法见 [adding-a-service-on-path-b.md](adding-a-service-on-path-b.md)。
+
 ## 五步接入
 
 ### 1. 生成骨架
@@ -55,10 +57,28 @@ sync 会拒绝：路由冲突、占用保留段、id 与目录不一致、数据
 
 三件套全绿 = 接入完成。业务自身的测试放 `tests/`，由服务自己维护。
 
+### 6.（可选）嵌入平台管理壳（specs/006）
+
+清单声明 `admin_ui`，你的后台就会出现在 `/platform/console` 的应用切换里，且**免二次登录**（同源 Cookie SSO）：
+
+```yaml
+admin_ui:
+  path: /console       # 相对 mount.path → /api/<name>/console
+  embed: true          # 允许被平台壳 iframe 嵌入（页面勿设 X-Frame-Options: DENY）
+  title: 我的后台
+```
+
+要点：后台 HTML 用 `fetch(..., { credentials: 'same-origin' })` 调本服务 API；浏览器带 `pf_access` Cookie，Kong 自动补 `Authorization: Bearer`。**不要**把 token 拼进 iframe URL。`embed: false` 则以新标签打开（仍免登）。
+
 ## 常见问题
 
 - **网关返回 401 但我带了 token**：检查 token 是否 `tokenType: access`（refresh token 不能调业务接口）、是否过期（access 2h）、`.keys/` 公钥是否与签发方一致（删过 .keys 需重新 sync + 重建全部服务）
 - **改了 service.yaml 没生效**：忘了 `sync` + `restart gateway`
+- **`no such service: svc-xxx`**：你在路径 B 运行目录操作。那里没有生成的 `svc-*` 服务。见 [adding-a-service-on-path-b.md](adding-a-service-on-path-b.md)
+- **id 必须与目录名一致**：`services/platfarm-ads/plugin.yaml` 里 `id: svc-ads` 会被 sync 拒绝；目录必须叫 `svc-ads`
+- **把 `.env` 的 `DATABASE_URL` 改成业务库**：auth 会连错库。业务 URL 写在该服务自己的 compose 片段
+- **生成健康检查 `wget /readyz`**：精简 Alpine 镜像通常没有 wget、也没有 `/readyz`，容器会一直 unhealthy
+- **`curl -I` 公开路由 404**：HEAD；用 GET
 - **语言选型**（ADR #17，优先级 Go > Rust > Python）：
 
 | 服务特征 | 模板 |
