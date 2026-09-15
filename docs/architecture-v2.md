@@ -360,6 +360,7 @@ E:\work\platfarm\
 | 20 | `--scale` 多副本共享状态走 Redis（`PF_REDIS_URL`）：auth 吊销、oauth state/兑换码、Kong `rate-limiting policy: redis` | 内存状态按副本分裂；Redis 是多实例的最小共享面，不是配置中心 | 无 Redis 时仍回退内存（仅单副本安全） |
 | 21 | 统一管理壳用同源 Cookie SSO（`pf_access` HttpOnly + Kong pre-function cookie→Bearer），不引入独立 IdP；清单 `admin_ui` 声明 iframe 嵌入 | 已有唯一签发方 pf-auth + 唯一网关，同源 Cookie 是"每应用免登"的最小实现；Bearer/API/curl 不受影响 | 需要跨子域 SSO 或第三方独立域后台时评估 OIDC/中央 IdP |
 | 22 | 表前缀 `data.table_prefix` 可选、默认空（specs/007），平台仅注入 `PF_TABLE_PREFIX`、不改业务 SQL | 一服务一库已隔离表名，前缀非必需；只为接遗留/共享库或强制风格提供开关，服务自己拼表名 | 大量服务共库成为常态时（不推荐）再评估强制 |
+| 23 | 插件市场 M1（specs/008）= git 索引仓 + digest 锁定安装，复用既有 install 闸门；cosign 验签留 M1.5 | 市场只是发现+拉取的前台，沙箱/闸门不变；digest 必填保证不装浮动 tag；索引=git 便于 PR 审查与 revert 吊销 | 生态起量后加 cosign 双重锁定、pctl publish、CI 审查管线、Web UI |
 
 ---
 
