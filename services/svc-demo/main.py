@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 import jwt
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
 
 _draining = False
 
@@ -80,6 +81,27 @@ def me(
         "tenantId": c.get("tenantId"),
         "svc": c.get("svc"),
     }
+
+
+# admin_ui 嵌入样例（specs/006）：同源 cookie 会话，无需再次登录
+_ADMIN_HTML = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>svc-demo admin</title>
+<style>body{font:14px/1.6 system-ui;background:#0d1117;color:#c9d1d9;padding:24px}
+h2{color:#58a6ff}pre{background:#161b22;padding:12px;border-radius:6px}</style></head>
+<body><h2>svc-demo 后台（SSO 嵌入样例）</h2>
+<p class="muted">本页由平台壳 iframe 嵌入，未再次登录即可读取当前身份：</p>
+<pre id="out">loading…</pre>
+<script>
+fetch('/api/demo/me', { credentials: 'same-origin' })
+  .then(r => r.json())
+  .then(d => document.getElementById('out').textContent = JSON.stringify(d, null, 2))
+  .catch(e => document.getElementById('out').textContent = String(e));
+</script></body></html>"""
+
+
+@app.get(f"{MOUNT}/console", response_class=HTMLResponse)
+def admin_console():
+    return _ADMIN_HTML
 
 
 @app.get("/healthz")

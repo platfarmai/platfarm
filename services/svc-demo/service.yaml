@@ -18,6 +18,11 @@ auth:
 limits:
   rate_per_minute: 30
 
+admin_ui:
+  path: /console
+  embed: true
+  title: Demo
+
 runtime:
   port: 8080
   health: /healthz
