@@ -211,6 +211,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 			s.revoke(rc)
 		}
 	}
+	clearSessionCookie(w) // SSO：清除会话 Cookie（specs/006）
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 

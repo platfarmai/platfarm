@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -118,11 +119,14 @@ func (s *server) bearerService(r *http.Request, allowed map[string]bool) (*Claim
 }
 
 func (s *server) bearerRaw(r *http.Request) (*Claims, error) {
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, "Bearer ") {
-		return nil, errors.New("missing bearer token")
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return s.parse(strings.TrimPrefix(h, "Bearer "))
 	}
-	return s.parse(strings.TrimPrefix(h, "Bearer "))
+	// SSO 会话 Cookie 回退（specs/006）：浏览器直接调 /auth/me、/auth/logout 用。
+	if ck, err := r.Cookie(sessionCookie); err == nil && ck.Value != "" {
+		return s.parse(ck.Value)
+	}
+	return nil, errors.New("missing bearer token")
 }
 
 type tokenPair struct {
@@ -142,5 +146,38 @@ func (s *server) issuePair(w http.ResponseWriter, u user) {
 		writeErr(w, 500, "sign failed")
 		return
 	}
+	// SSO 会话 Cookie（specs/006）：同源浏览器免二次登录；Bearer 仍照常返回给 API/curl。
+	setSessionCookie(w, access)
 	writeJSON(w, 200, tokenPair{access, refresh, int(accessTTL.Seconds())})
+}
+
+const sessionCookie = "pf_access"
+
+// cookieSecure 由 PF_COOKIE_SECURE 控制（TLS 后端置 true）；默认 false 便于本机 http 调试。
+func cookieSecure() bool {
+	return strings.EqualFold(os.Getenv("PF_COOKIE_SECURE"), "true")
+}
+
+func setSessionCookie(w http.ResponseWriter, access string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    access,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   cookieSecure(),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(accessTTL.Seconds()),
+	})
+}
+
+func clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   cookieSecure(),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
 }
