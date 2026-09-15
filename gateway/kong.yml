@@ -11,10 +11,17 @@ services:
         strip_path: false
         plugins:
           - name: rate-limiting
-            config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000 }, limit_by: ip }
+            config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
       - name: platform-root
         paths: ["/"]
         strip_path: false
+  - name: console
+    url: http://console:8080
+    retries: 2
+    routes:
+      - name: platform-console
+        paths: ["/platform/console"]
+        strip_path: true
 
   - name: svc-demo
     url: http://svc-demo:8080
@@ -30,7 +37,7 @@ services:
           - name: jwt
             config: { key_claim_name: iss, claims_to_verify: ["exp"] }
           - name: rate-limiting
-            config: { minute: 30, policy: redis, redis: { host: redis, port: 6379, timeout: 2000 }, limit_by: ip }
+            config: { minute: 30, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
 
   - name: svc-oauth
     url: http://svc-oauth:8080
@@ -41,7 +48,22 @@ services:
         strip_path: false
         plugins:
           - name: rate-limiting
-            config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000 }, limit_by: ip }
+            config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
+
+# 全局 pre-function：cookie pf_access → Authorization: Bearer（SSO，specs/006）
+plugins:
+  - name: pre-function
+    config:
+      access:
+        - |
+          local h = kong.request.get_header("authorization")
+          if not h then
+            local ck = kong.request.get_header("cookie")
+            if ck then
+              local t = string.match(ck, "pf_access=([^;%s]+)")
+              if t then kong.service.request.set_header("authorization", "Bearer " .. t) end
+            end
+          end
 
 # jwt 插件按 iss=pf-auth 匹配此 consumer，RS256 公钥验签（私钥仅 auth 持有）
 consumers:
