@@ -359,6 +359,7 @@ E:\work\platfarm\
 | 19 | 有序进出用 `/readyz` + SIGTERM drain，发现仍用 Compose/K8s DNS；运行时兼容 Docker/Podman/nerdctl（Compose 规范 + 引擎 API），不上 Nacos | 要解决的是摘流量与排空在途请求，不是再注册一遍地址；引擎差异收敛为 `PF_CONTAINER_CLI` / `PF_CONTAINER_HOST` | K8s 生成器落地时探针映射为 readinessProbe + preStop |
 | 20 | `--scale` 多副本共享状态走 Redis（`PF_REDIS_URL`）：auth 吊销、oauth state/兑换码、Kong `rate-limiting policy: redis` | 内存状态按副本分裂；Redis 是多实例的最小共享面，不是配置中心 | 无 Redis 时仍回退内存（仅单副本安全） |
 | 21 | 统一管理壳用同源 Cookie SSO（`pf_access` HttpOnly + Kong pre-function cookie→Bearer），不引入独立 IdP；清单 `admin_ui` 声明 iframe 嵌入 | 已有唯一签发方 pf-auth + 唯一网关，同源 Cookie 是"每应用免登"的最小实现；Bearer/API/curl 不受影响 | 需要跨子域 SSO 或第三方独立域后台时评估 OIDC/中央 IdP |
+| 22 | 表前缀 `data.table_prefix` 可选、默认空（specs/007），平台仅注入 `PF_TABLE_PREFIX`、不改业务 SQL | 一服务一库已隔离表名，前缀非必需；只为接遗留/共享库或强制风格提供开关，服务自己拼表名 | 大量服务共库成为常态时（不推荐）再评估强制 |
 
 ---
 

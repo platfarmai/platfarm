@@ -26,6 +26,7 @@
 
 - 身份：调用骨架里的 `identity(authorization)` 拿 `userId / tenantId / role`，资源归属自己判（403 自己发）
 - 数据：需要存储时在 `service.yaml` 声明 `data.database: pf_<name>`，连自己的库；**禁止**连其它服务的库
+  - 可选表前缀（specs/007）：一服务一库已隔离表名，通常不需要前缀；接**遗留/共享库**或强制风格时可加 `data.table_prefix: "cms_"`（小写、以 `_` 结尾），pctl 会注入 `PF_TABLE_PREFIX`，用模板的 `tableName()`/`table()` 拼表名——平台不改业务 SQL
 - 服务间调用：内网直连 `http://svc-xxx:8080`，转发用户 JWT；参见 [architecture-v2.md](architecture-v2.md) 附录 E（gRPC）
 
 ### 3. 调整清单（按需）
