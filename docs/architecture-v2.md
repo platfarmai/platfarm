@@ -361,6 +361,7 @@ E:\work\platfarm\
 | 21 | 统一管理壳用同源 Cookie SSO（`pf_access` HttpOnly + Kong pre-function cookie→Bearer），不引入独立 IdP；清单 `admin_ui` 声明 iframe 嵌入 | 已有唯一签发方 pf-auth + 唯一网关，同源 Cookie 是"每应用免登"的最小实现；Bearer/API/curl 不受影响 | 需要跨子域 SSO 或第三方独立域后台时评估 OIDC/中央 IdP |
 | 22 | 表前缀 `data.table_prefix` 可选、默认空（specs/007），平台仅注入 `PF_TABLE_PREFIX`、不改业务 SQL | 一服务一库已隔离表名，前缀非必需；只为接遗留/共享库或强制风格提供开关，服务自己拼表名 | 大量服务共库成为常态时（不推荐）再评估强制 |
 | 23 | 插件市场 M1（specs/008）= git 索引仓 + digest 锁定安装，复用既有 install 闸门；cosign 验签留 M1.5 | 市场只是发现+拉取的前台，沙箱/闸门不变；digest 必填保证不装浮动 tag；索引=git 便于 PR 审查与 revert 吊销 | 生态起量后加 cosign 双重锁定、pctl publish、CI 审查管线、Web UI |
+| 24 | 开放平台（specs/009）= 第三条身份线 `tokenType: app`（client_credentials）+ 复用 `exposes.scopes` + 清单 `open_api` 路由→scope + 网关强制 + 按 app 限流/计量 | 不新造权限引擎;scope 词汇仍在服务清单;数据行级过滤留 L3;app 无用户身份,行级用 appKey | M2 加 svc-openapi 自助台、配额/账单聚合、合作方文档门户 |
 
 ---
 

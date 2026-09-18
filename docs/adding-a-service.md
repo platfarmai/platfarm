@@ -58,6 +58,23 @@ sync 会拒绝：路由冲突、占用保留段、id 与目录不一致、数据
 
 三件套全绿 = 接入完成。业务自身的测试放 `tests/`，由服务自己维护。
 
+### 6.5（可选）开放平台 API（specs/009）
+
+把某些数据通过 API 下发给外部合作方：清单声明 `exposes.scopes` + `open_api`，网关按 scope 强制、按 app 限流，无用户身份。
+
+```yaml
+exposes:
+  scopes:
+    - { name: data.orders.read, desc: 读取订单（开放 API） }
+open_api:
+  - { route: "GET /api/<name>/data", scope: data.orders.read }
+```
+
+- `pctl check` 校验 `open_api.scope` 已在 `exposes.scopes` 声明、路径在 mount 下。
+- 网关对开放路由:要求 `tokenType=app` 且路由 scope ∈ token.scopes,否则 403;并注入 `X-PF-App-Key`(按 app 限流/计量)。
+- 合作方拿 token:`POST /oauth/token {appKey, appSecret}` → app token。凭据由 `docker compose exec auth /auth -register-app <key> -scopes a,b` 开出。
+- 服务侧:app token 无用户身份,行级过滤用 `appKey`(从 claims 读)。不支持 app token 代持用户。
+
 ### 6.（可选）嵌入平台管理壳（specs/006）
 
 清单声明 `admin_ui`，你的后台就会出现在 `/platform/console` 的应用切换里，且**免二次登录**（同源 Cookie SSO）：
