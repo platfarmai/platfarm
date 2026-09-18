@@ -1,0 +1,1 @@
+# Vite build output lands here (Dockerfile web stage). Kept so go:embed compiles.
