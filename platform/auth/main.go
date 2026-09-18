@@ -84,6 +84,10 @@ func main() {
 	mux.HandleFunc("GET /auth/.well-known/jwks.json", s.handleJWKS)
 	mux.HandleFunc("POST /auth/service-token", s.handleServiceToken)
 	mux.HandleFunc("POST /oauth/token", s.handleOAuthToken) // 开放平台 app token（specs/009）
+	mux.HandleFunc("GET /internal/auth/apps", s.handleAppsList)         // 开放平台后台（specs/010）
+	mux.HandleFunc("POST /internal/auth/apps", s.handleAppsCreate)
+	mux.HandleFunc("PATCH /internal/auth/apps/{key}", s.handleAppsUpdate)
+	mux.HandleFunc("POST /internal/auth/apps/{key}/rotate", s.handleAppsRotate)
 	mux.HandleFunc("POST /internal/auth/external-login", s.handleExternalLogin)
 	mux.HandleFunc("POST /internal/auth/bind-external", s.handleBindExternal)
 	mux.HandleFunc("POST /internal/auth/introspect", s.handleIntrospect)

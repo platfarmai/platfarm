@@ -66,6 +66,179 @@ func (s *server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// adminActor 校验内网调用方（service token 白名单）+ 代持用户须平台 admin。
+// 返回 nil 表示放行，否则已写响应。
+func (s *server) adminActor(w http.ResponseWriter, r *http.Request) bool {
+	if _, err := s.bearerService(r, s.loginServices); err != nil {
+		writeErr(w, 401, err.Error())
+		return false
+	}
+	uc, err := s.parse(r.Header.Get("X-PF-User-Token"))
+	if err != nil || uc.TokenType != "access" || uc.Role != "admin" {
+		writeErr(w, 403, "platform admin required")
+		return false
+	}
+	return true
+}
+
+type appRow struct {
+	AppKey     string   `json:"appKey"`
+	Name       string   `json:"name"`
+	Scopes     []string `json:"scopes"`
+	RatePerMin int      `json:"ratePerMin"`
+	Status     int      `json:"status"`
+	CreatedAt  string   `json:"createdAt"`
+}
+
+func splitScopes(s string) []string {
+	out := []string{}
+	for _, x := range strings.Split(s, ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// handleAppsList GET /internal/auth/apps —— 列出 app（不含 secret）。
+func (s *server) handleAppsList(w http.ResponseWriter, r *http.Request) {
+	if !s.adminActor(w, r) {
+		return
+	}
+	rows, err := s.db.Query(r.Context(),
+		`SELECT app_key, name, scopes, rate_per_min, status, created_at FROM oauth_apps ORDER BY created_at DESC`)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []appRow{}
+	for rows.Next() {
+		var a appRow
+		var scopes string
+		var ts time.Time
+		if err := rows.Scan(&a.AppKey, &a.Name, &scopes, &a.RatePerMin, &a.Status, &ts); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		a.Scopes = splitScopes(scopes)
+		a.CreatedAt = ts.Format(time.RFC3339)
+		out = append(out, a)
+	}
+	writeJSON(w, 200, out)
+}
+
+// handleAppsCreate POST /internal/auth/apps {appKey,name,scopes[],ratePerMin} → secret 只返回一次。
+func (s *server) handleAppsCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.adminActor(w, r) {
+		return
+	}
+	var in struct {
+		AppKey     string   `json:"appKey"`
+		Name       string   `json:"name"`
+		Scopes     []string `json:"scopes"`
+		RatePerMin int      `json:"ratePerMin"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.AppKey == "" {
+		writeErr(w, 400, "appKey required")
+		return
+	}
+	if in.RatePerMin <= 0 {
+		in.RatePerMin = 60
+	}
+	secret := "as_" + newTokenID() + newTokenID()
+	hash, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
+	if err != nil {
+		writeErr(w, 500, "hash failed")
+		return
+	}
+	_, err = s.db.Exec(r.Context(),
+		`INSERT INTO oauth_apps (app_key, secret_hash, name, scopes, rate_per_min) VALUES ($1,$2,$3,$4,$5)`,
+		in.AppKey, string(hash), in.Name, strings.Join(in.Scopes, ","), in.RatePerMin)
+	if err != nil {
+		writeErr(w, 409, "appKey exists or invalid")
+		return
+	}
+	writeJSON(w, 201, map[string]any{"appKey": in.AppKey, "appSecret": secret, "note": "secret shown once"})
+}
+
+// handleAppsUpdate PATCH /internal/auth/apps/{key} {scopes?,ratePerMin?,status?}。
+func (s *server) handleAppsUpdate(w http.ResponseWriter, r *http.Request) {
+	if !s.adminActor(w, r) {
+		return
+	}
+	key := r.PathValue("key")
+	var in struct {
+		Scopes     *[]string `json:"scopes"`
+		RatePerMin *int      `json:"ratePerMin"`
+		Status     *int      `json:"status"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		writeErr(w, 400, "invalid body")
+		return
+	}
+	ct, err := s.db.Exec(r.Context(),
+		`UPDATE oauth_apps SET
+		   scopes       = COALESCE($2, scopes),
+		   rate_per_min = COALESCE($3, rate_per_min),
+		   status       = COALESCE($4, status)
+		 WHERE app_key = $1`,
+		key,
+		scopesArg(in.Scopes),
+		intArg(in.RatePerMin),
+		intArg(in.Status),
+	)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		writeErr(w, 404, "app not found")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// handleAppsRotate POST /internal/auth/apps/{key}/rotate → 新 secret 只返回一次。
+func (s *server) handleAppsRotate(w http.ResponseWriter, r *http.Request) {
+	if !s.adminActor(w, r) {
+		return
+	}
+	key := r.PathValue("key")
+	secret := "as_" + newTokenID() + newTokenID()
+	hash, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
+	if err != nil {
+		writeErr(w, 500, "hash failed")
+		return
+	}
+	ct, err := s.db.Exec(r.Context(),
+		`UPDATE oauth_apps SET secret_hash=$2 WHERE app_key=$1`, key, string(hash))
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		writeErr(w, 404, "app not found")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"appKey": key, "appSecret": secret, "note": "secret shown once"})
+}
+
+// scopesArg/intArg：nil → SQL NULL（COALESCE 保持原值）。
+func scopesArg(s *[]string) any {
+	if s == nil {
+		return nil
+	}
+	return strings.Join(*s, ",")
+}
+
+func intArg(i *int) any {
+	if i == nil {
+		return nil
+	}
+	return *i
+}
+
 // registerAppCLI 一次性 CLI（docker compose exec auth /auth -register-app <key> -scopes a,b）。
 func registerAppCLI(db *pgxpool.Pool, appKey, name, scopes string) error {
 	secret := "as_" + newTokenID() + newTokenID()

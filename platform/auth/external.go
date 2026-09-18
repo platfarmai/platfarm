@@ -27,11 +27,11 @@ func migrateExternal(db *pgxpool.Pool) error {
 	return err
 }
 
-// loginServiceWhitelist 允许调用 external-login 的服务（env 覆盖，默认 svc-oauth）。
+// loginServiceWhitelist 允许调用内网 auth 接口的服务（env 覆盖，默认 svc-oauth,svc-openapi）。
 func loginServiceWhitelist() map[string]bool {
 	raw := os.Getenv("AUTH_LOGIN_SERVICES")
 	if raw == "" {
-		raw = "svc-oauth"
+		raw = "svc-oauth,svc-openapi"
 	}
 	out := map[string]bool{}
 	for _, s := range strings.Split(raw, ",") {
