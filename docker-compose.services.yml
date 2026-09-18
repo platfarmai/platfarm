@@ -59,3 +59,19 @@ services:
       start_period: 15s
     networks:
       - core-net
+  svc-openapi:
+    build: ./services/svc-openapi
+    environment:
+      OPENAPI_CLIENT_ID: ${OPENAPI_CLIENT_ID}
+      OPENAPI_CLIENT_SECRET: ${OPENAPI_CLIENT_SECRET}
+    volumes:
+      - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - core-net
