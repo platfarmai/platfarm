@@ -23,6 +23,13 @@ admin_ui:
   embed: true
   title: Demo
 
+exposes:
+  scopes:
+    - { name: data.orders.read, desc: 读取订单数据（开放 API） }
+
+open_api:
+  - { route: "GET /api/demo/data", scope: data.orders.read }
+
 runtime:
   port: 8080
   health: /healthz

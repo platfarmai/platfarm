@@ -67,6 +67,19 @@ def ping():
     return {"pong": True, "service": "svc-demo", "auth": "not required"}
 
 
+@app.get(f"{MOUNT}/data")
+def open_data(authorization: str | None = Header(None)):
+    """开放平台样例（specs/009）：网关已做 tokenType=app + scope 校验，
+    这里只按 appKey 做行级过滤。app token 无用户身份。"""
+    claims = decode((authorization or "")[7:]) if authorization else {}
+    return {
+        "service": "svc-demo",
+        "appKey": claims.get("appKey"),
+        "scopes": claims.get("scopes", []),
+        "data": [{"orderId": 1, "amount": 99}, {"orderId": 2, "amount": 58}],
+    }
+
+
 @app.get(f"{MOUNT}/me")
 def me(
     authorization: str | None = Header(None),
