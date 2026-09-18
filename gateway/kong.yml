@@ -30,6 +30,37 @@ services:
       - name: svc-demo-public-0
         paths: ["/api/demo/public"]
         strip_path: false
+      - name: svc-demo-open-0
+        paths: ["/api/demo/data"]
+        methods: ["GET"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { key_claim_name: iss, claims_to_verify: ["exp"] }
+          - name: pre-function
+            config:
+              access:
+                - |
+                    local auth = kong.request.get_header("authorization")
+                    if not auth then return kong.response.exit(401, { error = "app token required" }) end
+                    local token = string.gsub(auth, "^Bearer%s+", "")
+                    local seg = {}
+                    for s in string.gmatch(token, "[^.]+") do seg[#seg+1] = s end
+                    if #seg < 2 then return kong.response.exit(401, { error = "invalid token" }) end
+                    local b64 = seg[2]:gsub("-", "+"):gsub("_", "/")
+                    local pad = #b64 % 4
+                    if pad > 0 then b64 = b64 .. string.rep("=", 4 - pad) end
+                    local raw = ngx.decode_base64(b64)
+                    if not raw then return kong.response.exit(401, { error = "invalid token" }) end
+                    local ok_json, claims = pcall(function() return require("cjson").decode(raw) end)
+                    if not ok_json or not claims then return kong.response.exit(401, { error = "invalid token" }) end
+                    if claims.tokenType ~= "app" then return kong.response.exit(403, { error = "open API requires an app token" }) end
+                    local ok = false
+                    for _, s in ipairs(claims.scopes or {}) do if s == "data.orders.read" then ok = true break end end
+                    if not ok then return kong.response.exit(403, { error = "missing scope data.orders.read" }) end
+                    kong.service.request.set_header("X-PF-App-Key", claims.appKey or "")
+          - name: rate-limiting
+            config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: header, header_name: X-PF-App-Key }
       - name: svc-demo-protected
         paths: ["/api/demo"]
         strip_path: false
