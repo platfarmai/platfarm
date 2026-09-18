@@ -31,7 +31,8 @@ type Claims struct {
 	IsImpersonation bool     `json:"isImpersonation,omitempty"`
 	ActingUserId    int      `json:"actingUserId,omitempty"`
 	Svc             string   `json:"svc,omitempty"`    // service token：调用方服务 id
-	Scopes          []string `json:"scopes,omitempty"` // service token：授权范围
+	AppKey          string   `json:"appKey,omitempty"` // app token：开放平台 app（specs/009）
+	Scopes          []string `json:"scopes,omitempty"` // service/app token：授权范围
 	jwt.RegisteredClaims
 }
 
@@ -71,6 +72,16 @@ func (s *server) signUser(u user, tokenType string, ttl time.Duration) (string, 
 func (s *server) signService(svc string, scopes []string) (string, error) {
 	c := baseClaims("service", serviceTTL)
 	c.Svc = svc
+	c.Scopes = scopes
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, &c)
+	tok.Header["kid"] = keyID
+	return tok.SignedString(s.key)
+}
+
+// signApp 签发开放平台 app token（specs/009）：带 appKey 与授权 scopes。
+func (s *server) signApp(appKey string, scopes []string) (string, error) {
+	c := baseClaims("app", appTokenTTL)
+	c.AppKey = appKey
 	c.Scopes = scopes
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, &c)
 	tok.Header["kid"] = keyID

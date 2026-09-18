@@ -37,7 +37,9 @@ type server struct {
 
 func main() {
 	registerClient := flag.String("register-client", "", "注册服务/插件凭据后退出（打印明文 secret）")
-	scopes := flag.String("scopes", "", "register-client 的授权范围（逗号分隔）")
+	registerApp := flag.String("register-app", "", "注册开放平台 app 凭据后退出（specs/009）")
+	appName := flag.String("name", "", "register-app 的显示名")
+	scopes := flag.String("scopes", "", "授权范围（逗号分隔）")
 	flag.Parse()
 
 	db := mustConnect(requireEnv("DATABASE_URL"))
@@ -46,6 +48,15 @@ func main() {
 			log.Fatal(err)
 		}
 		if err := registerClientCLI(db, *registerClient, *scopes); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *registerApp != "" {
+		if err := migrateApps(db); err != nil {
+			log.Fatal(err)
+		}
+		if err := registerAppCLI(db, *registerApp, *appName, *scopes); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -72,6 +83,7 @@ func main() {
 	mux.HandleFunc("GET /auth/me", s.handleMe)
 	mux.HandleFunc("GET /auth/.well-known/jwks.json", s.handleJWKS)
 	mux.HandleFunc("POST /auth/service-token", s.handleServiceToken)
+	mux.HandleFunc("POST /oauth/token", s.handleOAuthToken) // 开放平台 app token（specs/009）
 	mux.HandleFunc("POST /internal/auth/external-login", s.handleExternalLogin)
 	mux.HandleFunc("POST /internal/auth/bind-external", s.handleBindExternal)
 	mux.HandleFunc("POST /internal/auth/introspect", s.handleIntrospect)
@@ -134,6 +146,9 @@ func migrate(db *pgxpool.Pool) error {
 		return err
 	}
 	if err := migrateClients(db); err != nil {
+		return err
+	}
+	if err := migrateApps(db); err != nil {
 		return err
 	}
 	// 试运行种子用户；生产删除
