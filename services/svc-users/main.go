@@ -63,7 +63,11 @@ func main() {
 
 func proxyList(ac *authClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		status, out, err := ac.call(http.MethodGet, "/internal/auth/users", c.GetString("userToken"), nil)
+		path := "/internal/auth/users"
+		if rq := c.Request.URL.RawQuery; rq != "" { // 透传 limit/offset/q（specs/014）
+			path += "?" + rq
+		}
+		status, out, err := ac.call(http.MethodGet, path, c.GetString("userToken"), nil)
 		writeProxy(c, status, out, err)
 	}
 }

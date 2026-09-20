@@ -10,6 +10,12 @@ const creating = ref(false);
 const form = ref({ username: "", role: "user" });
 const newCred = ref(null); // {username, password} shown once
 const pw = ref({ old: "", neo: "" });
+// 分页 + 搜索（specs/014）
+const total = ref(0);
+const limit = ref(20);
+const offset = ref(0);
+const q = ref("");
+let searchTimer = null;
 
 function fail(e) { err.value = e.message || String(e); setTimeout(() => (err.value = ""), 5000); }
 function done(m) { ok.value = m; setTimeout(() => (ok.value = ""), 4000); }
@@ -24,9 +30,21 @@ async function api(method, path, body) {
 }
 
 async function load() {
-  try { users.value = await api("GET", ""); isAdmin.value = true; }
-  catch (e) { if (String(e.message).includes("admin")) isAdmin.value = false; else fail(e); }
+  try {
+    const qs = `?limit=${limit.value}&offset=${offset.value}&q=${encodeURIComponent(q.value)}`;
+    const data = await api("GET", qs);
+    users.value = data.items || [];
+    total.value = data.total || 0;
+    isAdmin.value = true;
+  } catch (e) { if (String(e.message).includes("admin")) isAdmin.value = false; else fail(e); }
 }
+
+function onSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { offset.value = 0; load(); }, 300);
+}
+function nextPage() { if (offset.value + limit.value < total.value) { offset.value += limit.value; load(); } }
+function prevPage() { if (offset.value > 0) { offset.value = Math.max(0, offset.value - limit.value); load(); } }
 
 async function create() {
   try {
@@ -75,6 +93,12 @@ onMounted(load);
       <div><button class="primary" @click="create">创建</button><button @click="creating = false">取消</button></div>
     </div>
 
+    <div v-if="isAdmin" class="bar">
+      <input v-model="q" @input="onSearch" placeholder="搜索用户名…" class="search" />
+      <span class="muted">共 {{ total }} 个 · 第 {{ total ? offset + 1 : 0 }}–{{ offset + users.length }}</span>
+      <button @click="prevPage" :disabled="offset === 0">上一页</button>
+      <button @click="nextPage" :disabled="offset + limit >= total">下一页</button>
+    </div>
     <table v-if="isAdmin">
       <thead><tr><th>ID</th><th>用户名</th><th>平台角色</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>
@@ -92,6 +116,7 @@ onMounted(load);
             <button @click="reset(u)">重置密码</button>
           </td>
         </tr>
+        <tr v-if="!users.length"><td colspan="5" class="muted">（无匹配用户）</td></tr>
       </tbody>
     </table>
     <p v-else class="muted">你不是平台管理员，仅可修改自己的密码。</p>
@@ -127,4 +152,7 @@ th{color:#8b949e;font-weight:normal}
 .ops{white-space:nowrap}.muted{color:#8b949e}code{background:#161b22;padding:1px 5px;border-radius:4px}
 .self{margin-top:28px;border-top:1px solid #21262d;padding-top:16px}
 .self input{width:220px}
+.bar{display:flex;align-items:center;gap:10px;margin-top:14px}
+.search{width:240px;margin:0}
+button:disabled{opacity:.4;cursor:not-allowed}
 </style>
