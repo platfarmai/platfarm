@@ -33,6 +33,7 @@ type server struct {
 	rdb           *redis.Client
 	mu            sync.Mutex
 	revoked       map[string]time.Time
+	userKill      map[int]time.Time // 用户级吊销 iat 截止（specs/011）
 }
 
 func main() {
@@ -72,7 +73,7 @@ func main() {
 
 	s := &server{
 		db: db, key: key, loginServices: loginServiceWhitelist(),
-		rdb: openRedis(), revoked: map[string]time.Time{},
+		rdb: openRedis(), revoked: map[string]time.Time{}, userKill: map[int]time.Time{},
 	}
 	go s.janitor()
 
@@ -81,6 +82,11 @@ func main() {
 	mux.HandleFunc("POST /auth/refresh", s.handleRefresh)
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /auth/me", s.handleMe)
+	mux.HandleFunc("POST /auth/change-password", s.handleChangePassword) // 用户自助（specs/011）
+	mux.HandleFunc("GET /internal/auth/users", s.handleUsersList)
+	mux.HandleFunc("POST /internal/auth/users", s.handleUsersCreate)
+	mux.HandleFunc("PATCH /internal/auth/users/{id}", s.handleUsersUpdate)
+	mux.HandleFunc("POST /internal/auth/users/{id}/reset-password", s.handleUsersReset)
 	mux.HandleFunc("GET /auth/.well-known/jwks.json", s.handleJWKS)
 	mux.HandleFunc("POST /auth/service-token", s.handleServiceToken)
 	mux.HandleFunc("POST /oauth/token", s.handleOAuthToken) // 开放平台 app token（specs/009）

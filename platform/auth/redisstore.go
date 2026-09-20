@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -58,6 +59,39 @@ func (s *server) isRevoked(tokenID string) bool {
 	defer s.mu.Unlock()
 	_, ok := s.revoked[tokenID]
 	return ok
+}
+
+// revokeUserTokens 记录用户级吊销截止（specs/011）：此刻之前签发的 access token 全部作废。
+// 覆盖 refresh 有效期(30d)，保证禁用/改密后旧 token 立即失效。
+func (s *server) revokeUserTokens(userID int) {
+	cutoff := time.Now()
+	if s.rdb != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = s.rdb.Set(ctx, "pf:userkill:"+strconv.Itoa(userID),
+			strconv.FormatInt(cutoff.Unix(), 10), refreshTTL).Err()
+		return
+	}
+	s.mu.Lock()
+	s.userKill[userID] = cutoff
+	s.mu.Unlock()
+}
+
+// userKilledBefore 返回该用户的吊销截止时间（零值表示无）。
+func (s *server) userKilledBefore(userID int) time.Time {
+	if s.rdb != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		v, err := s.rdb.Get(ctx, "pf:userkill:"+strconv.Itoa(userID)).Result()
+		if err != nil {
+			return time.Time{}
+		}
+		sec, _ := strconv.ParseInt(v, 10, 64)
+		return time.Unix(sec, 0)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.userKill[userID]
 }
 
 func (s *server) janitor() {

@@ -102,6 +102,13 @@ func (s *server) parse(tokenString string) (*Claims, error) {
 	if s.isRevoked(claims.TokenId) {
 		return nil, errors.New("token revoked")
 	}
+	// 用户级吊销（specs/011）：禁用/改密后，此刻之前签发的用户 token 作废。
+	if claims.UserId != 0 && claims.IssuedAt != nil {
+		if cutoff := s.userKilledBefore(claims.UserId); !cutoff.IsZero() &&
+			claims.IssuedAt.Time.Before(cutoff) {
+			return nil, errors.New("token revoked (user)")
+		}
+	}
 	return claims, nil
 }
 

@@ -31,7 +31,7 @@ func migrateExternal(db *pgxpool.Pool) error {
 func loginServiceWhitelist() map[string]bool {
 	raw := os.Getenv("AUTH_LOGIN_SERVICES")
 	if raw == "" {
-		raw = "svc-oauth,svc-openapi"
+		raw = "svc-oauth,svc-openapi,svc-users"
 	}
 	out := map[string]bool{}
 	for _, s := range strings.Split(raw, ",") {
