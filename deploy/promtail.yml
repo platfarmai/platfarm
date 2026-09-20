@@ -1,0 +1,36 @@
+# promtail：采集 platfarm-gateway 容器日志 → Loki（specs/013）。
+# 只处理 Kong file-log 的 JSON 行（含 pf_app_key / route / status）。
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: platfarm-gateway
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/platfarm-gateway.*"
+        action: keep
+      - target_label: service_name
+        replacement: platfarm-gateway
+      - target_label: container
+        replacement: platfarm-gateway
+    pipeline_stages:
+      # 丢弃非 JSON 行（Kong 的普通 access log）
+      - drop:
+          expression: "^[^{].*"
+      - json:
+          expressions:
+            pf_app_key: pf_app_key
+            status: response.status
+      - labels:
+          pf_app_key:
+          status:

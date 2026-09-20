@@ -82,9 +82,32 @@ services:
     networks:
       - core-net
 
+  # ── 可观测/计量（specs/013）：--profile observability 启用 ──
+  loki:
+    image: grafana/loki:3.2.0
+    profiles: ["observability"]
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - pf-loki-data:/loki
+    networks:
+      - core-net
+
+  promtail:
+    image: grafana/promtail:3.2.0
+    profiles: ["observability"]
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./deploy/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks:
+      - core-net
+
 networks:
   core-net: # 平台核心网络；插件网络（net-plugin-*）由 pctl sync 生成
 
 volumes:
   pf-pg-data:
   pf-redis-data:
+  pf-loki-data:
