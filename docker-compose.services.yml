@@ -75,3 +75,19 @@ services:
       start_period: 15s
     networks:
       - core-net
+  svc-users:
+    build: ./services/svc-users
+    environment:
+      USERS_CLIENT_ID: ${USERS_CLIENT_ID}
+      USERS_CLIENT_SECRET: ${USERS_CLIENT_SECRET}
+    volumes:
+      - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - core-net

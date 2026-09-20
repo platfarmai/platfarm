@@ -363,6 +363,7 @@ E:\work\platfarm\
 | 23 | 插件市场 M1（specs/008）= git 索引仓 + digest 锁定安装，复用既有 install 闸门；cosign 验签留 M1.5 | 市场只是发现+拉取的前台，沙箱/闸门不变；digest 必填保证不装浮动 tag；索引=git 便于 PR 审查与 revert 吊销 | 生态起量后加 cosign 双重锁定、pctl publish、CI 审查管线、Web UI |
 | 24 | 开放平台（specs/009）= 第三条身份线 `tokenType: app`（client_credentials）+ 复用 `exposes.scopes` + 清单 `open_api` 路由→scope + 网关强制 + 按 app 限流/计量 | 不新造权限引擎;scope 词汇仍在服务清单;数据行级过滤留 L3;app 无用户身份,行级用 appKey | M2 加 svc-openapi 自助台、配额/账单聚合、合作方文档门户 |
 | 25 | 开放平台后台（specs/010）= auth 内网 apps 接口（service token + admin OBO）+ svc-openapi 第一方服务嵌 SSO 壳；后台管长期凭据+规则,不发 access token；secret 只显示一次 | 复用 SSO 壳与 OBO,不引入新机制;secret 不可回看是安全底线;access token 短命应由合作方自取 | M3 计量聚合、合作方自助门户、scope 目录从清单自动派生 |
+| 26 | 平台用户管理（specs/011）= auth 内网用户接口 + svc-users 后台；密码 bcrypt 只显示一次;防锁死(最后一个 admin/自己不可禁降);禁用/改密走用户级 iat 吊销 | 平台 users 管登录+粗角色,应用角色留 L3;吊销存储按 tokenId,用户级吊销用 iat 截止覆盖 refresh 有效期 | M2 分页/搜索、外部身份绑定视图、自助注册 |
 
 ---
 

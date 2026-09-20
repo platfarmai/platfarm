@@ -94,6 +94,19 @@ services:
           - name: rate-limiting
             config: { minute: 120, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
 
+  - name: svc-users
+    url: http://svc-users:8080
+    retries: 2
+    routes:
+      - name: svc-users-protected
+        paths: ["/api/users"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            config: { key_claim_name: iss, claims_to_verify: ["exp"] }
+          - name: rate-limiting
+            config: { minute: 120, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
+
 # 全局 pre-function：cookie pf_access → Authorization: Bearer（SSO，specs/006）
 plugins:
   - name: pre-function
