@@ -1,0 +1,31 @@
+# PlatFarm 平台用户管理台（specs/011）。admin 管理 + 用户自助改密码；经 SSO 壳嵌入。
+manifest: v1
+id: svc-users
+version: 0.1.0
+lang: go
+
+mount:
+  path: /api/users
+  strip_path: false
+
+auth:
+  required: true
+  accept_service_tokens: []
+
+limits:
+  rate_per_minute: 120
+
+admin_ui:
+  path: /console
+  embed: true
+  title: Users
+
+runtime:
+  port: 8080
+  health: /healthz
+  env:
+    - USERS_CLIENT_ID
+    - USERS_CLIENT_SECRET
+
+test:
+  command: /server -help >/dev/null 2>&1 || true
