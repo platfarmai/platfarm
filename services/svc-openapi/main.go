@@ -43,6 +43,7 @@ func main() {
 	api.POST("/apps/:key/rotate", proxyBody(ac, http.MethodPost, func(c *gin.Context) string {
 		return "/internal/auth/apps/" + c.Param("key") + "/rotate"
 	}))
+	api.GET("/usage", handleUsage) // 用量视图（specs/013）
 
 	log.Println("svc-openapi listening on :8080")
 	log.Fatal(r.Run(":8080"))

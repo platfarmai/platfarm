@@ -26,6 +26,7 @@ runtime:
   env:
     - OPENAPI_CLIENT_ID
     - OPENAPI_CLIENT_SECRET
+    - LOKI_URL
 
 test:
   command: /server -help >/dev/null 2>&1 || true

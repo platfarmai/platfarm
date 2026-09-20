@@ -8,6 +8,9 @@ const scopes = ref([]);
 const newSecret = ref(null); // {appKey, appSecret} shown once
 const creating = ref(false);
 const form = ref({ appKey: "", name: "", scopes: [], ratePerMin: 60 });
+// 用量视图（specs/013）
+const usage = ref({ enabled: false, usage: [] });
+const usageWindow = ref("24h");
 
 function fail(e) { err.value = e.message || String(e); setTimeout(() => (err.value = ""), 5000); }
 
@@ -24,7 +27,17 @@ async function load() {
   try {
     apps.value = await api("GET", "/apps");
     scopes.value = await api("GET", "/scopes");
+    await loadUsage();
   } catch (e) { fail(e); }
+}
+
+async function loadUsage() {
+  try { usage.value = await api("GET", `/usage?window=${usageWindow.value}`); }
+  catch (e) { usage.value = { enabled: true, error: e.message, usage: [] }; }
+}
+function usageFor(appKey) {
+  const u = (usage.value.usage || []).find(x => x.appKey === appKey);
+  return u ? Math.round(u.count) : 0;
 }
 
 async function create() {
@@ -87,8 +100,14 @@ onMounted(load);
       <div><button class="primary" @click="create">创建</button><button @click="creating = false">取消</button></div>
     </div>
 
+    <div class="bar">
+      <span class="muted">用量窗口</span>
+      <select v-model="usageWindow" @change="loadUsage"><option>1h</option><option>24h</option><option>168h</option></select>
+      <span v-if="!usage.enabled" class="muted">（用量未启用：需 observability profile + LOKI_URL）</span>
+      <span v-else-if="usage.error" class="muted">Loki: {{ usage.error }}</span>
+    </div>
     <table>
-      <thead><tr><th>appKey</th><th>名称</th><th>scopes</th><th>限流/min</th><th>状态</th><th>操作</th></tr></thead>
+      <thead><tr><th>appKey</th><th>名称</th><th>scopes</th><th>限流/min</th><th>用量</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>
         <tr v-for="a in apps" :key="a.appKey">
           <td><code>{{ a.appKey }}</code></td>
@@ -99,6 +118,7 @@ onMounted(load);
             </label>
           </td>
           <td><input class="rate" :value="a.ratePerMin" @change="e => setRate(a, e.target.value)" type="number" /></td>
+          <td>{{ usage.enabled ? usageFor(a.appKey) : '—' }}</td>
           <td><span class="badge" :data-s="a.status">{{ a.status === 1 ? '启用' : '停用' }}</span></td>
           <td class="ops">
             <button v-if="a.status === 1" @click="setStatus(a, 0)">停用</button>
@@ -106,7 +126,7 @@ onMounted(load);
             <button @click="rotate(a)">换 secret</button>
           </td>
         </tr>
-        <tr v-if="!apps.length"><td colspan="6" class="muted">（暂无应用）</td></tr>
+        <tr v-if="!apps.length"><td colspan="7" class="muted">（暂无应用）</td></tr>
       </tbody>
     </table>
     <p class="muted">后台管理长期凭据与规则；合作方自行调 <code>POST /oauth/token</code> 换 access token。</p>
