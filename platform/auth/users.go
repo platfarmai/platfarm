@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -22,19 +23,32 @@ type userRow struct {
 
 func randomPassword() string { return "pw_" + newTokenID() }
 
-// handleUsersList GET /internal/auth/users —— 列表（不含 password_hash）。
+// handleUsersList GET /internal/auth/users?limit=&offset=&q= —— 分页列表（specs/014，不含 password_hash）。
 func (s *server) handleUsersList(w http.ResponseWriter, r *http.Request) {
 	if !s.adminActor(w, r) {
 		return
 	}
+	limit := clampInt(r.URL.Query().Get("limit"), 20, 1, 100)
+	offset := clampInt(r.URL.Query().Get("offset"), 0, 0, 1<<31)
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	like := "%" + q + "%"
+
+	var total int
+	if err := s.db.QueryRow(r.Context(),
+		`SELECT count(*) FROM users WHERE ($1='' OR username ILIKE $2)`, q, like).Scan(&total); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
 	rows, err := s.db.Query(r.Context(),
-		`SELECT id, username, role, status, created_at FROM users ORDER BY id`)
+		`SELECT id, username, role, status, created_at FROM users
+		 WHERE ($1='' OR username ILIKE $2) ORDER BY id LIMIT $3 OFFSET $4`,
+		q, like, limit, offset)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
 	defer rows.Close()
-	out := []userRow{}
+	items := []userRow{}
 	for rows.Next() {
 		var u userRow
 		var ts time.Time
@@ -43,9 +57,24 @@ func (s *server) handleUsersList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		u.CreatedAt = ts.Format(time.RFC3339)
-		out = append(out, u)
+		items = append(items, u)
 	}
-	writeJSON(w, 200, out)
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "limit": limit, "offset": offset})
+}
+
+// clampInt 解析查询参数并夹在 [min,max]，非法用 def。
+func clampInt(s string, def, min, max int) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
 }
 
 // handleUsersCreate POST /internal/auth/users {username, role} → 初始密码只返回一次。
