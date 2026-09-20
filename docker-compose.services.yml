@@ -27,6 +27,22 @@ services:
       retries: 10
     networks:
       - core-net
+      - net-plugin-signed
+  plugin-pg: # 插件专属 PG 实例：平台 PG 与插件网络物理隔离（附录 H.3）
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PLUGIN_PG_PASSWORD:-plugin_pg_local}
+    volumes:
+      - pf-plugin-pg-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - core-net
+      - net-plugin-signed
   svc-demo:
     build: ./services/svc-demo
     volumes:
@@ -64,6 +80,7 @@ services:
     environment:
       OPENAPI_CLIENT_ID: ${OPENAPI_CLIENT_ID}
       OPENAPI_CLIENT_SECRET: ${OPENAPI_CLIENT_SECRET}
+      LOKI_URL: ${LOKI_URL:-}
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
@@ -75,6 +92,20 @@ services:
       start_period: 15s
     networks:
       - core-net
+  svc-plugin-signed:
+    image: ghcr.io/platfarmai/plugin-echo@sha256:aaaa
+    env_file: [.env.plugins/svc-plugin-signed.env]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - net-plugin-signed
   svc-users:
     build: ./services/svc-users
     environment:
@@ -91,3 +122,10 @@ services:
       start_period: 15s
     networks:
       - core-net
+
+networks:
+  net-plugin-signed:
+    internal: true # 断外网；需 egress 的插件走代理（附录 H.4）
+
+volumes:
+  pf-plugin-pg-data:

@@ -364,6 +364,9 @@ E:\work\platfarm\
 | 24 | 开放平台（specs/009）= 第三条身份线 `tokenType: app`（client_credentials）+ 复用 `exposes.scopes` + 清单 `open_api` 路由→scope + 网关强制 + 按 app 限流/计量 | 不新造权限引擎;scope 词汇仍在服务清单;数据行级过滤留 L3;app 无用户身份,行级用 appKey | M2 加 svc-openapi 自助台、配额/账单聚合、合作方文档门户 |
 | 25 | 开放平台后台（specs/010）= auth 内网 apps 接口（service token + admin OBO）+ svc-openapi 第一方服务嵌 SSO 壳；后台管长期凭据+规则,不发 access token；secret 只显示一次 | 复用 SSO 壳与 OBO,不引入新机制;secret 不可回看是安全底线;access token 短命应由合作方自取 | M3 计量聚合、合作方自助门户、scope 目录从清单自动派生 |
 | 26 | 平台用户管理（specs/011）= auth 内网用户接口 + svc-users 后台；密码 bcrypt 只显示一次;防锁死(最后一个 admin/自己不可禁降);禁用/改密走用户级 iat 吊销 | 平台 users 管登录+粗角色,应用角色留 L3;吊销存储按 tokenId,用户级吊销用 iat 截止覆盖 refresh 有效期 | M2 分页/搜索、外部身份绑定视图、自助注册 |
+| 27 | 插件验签（specs/012）= 调外部 cosign CLI 对 image@digest 验签,pctl 不加 Go 加密依赖;PF_COSIGN_MODE(enforce\|warn)/PF_COSIGN_REQUIRED 控松紧 | 签名逻辑用官方工具,pctl 保持单二进制;验签对 digest 不对 tag;运行时 cosign 可选(warn)但推荐 | M2 pctl publish + CI 签名发布链 |
+| 28 | 开放平台计量（specs/013）= 网关 file-log JSON(含 X-PF-App-Key) → promtail → Loki,svc-openapi 用 LogQL 出用量;observability profile 隔离 | 计量从日志派生,请求热路径零额外写入/延迟;Loki 可选,未开优雅降级;M2 仅可见性,限流仍是实时控制 | M3 配额/账单强制、合作方自助门户 |
+| 29 | 用户列表分页搜索（specs/014）= auth `?limit/offset/q` + `{items,total}`,svc-users 防抖搜索+翻页 | total 让 UI 免全量加载;搜索仅用户名;向后兼容(无参→前 20) | M3 角色/状态过滤、外部身份视图 |
 
 ---
 

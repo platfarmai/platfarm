@@ -94,6 +94,14 @@ services:
           - name: rate-limiting
             config: { minute: 120, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
 
+  - name: svc-plugin-signed
+    url: http://svc-plugin-signed:8080
+    retries: 2
+    routes:
+      - name: svc-plugin-signed-protected
+        paths: ["/api/signed"]
+        strip_path: false
+
   - name: svc-users
     url: http://svc-users:8080
     retries: 2
@@ -121,6 +129,14 @@ plugins:
               if t then kong.service.request.set_header("authorization", "Bearer " .. t) end
             end
           end
+  # 计量（specs/013）：结构化 JSON 访问日志到 stdout，含 app key / request id / route / status
+  # 由 promtail 采集进 Loki。log serializer 自带 request.headers，promtail 侧提取 X-PF-App-Key。
+  - name: file-log
+    config:
+      path: /dev/stdout
+      custom_fields_by_lua:
+        pf_app_key: "return kong.request.get_header('x-pf-app-key') or ''"
+        pf_request_id: "return kong.request.get_header('x-request-id') or kong.ctx.shared.request_id or ''"
 
 # jwt 插件按 iss=pf-auth 匹配此 consumer，RS256 公钥验签（私钥仅 auth 持有）
 consumers:
