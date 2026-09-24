@@ -29,21 +29,28 @@ func (s *server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "username (≥3) and password (≥8) required")
 		return
 	}
-	if in.Email != "" {
-		if _, err := mail.ParseAddress(in.Email); err != nil {
-			writeErr(w, 400, "invalid email")
+		email := ""
+		if in.Email != "" {
+			addr, err := mail.ParseAddress(in.Email)
+			if err != nil {
+				writeErr(w, 400, "invalid email")
+				return
+			}
+			email = strings.ToLower(addr.Address)
+		}
+		if !s.allowRegister(clientIP(r)) {
+			writeErr(w, 429, "too many registrations from this address, try later")
 			return
 		}
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
-	if err != nil {
-		writeErr(w, 500, "hash failed")
-		return
-	}
-	var id int
-	err = s.db.QueryRow(r.Context(),
-		`INSERT INTO users (username, password_hash, role, email) VALUES ($1,$2,'user',$3) RETURNING id`,
-		in.Username, string(hash), strings.ToLower(in.Email)).Scan(&id)
+		hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
+		if err != nil {
+			writeErr(w, 500, "hash failed")
+			return
+		}
+		var id int
+		err = s.db.QueryRow(r.Context(),
+			`INSERT INTO users (username, password_hash, role, email) VALUES ($1,$2,'user',$3) RETURNING id`,
+			in.Username, string(hash), email).Scan(&id)
 	if err != nil {
 		writeErr(w, 409, "username or email already taken")
 		return

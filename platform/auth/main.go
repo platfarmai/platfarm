@@ -39,6 +39,7 @@ type server struct {
 	mu            sync.Mutex
 	revoked       map[string]time.Time
 	userKill      map[int]time.Time // 用户级吊销 iat 截止（specs/011）
+	regLimit      *registerLimiter
 }
 
 func main() {
@@ -79,6 +80,7 @@ func main() {
 	s := &server{
 		db: db, key: key, loginServices: loginServiceWhitelist(),
 		rdb: openRedis(), revoked: map[string]time.Time{}, userKill: map[int]time.Time{},
+		regLimit: newRegisterLimiter(),
 	}
 	go s.janitor()
 
@@ -92,11 +94,11 @@ func main() {
 	mux.HandleFunc("POST /auth/totp/setup", s.handleTOTPSetup)           // TOTP 二次验证（specs/018）
 	mux.HandleFunc("POST /auth/totp/enable", s.handleTOTPEnable)
 	mux.HandleFunc("POST /auth/totp/disable", s.handleTOTPDisable)
-	mux.HandleFunc("GET /internal/auth/users/lookup", s.handleUserLookup)                // 找回密码流（specs/018）
-	mux.HandleFunc("POST /internal/auth/users/{id}/set-password", s.handleSetPassword)   // 同上
-	mux.HandleFunc("POST /internal/auth/users/{id}/reset-totp", s.handleTOTPReset)       // admin 解锁
+	mux.HandleFunc("GET /internal/auth/users/lookup", s.handleUserLookup)                         // 找回密码流（specs/018）
+	mux.HandleFunc("POST /internal/auth/users/{id}/set-password", s.handleSetPassword)            // 同上
+	mux.HandleFunc("POST /internal/auth/users/{id}/reset-totp", s.handleTOTPReset)                // admin 解锁
 	mux.HandleFunc("POST /internal/auth/users/{id}/set-email-verified", s.handleSetEmailVerified) // 邮箱验证（specs/021）
-	mux.HandleFunc("GET /internal/auth/tenants", s.handleTenantsList)   // 多租户（specs/022）
+	mux.HandleFunc("GET /internal/auth/tenants", s.handleTenantsList)                             // 多租户（specs/022）
 	mux.HandleFunc("POST /internal/auth/tenants", s.handleTenantsCreate)
 	mux.HandleFunc("PATCH /internal/auth/tenants/{id}", s.handleTenantsUpdate)
 	mux.HandleFunc("GET /internal/auth/users", s.handleUsersList)
@@ -105,8 +107,8 @@ func main() {
 	mux.HandleFunc("POST /internal/auth/users/{id}/reset-password", s.handleUsersReset)
 	mux.HandleFunc("GET /auth/.well-known/jwks.json", s.handleJWKS)
 	mux.HandleFunc("POST /auth/service-token", s.handleServiceToken)
-	mux.HandleFunc("POST /oauth/token", s.handleOAuthToken) // 开放平台 app token（specs/009）
-	mux.HandleFunc("GET /internal/auth/apps", s.handleAppsList)         // 开放平台后台（specs/010）
+	mux.HandleFunc("POST /oauth/token", s.handleOAuthToken)     // 开放平台 app token（specs/009）
+	mux.HandleFunc("GET /internal/auth/apps", s.handleAppsList) // 开放平台后台（specs/010）
 	mux.HandleFunc("POST /internal/auth/apps", s.handleAppsCreate)
 	mux.HandleFunc("PATCH /internal/auth/apps/{key}", s.handleAppsUpdate)
 	mux.HandleFunc("POST /internal/auth/apps/{key}/rotate", s.handleAppsRotate)
@@ -114,6 +116,7 @@ func main() {
 	mux.HandleFunc("POST /internal/auth/bind-external", s.handleBindExternal)
 	mux.HandleFunc("POST /internal/auth/introspect", s.handleIntrospect)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /docs", handleDocsIndex)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	mux.HandleFunc("GET /{$}", handlePlatformInfo)
 	mux.HandleFunc("/", handleNotFound) // 网关兜底路由指向 auth：未匹配路径返回平台风格 JSON 404
@@ -181,7 +184,8 @@ func migrate(db *pgxpool.Pool) error {
 		)`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOL NOT NULL DEFAULT false`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS users_email_uniq ON users (lower(email)) WHERE email <> ''`,
+		`UPDATE users SET email = lower(email) WHERE email <> lower(email)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS users_email_uniq ON users (email) WHERE email <> ''`,
 	} {
 		if _, err = db.Exec(ctx, stmt); err != nil {
 			return err

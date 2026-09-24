@@ -152,10 +152,11 @@ type tokenPair struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken"`
 	ExpiresIn    int    `json:"expiresIn"`
+	DataKey      string `json:"dataKey,omitempty"` // 响应加密会话密钥（附录 F）；未启用时缺省
 }
 
 func (s *server) issuePair(w http.ResponseWriter, u user) {
-	access, _, err := s.signUser(u, "access", accessTTL)
+		access, accessClaims, err := s.signUser(u, "access", accessTTL)
 	if err != nil {
 		writeErr(w, 500, "sign failed")
 		return
@@ -166,8 +167,8 @@ func (s *server) issuePair(w http.ResponseWriter, u user) {
 		return
 	}
 	// SSO 会话 Cookie（specs/006）：同源浏览器免二次登录；Bearer 仍照常返回给 API/curl。
-	setSessionCookie(w, access)
-	writeJSON(w, 200, tokenPair{access, refresh, int(accessTTL.Seconds())})
+		setSessionCookie(w, access)
+		writeJSON(w, 200, tokenPair{access, refresh, int(accessTTL.Seconds()), dataKey(accessClaims.TokenId)})
 }
 
 const sessionCookie = "pf_access"

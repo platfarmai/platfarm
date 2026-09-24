@@ -169,8 +169,8 @@ func (s *server) handleUsersUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		s.revokeUserTokens(id)
 	}
-	if status != 1 {
-		s.revokeUserTokens(id) // 禁用即吊销
+	if status != 1 || role != curRole {
+		s.revokeUserTokens(id) // 禁用或改角色：旧 token 里的 role 立即作废
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
