@@ -72,7 +72,7 @@ docker compose up -d --build && docker compose restart gateway
 ./tools/pctl/pctl.exe check --e2e               # 契约测试三件套闸门
 ```
 
-详细教程：[docs/adding-a-service.md](docs/adding-a-service.md)。生产若是路径 B 镜像目录（没有 `services/`），见 [docs/adding-a-service-on-path-b.md](docs/adding-a-service-on-path-b.md)。
+详细教程：[docs/adding-a-service.md](docs/adding-a-service.md)。生产若是路径 B 镜像目录（没有 `services/`），见 [docs/adding-a-service-on-path-b.md](docs/adding-a-service-on-path-b.md)。已复现待修缺陷：[docs/known-issues.md](docs/known-issues.md)。
 
 ### 2.4 试玩第三方登录（mock provider，无需外部账号）
 

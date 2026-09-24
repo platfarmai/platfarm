@@ -17,6 +17,10 @@
 > - **健康检查默认不依赖 `wget`**，改用 PID 1 存活检查，精简 Alpine / distroless 镜像都能通过。需要真正的就绪探测时在清单里写 `runtime.healthcheck: http`（要求镜像自带 wget），不想要探活写 `none`。
 > - **环境变量支持服务专属覆盖**：`${SVC_ADS_DATABASE_URL:-${DATABASE_URL}}`。给插件配独立数据库时只需在 `.env` 写 `SVC_ADS_DATABASE_URL=...`，**不会影响 auth**。
 >
+> **⚠️ 网关配置仍需手工维护**：`pctl sync` 生成的 `docker-compose.services.yml` 可直接使用，
+> 但生成的 `gateway/kong.yml` 目前会因多个 `pre-function` 插件主键冲突而让 Kong 启动失败
+> （见 [known-issues.md](known-issues.md) PF-001）。接入时请沿用手工维护的 kong.yml。
+>
 > 下面保留手工接法，供不想改 `.env` 或需要完全掌控的场景参考。
 
 路径 B 的运行目录（例如 `platfarm-run/`）**只有** `compose.yml`（从 `deploy/compose.release.yml` 拷来）、`.env`、`.keys/`、`gateway/kong.yml`。它：
