@@ -38,3 +38,6 @@ tmp/
 
 # 备份产物（specs/020，含密钥与凭据）
 backups/
+
+# 浏览器 QA 截图
+.playwright-mcp/
