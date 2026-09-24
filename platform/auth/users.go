@@ -115,8 +115,9 @@ func (s *server) handleUsersUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var in struct {
-		Role   *string `json:"role"`
-		Status *int    `json:"status"`
+		Role     *string `json:"role"`
+		Status   *int    `json:"status"`
+		TenantId *int    `json:"tenantId"` // 多租户归属调整（specs/022）
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		writeErr(w, 400, "invalid body")
@@ -159,6 +160,14 @@ func (s *server) handleUsersUpdate(w http.ResponseWriter, r *http.Request) {
 		`UPDATE users SET role=$2, status=$3 WHERE id=$1`, id, role, status); err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if in.TenantId != nil { // 换租户即吊销旧 token（其 tenantId claim 已过期）
+		if _, err := s.db.Exec(r.Context(),
+			`UPDATE users SET tenant_id=$2 WHERE id=$1`, id, *in.TenantId); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		s.revokeUserTokens(id)
 	}
 	if status != 1 {
 		s.revokeUserTokens(id) // 禁用即吊销
