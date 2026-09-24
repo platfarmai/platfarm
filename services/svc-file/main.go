@@ -165,12 +165,16 @@ func handleUploadURL(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "visibility must be private|public"})
 		return
 	}
-	key := "u" + strconv.Itoa(claims.UserId) + "/" + randomHex(8) + "_" + path.Base(in.Filename)
+	key := "u" + strconv.Itoa(claims.UserId) + "/" + randomHex(16) + "_" + path.Base(in.Filename)
+	token := ""
+	if in.Visibility == "public" {
+		token = randomHex(16) // 公开链接不可按自增 id 枚举
+	}
 	var id int64
 	err := db.QueryRow(c.Request.Context(),
-		`INSERT INTO files (owner_id, tenant_id, visibility, filename, mime, size, storage_key)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-		claims.UserId, claims.TenantId, in.Visibility, path.Base(in.Filename), in.Mime, in.Size, key).Scan(&id)
+		`INSERT INTO files (owner_id, tenant_id, visibility, filename, mime, size, storage_key, public_token)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+		claims.UserId, claims.TenantId, in.Visibility, path.Base(in.Filename), in.Mime, in.Size, key, token).Scan(&id)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "insert failed"})
 		return
@@ -180,20 +184,28 @@ func handleUploadURL(c *gin.Context) {
 		c.JSON(502, gin.H{"error": "presign failed"})
 		return
 	}
-	c.JSON(200, gin.H{"fileId": id, "uploadUrl": u.String(), "expiresIn": int(presignTTL.Seconds())})
+	out := gin.H{"fileId": id, "uploadUrl": u.String(), "expiresIn": int(presignTTL.Seconds())}
+	if token != "" {
+		out["publicToken"] = token
+	}
+	c.JSON(200, out)
 }
 
 func loadFile(c *gin.Context) (fileRow, string, bool) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "bad id"})
-		return fileRow{}, "", false
+	ref := c.Param("id")
+	query := `SELECT id, owner_id, visibility, filename, mime, size, storage_key, created_at::text
+		 FROM files WHERE id=$1`
+	var arg any
+	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
+		arg = id
+	} else {
+		query = `SELECT id, owner_id, visibility, filename, mime, size, storage_key, created_at::text
+		 FROM files WHERE public_token=$1 AND public_token <> ''`
+		arg = ref
 	}
 	var f fileRow
 	var key string
-	err = db.QueryRow(c.Request.Context(),
-		`SELECT id, owner_id, visibility, filename, mime, size, storage_key, created_at::text
-		 FROM files WHERE id=$1`, id).
+	err := db.QueryRow(c.Request.Context(), query, arg).
 		Scan(&f.ID, &f.OwnerID, &f.Visibility, &f.Filename, &f.Mime, &f.Size, &key, &f.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(404, gin.H{"error": "file not found"})

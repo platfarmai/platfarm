@@ -8,6 +8,8 @@ CREATE TABLE files (
     mime        TEXT   NOT NULL DEFAULT '',
     size        BIGINT NOT NULL DEFAULT 0,
     storage_key TEXT   UNIQUE NOT NULL,
+    public_token TEXT NOT NULL DEFAULT '', -- 公开文件的不可枚举定位符；私有文件为空
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX files_owner_idx ON files (owner_id);
+CREATE UNIQUE INDEX files_public_token_idx ON files (public_token) WHERE public_token <> '';
