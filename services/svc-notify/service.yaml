@@ -1,0 +1,40 @@
+# svc-notify — 通知能力服务（specs/017）：email / webhook / 站内信统一出口。
+# email/webhook 走 outbox 异步投递（DB 队列 + 退避重试）；站内信直接落库供拉取。
+manifest: v1
+id: svc-notify
+version: 0.1.0
+lang: go
+
+mount:
+  path: /api/notify
+  strip_path: false
+
+auth:
+  required: true
+  accept_service_tokens:
+    - svc-users
+    - svc-jobs # 定时/异步通知：cron → svc-jobs → webhook 回调本服务（specs/026）
+
+limits:
+  rate_per_minute: 120
+
+exposes:
+  scopes:
+    - { name: send, desc: 发送通知（email/webhook/站内信） }
+
+runtime:
+  port: 8080
+  health: /healthz
+  env:
+    - NOTIFY_DATABASE_URL
+    - SMTP_HOST
+    - SMTP_PORT
+    - SMTP_USER
+    - SMTP_PASS
+    - SMTP_FROM
+
+data:
+  database: pf_svc_notify
+
+test:
+  command: /contract-test
