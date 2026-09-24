@@ -29,6 +29,12 @@ func migrateApps(db *pgxpool.Pool) error {
 			status       INT  NOT NULL DEFAULT 1,
 			created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 		)`)
+	if err != nil {
+		return err
+	}
+	// 日配额（specs/023）：0 = 不限
+	_, err = db.Exec(context.Background(),
+		`ALTER TABLE oauth_apps ADD COLUMN IF NOT EXISTS quota_per_day INT NOT NULL DEFAULT 0`)
 	return err
 }
 
@@ -40,14 +46,27 @@ func (s *server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var hash, scopes string
-	var status int
+	var status, quota int
 	err := s.db.QueryRow(r.Context(),
-		`SELECT secret_hash, scopes, status FROM oauth_apps WHERE app_key=$1`, in.AppKey).
-		Scan(&hash, &scopes, &status)
+		`SELECT secret_hash, scopes, status, quota_per_day FROM oauth_apps WHERE app_key=$1`, in.AppKey).
+		Scan(&hash, &scopes, &status, &quota)
 	if err != nil || status != 1 ||
 		bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.AppSecret)) != nil {
 		writeErr(w, 401, "invalid app credentials")
 		return
+	}
+	// 日配额强制（specs/023）：token 签发即闸门——app token 短时效（1h），
+	// 超额后拒绝续签，最坏超放一个 TTL 窗口。用量来自网关计量日志（Loki，specs/013）。
+	if quota > 0 {
+		if used, qerr := lokiAppUsage(r.Context(), in.AppKey); qerr != nil {
+			// fail-open：计量不可用不阻断合作方（Loki 属可选组件），仅记日志
+			logQuotaSkip(in.AppKey, qerr)
+		} else if used >= quota {
+			writeJSON(w, 429, map[string]any{
+				"error": "daily quota exceeded", "quotaPerDay": quota, "usedToday": used,
+			})
+			return
+		}
 	}
 	var scopeList []string
 	for _, sc := range strings.Split(scopes, ",") {
@@ -82,12 +101,13 @@ func (s *server) adminActor(w http.ResponseWriter, r *http.Request) bool {
 }
 
 type appRow struct {
-	AppKey     string   `json:"appKey"`
-	Name       string   `json:"name"`
-	Scopes     []string `json:"scopes"`
-	RatePerMin int      `json:"ratePerMin"`
-	Status     int      `json:"status"`
-	CreatedAt  string   `json:"createdAt"`
+	AppKey      string   `json:"appKey"`
+	Name        string   `json:"name"`
+	Scopes      []string `json:"scopes"`
+	RatePerMin  int      `json:"ratePerMin"`
+	QuotaPerDay int      `json:"quotaPerDay"` // 0 = 不限（specs/023）
+	Status      int      `json:"status"`
+	CreatedAt   string   `json:"createdAt"`
 }
 
 func splitScopes(s string) []string {
@@ -106,7 +126,7 @@ func (s *server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.Query(r.Context(),
-		`SELECT app_key, name, scopes, rate_per_min, status, created_at FROM oauth_apps ORDER BY created_at DESC`)
+		`SELECT app_key, name, scopes, rate_per_min, quota_per_day, status, created_at FROM oauth_apps ORDER BY created_at DESC`)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -117,7 +137,7 @@ func (s *server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 		var a appRow
 		var scopes string
 		var ts time.Time
-		if err := rows.Scan(&a.AppKey, &a.Name, &scopes, &a.RatePerMin, &a.Status, &ts); err != nil {
+		if err := rows.Scan(&a.AppKey, &a.Name, &scopes, &a.RatePerMin, &a.QuotaPerDay, &a.Status, &ts); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
@@ -134,10 +154,11 @@ func (s *server) handleAppsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		AppKey     string   `json:"appKey"`
-		Name       string   `json:"name"`
-		Scopes     []string `json:"scopes"`
-		RatePerMin int      `json:"ratePerMin"`
+		AppKey      string   `json:"appKey"`
+		Name        string   `json:"name"`
+		Scopes      []string `json:"scopes"`
+		RatePerMin  int      `json:"ratePerMin"`
+		QuotaPerDay int      `json:"quotaPerDay"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil || in.AppKey == "" {
 		writeErr(w, 400, "appKey required")
@@ -146,6 +167,9 @@ func (s *server) handleAppsCreate(w http.ResponseWriter, r *http.Request) {
 	if in.RatePerMin <= 0 {
 		in.RatePerMin = 60
 	}
+	if in.QuotaPerDay < 0 {
+		in.QuotaPerDay = 0
+	}
 	secret := "as_" + newTokenID() + newTokenID()
 	hash, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
 	if err != nil {
@@ -153,8 +177,8 @@ func (s *server) handleAppsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = s.db.Exec(r.Context(),
-		`INSERT INTO oauth_apps (app_key, secret_hash, name, scopes, rate_per_min) VALUES ($1,$2,$3,$4,$5)`,
-		in.AppKey, string(hash), in.Name, strings.Join(in.Scopes, ","), in.RatePerMin)
+		`INSERT INTO oauth_apps (app_key, secret_hash, name, scopes, rate_per_min, quota_per_day) VALUES ($1,$2,$3,$4,$5,$6)`,
+		in.AppKey, string(hash), in.Name, strings.Join(in.Scopes, ","), in.RatePerMin, in.QuotaPerDay)
 	if err != nil {
 		writeErr(w, 409, "appKey exists or invalid")
 		return
@@ -169,9 +193,10 @@ func (s *server) handleAppsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	key := r.PathValue("key")
 	var in struct {
-		Scopes     *[]string `json:"scopes"`
-		RatePerMin *int      `json:"ratePerMin"`
-		Status     *int      `json:"status"`
+		Scopes      *[]string `json:"scopes"`
+		RatePerMin  *int      `json:"ratePerMin"`
+		QuotaPerDay *int      `json:"quotaPerDay"`
+		Status      *int      `json:"status"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		writeErr(w, 400, "invalid body")
@@ -179,13 +204,15 @@ func (s *server) handleAppsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	ct, err := s.db.Exec(r.Context(),
 		`UPDATE oauth_apps SET
-		   scopes       = COALESCE($2, scopes),
-		   rate_per_min = COALESCE($3, rate_per_min),
-		   status       = COALESCE($4, status)
+		   scopes        = COALESCE($2, scopes),
+		   rate_per_min  = COALESCE($3, rate_per_min),
+		   quota_per_day = COALESCE($4, quota_per_day),
+		   status        = COALESCE($5, status)
 		 WHERE app_key = $1`,
 		key,
 		scopesArg(in.Scopes),
 		intArg(in.RatePerMin),
+		intArg(in.QuotaPerDay),
 		intArg(in.Status),
 	)
 	if err != nil {
