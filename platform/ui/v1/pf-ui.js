@@ -45,7 +45,7 @@
   /* ---------- pf-button ---------- */
   class PfButton extends HTMLElement {
     static get observedAttributes() {
-      return ["variant", "size", "loading", "disabled"];
+      return ["variant", "size", "loading", "disabled", "type"];
     }
 
     connectedCallback() {
@@ -71,7 +71,7 @@
       var existing = collectText(this, this._btn);
       clearChildren(this);
       this._btn = document.createElement("button");
-      this._btn.type = "button";
+      this._btn.type = this.getAttribute("type") || "button";
       this._label = document.createElement("span");
       this._label.className = "pf-btn-label";
       this._spin = document.createElement("span");
@@ -121,6 +121,7 @@
       if (!this._btn) return;
       var loading = attrBool(this, "loading");
       this._btn.disabled = attrBool(this, "disabled") || loading;
+      this._btn.type = this.getAttribute("type") || "button";
       this._spin.hidden = !loading;
     }
 

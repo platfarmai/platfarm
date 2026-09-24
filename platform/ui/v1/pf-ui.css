@@ -95,6 +95,40 @@ body.pf-body {
   font-size: var(--pf-fs-12);
 }
 
+/* 多行日志/输出面。行内代码继续用 .pf-code。 */
+.pf-log {
+  display: block;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  max-height: 360px;
+  white-space: pre-wrap;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-fs-12);
+  background: var(--pf-surface-2);
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius);
+  color: var(--pf-text);
+}
+
+/* 可切换的小标签，配合 checkbox 或 button 使用。 */
+.pf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--pf-border);
+  border-radius: 999px;
+  background: var(--pf-surface);
+  font-size: var(--pf-fs-12);
+  cursor: pointer;
+}
+.pf-chip:has(input:checked) {
+  border-color: var(--pf-accent);
+  background: var(--pf-accent-weak);
+}
+.pf-chip input { margin: 0; }
+
 .pf-code {
   display: inline-block;
   font-family: var(--pf-font-mono);
@@ -175,6 +209,8 @@ body.pf-body {
 .pf-field input,
 .pf-field select,
 .pf-field textarea,
+.pf-toolbar input,
+.pf-toolbar select,
 .pf-input {
   width: 100%;
   font: inherit;
@@ -189,10 +225,14 @@ body.pf-body {
 .pf-field textarea { min-height: 88px; resize: vertical; }
 .pf-field input:hover,
 .pf-field select:hover,
-.pf-field textarea:hover { border-color: color-mix(in srgb, var(--pf-accent) 40%, var(--pf-border)); }
+.pf-field textarea:hover,
+.pf-toolbar input:hover,
+.pf-toolbar select:hover { border-color: color-mix(in srgb, var(--pf-accent) 40%, var(--pf-border)); }
 .pf-field input:focus-visible,
 .pf-field select:focus-visible,
-.pf-field textarea:focus-visible {
+.pf-field textarea:focus-visible,
+.pf-toolbar input:focus-visible,
+.pf-toolbar select:focus-visible {
   outline: none;
   border-color: var(--pf-accent);
   box-shadow: var(--pf-ring);
