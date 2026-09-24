@@ -2,8 +2,8 @@
 # 整个挂载点公开：OAuth 舞步全程处于未登录态；安全性由 state/一次性兑换码保证
 manifest: v1
 id: svc-oauth
-version: 0.1.0
-lang: py
+version: 0.2.0
+lang: go
 
 mount:
   path: /api/oauth
@@ -24,7 +24,9 @@ runtime:
     - PF_CLIENT_SECRET
     - GITHUB_CLIENT_ID
     - GITHUB_CLIENT_SECRET
+    - WECHAT_APPID
+    - WECHAT_SECRET
     - PF_REDIS_URL
 
 test:
-  command: python3 tests/contract/contract_test.py
+  command: /contract-test

@@ -1,10 +1,14 @@
-FROM alpine:3.20
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/repositories \
-    && apk add --no-cache python3 py3-pip py3-cryptography wget \
-    && pip3 install --break-system-packages --no-cache-dir \
-       -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi uvicorn pyjwt redis
-WORKDIR /app
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+ENV GOPROXY="https://goproxy.cn|https://proxy.golang.org|direct"
 COPY . .
-EXPOSE 8080
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--timeout-graceful-shutdown", "25"]
+RUN go mod tidy \
+    && CGO_ENABLED=0 go build -o /out/server . \
+    && CGO_ENABLED=0 go build -o /out/contract-test ./tests/contract
 
+FROM alpine:3.20
+RUN apk add --no-cache wget
+COPY --from=build /out/server /server
+COPY --from=build /out/contract-test /contract-test
+EXPOSE 8080
+ENTRYPOINT ["/server"]
