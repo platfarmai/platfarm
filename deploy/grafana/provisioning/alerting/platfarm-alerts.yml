@@ -1,0 +1,33 @@
+# Grafana 预置告警（specs/019）：网关 5xx 突增。通知渠道默认 grafana 内置（UI 可改 webhook/邮件）。
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: platfarm
+    folder: Platfarm
+    interval: 1m
+    rules:
+      - uid: pf-5xx-spike
+        title: 网关 5xx 突增
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: OK
+        annotations:
+          summary: 网关 5 分钟内 5xx 响应超过 20 次，检查后端服务健康与日志。
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: loki
+            model:
+              expr: sum(count_over_time({service_name="platfarm-gateway", status=~"5.."}[5m]))
+              queryType: instant
+              refId: A
+          - refId: C
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              refId: C
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [20] }

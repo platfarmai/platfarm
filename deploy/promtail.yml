@@ -1,5 +1,4 @@
-# promtail：采集 platfarm-gateway 容器日志 → Loki（specs/013）。
-# 只处理 Kong file-log 的 JSON 行（含 pf_app_key / route / status）。
+# promtail：采集 platfarm 全部容器 stdout → Loki（specs/013 计量 + specs/019 全平台日志管道）。
 server:
   http_listen_port: 9080
   grpc_listen_port: 0
@@ -34,3 +33,30 @@ scrape_configs:
       - labels:
           pf_app_key:
           status:
+
+  # ── 全服务日志（specs/019）：platfarm compose 项目全部容器；JSON 行尽力解析 level/requestId ──
+  - job_name: platfarm-services
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/platfarm-.*"
+        action: keep
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/platfarm-gateway.*"
+        action: drop # 网关走上面的计量 job
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/platfarm-([a-z0-9-]+?)(-[0-9]+)?"
+        target_label: service
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/platfarm-(.*)"
+        target_label: container
+    pipeline_stages:
+      # JSON 结构化日志（附录 B 约定：ts/level/service/requestId/msg）尽力提取；纯文本行原样保留
+      - json:
+          expressions:
+            level: level
+            request_id: requestId
+      - labels:
+          level:

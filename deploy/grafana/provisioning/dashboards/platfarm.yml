@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: platfarm
+    folder: Platfarm
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
