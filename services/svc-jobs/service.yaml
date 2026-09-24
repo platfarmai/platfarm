@@ -1,0 +1,38 @@
+# svc-jobs — 异步任务队列 + cron 调度能力服务。
+# enqueue 走 jobs 表异步投递（DB 队列 + 指数退避重试）；schedules 表定时派生任务。
+manifest: v1
+id: svc-jobs
+version: 0.1.0
+lang: go
+
+mount:
+  path: /api/jobs
+  strip_path: false
+
+auth:
+  required: true
+  accept_service_tokens:
+    - svc-file
+    - svc-notify
+    - svc-users
+
+limits:
+  rate_per_minute: 120
+
+exposes:
+  scopes:
+    - { name: enqueue, desc: 提交异步任务 }
+
+runtime:
+  port: 8080
+  health: /healthz
+  env:
+    - JOBS_DATABASE_URL
+    - JOBS_CLIENT_ID
+    - JOBS_CLIENT_SECRET
+
+data:
+  database: pf_svc_jobs
+
+test:
+  command: /contract-test
