@@ -1,12 +1,17 @@
 # PlatFarm 平台用户管理台（specs/011）。admin 管理 + 用户自助改密码；经 SSO 壳嵌入。
+# specs/018：新增公开 forgot/reset 找回密码流（验证码存自有库，邮件经 svc-notify）。
 manifest: v1
 id: svc-users
-version: 0.1.0
+version: 0.2.0
 lang: go
 
 mount:
   path: /api/users
   strip_path: false
+  public_routes:
+    - POST /forgot
+    - POST /reset
+    - GET /account/*
 
 auth:
   required: true
@@ -26,6 +31,11 @@ runtime:
   env:
     - USERS_CLIENT_ID
     - USERS_CLIENT_SECRET
+    - USERS_DATABASE_URL
+    - NOTIFY_URL
+
+data:
+  database: pf_svc_users
 
 test:
-  command: /server -help >/dev/null 2>&1 || true
+  command: wget -qO- http://127.0.0.1:8080/healthz # compose exec 不经 shell，不能用重定向/管道

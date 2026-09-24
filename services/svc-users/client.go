@@ -86,6 +86,54 @@ func (a *authClient) call(method, path, userToken string, body []byte) (int, []b
 	return resp.StatusCode, out, nil
 }
 
+// callService calls auth internal APIs with the service token only (no user OBO) —
+// password-reset flow has no user token (specs/018).
+func (a *authClient) callService(method, path string, body []byte) (int, []byte, error) {
+	st, err := a.serviceToken()
+	if err != nil {
+		return 0, nil, err
+	}
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, a.authURL+path, rdr)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+st)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, out, nil
+}
+
+// callNotify posts to svc-notify /send with the service token (first-party direct DNS on core-net).
+func (a *authClient) callNotify(body []byte) (int, []byte, error) {
+	st, err := a.serviceToken()
+	if err != nil {
+		return 0, nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost,
+		envOr("NOTIFY_URL", "http://svc-notify:8080")+"/api/notify/send", bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+st)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, out, nil
+}
+
 // callUser proxies with the user's own token as bearer (self change-password; no service token/OBO).
 func (a *authClient) callUser(method, path, userToken string, body []byte) (int, []byte, error) {
 	var rdr io.Reader

@@ -32,6 +32,9 @@ func main() {
 	r.GET("/readyz", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
 
 	mountConsole(r)
+	mountAccount(r)  // 账号自助页面（specs/021）：公开静态页
+	initReset(r, ac) // 找回密码流（specs/018）：公开 forgot/reset + pf_svc_users 库
+	initVerify(r, ac) // 邮箱验证流（specs/021）
 
 	// self change-password: any logged-in user; proxy straight to auth with the user's own token
 	r.POST("/api/users/change-password", func(c *gin.Context) {

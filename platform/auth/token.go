@@ -62,6 +62,7 @@ func (s *server) signUser(u user, tokenType string, ttl time.Duration) (string, 
 	c.UserId = u.ID
 	c.Username = u.Username
 	c.Role = u.Role
+	c.TenantId = u.TenantID // 多租户激活（specs/022）：0 = 未分配/单租户
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, &c)
 	tok.Header["kid"] = keyID
 	signed, err := tok.SignedString(s.key)

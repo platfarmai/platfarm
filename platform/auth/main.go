@@ -19,11 +19,16 @@ import (
 )
 
 type user struct {
-	ID           int
-	Username     string
-	PasswordHash string
-	Role         string
-	Status       int
+	ID            int
+	Username      string
+	PasswordHash  string
+	Role          string
+	Status        int
+	Email         string
+	TotpSecret    string
+	TotpEnabled   bool
+	EmailVerified bool
+	TenantID      int
 }
 
 type server struct {
@@ -83,6 +88,17 @@ func main() {
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /auth/me", s.handleMe)
 	mux.HandleFunc("POST /auth/change-password", s.handleChangePassword) // 用户自助（specs/011）
+	mux.HandleFunc("POST /auth/register", s.handleRegister)              // 自助注册（specs/018，PF_SELF_REGISTER 门控）
+	mux.HandleFunc("POST /auth/totp/setup", s.handleTOTPSetup)           // TOTP 二次验证（specs/018）
+	mux.HandleFunc("POST /auth/totp/enable", s.handleTOTPEnable)
+	mux.HandleFunc("POST /auth/totp/disable", s.handleTOTPDisable)
+	mux.HandleFunc("GET /internal/auth/users/lookup", s.handleUserLookup)                // 找回密码流（specs/018）
+	mux.HandleFunc("POST /internal/auth/users/{id}/set-password", s.handleSetPassword)   // 同上
+	mux.HandleFunc("POST /internal/auth/users/{id}/reset-totp", s.handleTOTPReset)       // admin 解锁
+	mux.HandleFunc("POST /internal/auth/users/{id}/set-email-verified", s.handleSetEmailVerified) // 邮箱验证（specs/021）
+	mux.HandleFunc("GET /internal/auth/tenants", s.handleTenantsList)   // 多租户（specs/022）
+	mux.HandleFunc("POST /internal/auth/tenants", s.handleTenantsCreate)
+	mux.HandleFunc("PATCH /internal/auth/tenants/{id}", s.handleTenantsUpdate)
 	mux.HandleFunc("GET /internal/auth/users", s.handleUsersList)
 	mux.HandleFunc("POST /internal/auth/users", s.handleUsersCreate)
 	mux.HandleFunc("PATCH /internal/auth/users/{id}", s.handleUsersUpdate)
@@ -152,6 +168,25 @@ func migrate(db *pgxpool.Pool) error {
 	if err != nil {
 		return err
 	}
+	// 账号自助流程（specs/018）：email + TOTP 列（幂等）
+	for _, stmt := range []string{
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOL NOT NULL DEFAULT false`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id INT NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS tenants (
+			id         SERIAL PRIMARY KEY,
+			name       TEXT UNIQUE NOT NULL,
+			status     INT  NOT NULL DEFAULT 1,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOL NOT NULL DEFAULT false`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS users_email_uniq ON users (lower(email)) WHERE email <> ''`,
+	} {
+		if _, err = db.Exec(ctx, stmt); err != nil {
+			return err
+		}
+	}
 	if err := migrateExternal(db); err != nil {
 		return err
 	}
@@ -183,13 +218,16 @@ func migrate(db *pgxpool.Pool) error {
 func (s *server) loadUser(ctx context.Context, by string, val any) (user, error) {
 	var u user
 	row := s.db.QueryRow(ctx,
-		`SELECT id, username, password_hash, role, status FROM users WHERE `+by+` = $1`, val)
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Status)
+		`SELECT id, username, password_hash, role, status, email, totp_secret, totp_enabled,
+		        email_verified, tenant_id
+		 FROM users WHERE `+by+` = $1`, val)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Status,
+		&u.Email, &u.TotpSecret, &u.TotpEnabled, &u.EmailVerified, &u.TenantID)
 	return u, err
 }
 
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	var in struct{ Username, Password string }
+	var in struct{ Username, Password, Totp string }
 	if json.NewDecoder(r.Body).Decode(&in) != nil || in.Username == "" {
 		writeErr(w, 400, "username and password required")
 		return
@@ -199,6 +237,17 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(in.Password)) != nil {
 		writeErr(w, 401, "invalid credentials")
 		return
+	}
+	// TOTP 二次验证（specs/018）：开启后密码正确仍须验证码
+	if u.TotpEnabled {
+		if in.Totp == "" {
+			writeJSON(w, 401, map[string]any{"error": "totp required", "mfaRequired": true})
+			return
+		}
+		if !verifyTOTP(u.TotpSecret, in.Totp) {
+			writeErr(w, 401, "invalid totp code")
+			return
+		}
 	}
 	s.issuePair(w, u)
 }
@@ -246,10 +295,17 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{
+	out := map[string]any{
 		"userId": c.UserId, "username": c.Username, "role": c.Role,
 		"tenantId": c.TenantId, "tokenId": c.TokenId, "isImpersonation": c.IsImpersonation,
-	})
+	}
+	// 邮箱状态（specs/021）：查库补充，前端账号页用
+	if u, uerr := s.loadUser(r.Context(), "id", c.UserId); uerr == nil {
+		out["email"] = u.Email
+		out["emailVerified"] = u.EmailVerified
+		out["totpEnabled"] = u.TotpEnabled
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *server) handleIntrospect(w http.ResponseWriter, r *http.Request) {
