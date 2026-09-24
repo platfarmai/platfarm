@@ -12,6 +12,8 @@ services:
       DATABASE_URL: ${DATABASE_URL} # 三种模式见 .env.example
       JWT_PRIVATE_KEY_FILE: /keys/pf-auth.pem
       PF_REDIS_URL: ${PF_REDIS_URL:-redis://redis:6379/0}
+      PF_SELF_REGISTER: ${PF_SELF_REGISTER:-off} # 自助注册开关（specs/018）
+      LOKI_URL: ${LOKI_URL:-} # 开放平台日配额强制（specs/023）；空 = fail-open 不强制
     volumes:
       - ./.keys:/keys
     extra_hosts:
@@ -61,6 +63,7 @@ services:
       POSTGRES_DB: pf_auth
     volumes:
       - pf-pg-data:/var/lib/postgresql # postgres:18+ 挂载点
+      - ./deploy/initdb.sql:/docker-entrypoint-initdb.d/initdb.sql:ro # 仅新卷首次生效；存量卷手工执行同文件
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U platfarm"]
       interval: 5s
@@ -76,6 +79,27 @@ services:
       - pf-redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - core-net
+
+  # ── 可选：捆绑对象存储（svc-file 的默认后端，--profile bundled-s3 启用；架构 §5）──
+  # 外部 S3/OSS 模式：不启用本 profile，改 .env 的 S3_ENDPOINT/S3_PUBLIC_ENDPOINT 指向外部端点
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-08-17T01-24-54Z # quay 源：Docker Hub 受限环境亦可拉取
+    profiles: ["bundled-s3"]
+    command: server /data
+    ports:
+      - "127.0.0.1:19000:9000" # 预签名 URL 直传/直下需宿主可达；生产换公网域名（S3_PUBLIC_ENDPOINT）
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-pf_minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-pf_minio_local}
+    volumes:
+      - pf-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -104,6 +128,23 @@ services:
     networks:
       - core-net
 
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: ["observability"]
+    ports:
+      - "127.0.0.1:18002:3000" # 仅本机；默认账号 admin / GF_ADMIN_PASSWORD
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - pf-grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+    networks:
+      - core-net
+
 networks:
   core-net: # 平台核心网络；插件网络（net-plugin-*）由 pctl sync 生成
 
@@ -111,3 +152,5 @@ volumes:
   pf-pg-data:
   pf-redis-data:
   pf-loki-data:
+  pf-minio-data:
+  pf-grafana-data:

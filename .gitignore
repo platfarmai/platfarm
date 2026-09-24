@@ -35,3 +35,6 @@ tmp/
 
 # console \u5ba1\u8ba1\u65e5\u5fd7
 .console-audit.jsonl
+
+# 备份产物（specs/020，含密钥与凭据）
+backups/
