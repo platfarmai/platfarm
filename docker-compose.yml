@@ -14,6 +14,7 @@ services:
       PF_REDIS_URL: ${PF_REDIS_URL:-redis://redis:6379/0}
       PF_SELF_REGISTER: ${PF_SELF_REGISTER:-off} # 自助注册开关（specs/018）
       LOKI_URL: ${LOKI_URL:-} # 开放平台日配额强制（specs/023）；空 = fail-open 不强制
+      PF_DATA_SECRET: ${PF_DATA_SECRET:-} # 与网关共用；空 = 登录响应不带 dataKey
     volumes:
       - ./.keys:/keys
     extra_hosts:

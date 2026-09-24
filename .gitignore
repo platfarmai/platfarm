@@ -41,3 +41,7 @@ backups/
 
 # 浏览器 QA 截图
 .playwright-mcp/
+
+# build artifacts (auth/service binaries built during local QA)
+platform/auth/*.exe
+services/*/*.exe
