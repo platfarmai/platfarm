@@ -9,8 +9,8 @@ services:
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_LISTEN: "127.0.0.1:8001"
       KONG_NGINX_WORKER_PROCESSES: ${KONG_NGINX_WORKER_PROCESSES:-1} # Redis 限流时可改为 auto
-      KONG_UNTRUSTED_LUA: sandbox # pre-function 需 require("cjson")（SSO/开放平台 scope 校验，specs/006+009）
-      KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES: cjson
+      KONG_UNTRUSTED_LUA: sandbox # pre-function 需 require（SSO/scope 校验 specs/006+009，响应加密附录 F）
+      KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES: cjson,resty.openssl.kdf,resty.openssl.cipher,resty.random
     ports:
       - "18000:8000"
     volumes:
@@ -33,7 +33,7 @@ services:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD-SHELL", "kill -0 1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -43,17 +43,17 @@ services:
   svc-file:
     build: ./services/svc-file
     environment:
-      FILE_DATABASE_URL: ${FILE_DATABASE_URL}
-      S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-      S3_SECRET_KEY: ${S3_SECRET_KEY}
-      S3_BUCKET: ${S3_BUCKET}
+      FILE_DATABASE_URL: ${SVC_FILE_FILE_DATABASE_URL:-${FILE_DATABASE_URL}}
+      S3_ENDPOINT: ${SVC_FILE_S3_ENDPOINT:-${S3_ENDPOINT}}
+      S3_PUBLIC_ENDPOINT: ${SVC_FILE_S3_PUBLIC_ENDPOINT:-${S3_PUBLIC_ENDPOINT}}
+      S3_ACCESS_KEY: ${SVC_FILE_S3_ACCESS_KEY:-${S3_ACCESS_KEY}}
+      S3_SECRET_KEY: ${SVC_FILE_S3_SECRET_KEY:-${S3_SECRET_KEY}}
+      S3_BUCKET: ${SVC_FILE_S3_BUCKET:-${S3_BUCKET}}
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD-SHELL", "kill -0 1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -63,13 +63,13 @@ services:
   svc-grants:
     build: ./services/svc-grants
     environment:
-      GRANTS_DATABASE_URL: ${GRANTS_DATABASE_URL}
+      GRANTS_DATABASE_URL: ${SVC_GRANTS_GRANTS_DATABASE_URL:-${GRANTS_DATABASE_URL}}
       PF_ACCEPT_SERVICE_TOKENS: svc-demo,svc-file,svc-notify,svc-users,svc-openapi,svc-oauth
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD-SHELL", "kill -0 1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -79,15 +79,15 @@ services:
   svc-jobs:
     build: ./services/svc-jobs
     environment:
-      JOBS_DATABASE_URL: ${JOBS_DATABASE_URL}
-      JOBS_CLIENT_ID: ${JOBS_CLIENT_ID}
-      JOBS_CLIENT_SECRET: ${JOBS_CLIENT_SECRET}
+      JOBS_DATABASE_URL: ${SVC_JOBS_JOBS_DATABASE_URL:-${JOBS_DATABASE_URL}}
+      JOBS_CLIENT_ID: ${SVC_JOBS_JOBS_CLIENT_ID:-${JOBS_CLIENT_ID}}
+      JOBS_CLIENT_SECRET: ${SVC_JOBS_JOBS_CLIENT_SECRET:-${JOBS_CLIENT_SECRET}}
       PF_ACCEPT_SERVICE_TOKENS: svc-file,svc-notify,svc-users
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD-SHELL", "kill -0 1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -97,18 +97,18 @@ services:
   svc-notify:
     build: ./services/svc-notify
     environment:
-      NOTIFY_DATABASE_URL: ${NOTIFY_DATABASE_URL}
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_PORT: ${SMTP_PORT}
-      SMTP_USER: ${SMTP_USER}
-      SMTP_PASS: ${SMTP_PASS}
-      SMTP_FROM: ${SMTP_FROM}
+      NOTIFY_DATABASE_URL: ${SVC_NOTIFY_NOTIFY_DATABASE_URL:-${NOTIFY_DATABASE_URL}}
+      SMTP_HOST: ${SVC_NOTIFY_SMTP_HOST:-${SMTP_HOST}}
+      SMTP_PORT: ${SVC_NOTIFY_SMTP_PORT:-${SMTP_PORT}}
+      SMTP_USER: ${SVC_NOTIFY_SMTP_USER:-${SMTP_USER}}
+      SMTP_PASS: ${SVC_NOTIFY_SMTP_PASS:-${SMTP_PASS}}
+      SMTP_FROM: ${SVC_NOTIFY_SMTP_FROM:-${SMTP_FROM}}
       PF_ACCEPT_SERVICE_TOKENS: svc-users,svc-jobs
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD-SHELL", "kill -0 1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -118,16 +118,18 @@ services:
   svc-oauth:
     build: ./services/svc-oauth
     environment:
-      PF_CLIENT_ID: ${PF_CLIENT_ID}
-      PF_CLIENT_SECRET: ${PF_CLIENT_SECRET}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      PF_CLIENT_ID: ${SVC_OAUTH_PF_CLIENT_ID:-${PF_CLIENT_ID}}
+      PF_CLIENT_SECRET: ${SVC_OAUTH_PF_CLIENT_SECRET:-${PF_CLIENT_SECRET}}
+      GITHUB_CLIENT_ID: ${SVC_OAUTH_GITHUB_CLIENT_ID:-${GITHUB_CLIENT_ID}}
+      GITHUB_CLIENT_SECRET: ${SVC_OAUTH_GITHUB_CLIENT_SECRET:-${GITHUB_CLIENT_SECRET}}
+      WECHAT_APPID: ${SVC_OAUTH_WECHAT_APPID:-${WECHAT_APPID}}
+      WECHAT_SECRET: ${SVC_OAUTH_WECHAT_SECRET:-${WECHAT_SECRET}}
       PF_REDIS_URL: ${PF_REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD-SHELL", "kill -0 1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -137,14 +139,14 @@ services:
   svc-openapi:
     build: ./services/svc-openapi
     environment:
-      OPENAPI_CLIENT_ID: ${OPENAPI_CLIENT_ID}
-      OPENAPI_CLIENT_SECRET: ${OPENAPI_CLIENT_SECRET}
+      OPENAPI_CLIENT_ID: ${SVC_OPENAPI_OPENAPI_CLIENT_ID:-${OPENAPI_CLIENT_ID}}
+      OPENAPI_CLIENT_SECRET: ${SVC_OPENAPI_OPENAPI_CLIENT_SECRET:-${OPENAPI_CLIENT_SECRET}}
       LOKI_URL: ${LOKI_URL:-}
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD-SHELL", "kill -0 1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -154,15 +156,15 @@ services:
   svc-users:
     build: ./services/svc-users
     environment:
-      USERS_CLIENT_ID: ${USERS_CLIENT_ID}
-      USERS_CLIENT_SECRET: ${USERS_CLIENT_SECRET}
-      USERS_DATABASE_URL: ${USERS_DATABASE_URL}
-      NOTIFY_URL: ${NOTIFY_URL}
+      USERS_CLIENT_ID: ${SVC_USERS_USERS_CLIENT_ID:-${USERS_CLIENT_ID}}
+      USERS_CLIENT_SECRET: ${SVC_USERS_USERS_CLIENT_SECRET:-${USERS_CLIENT_SECRET}}
+      USERS_DATABASE_URL: ${SVC_USERS_USERS_DATABASE_URL:-${USERS_DATABASE_URL}}
+      NOTIFY_URL: ${SVC_USERS_NOTIFY_URL:-${NOTIFY_URL}}
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD-SHELL", "kill -0 1"]
       interval: 5s
       timeout: 3s
       retries: 3
