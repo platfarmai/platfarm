@@ -1,0 +1,45 @@
+# Gateway Service + Ingress. The gateway Deployment/image is cluster-specific;
+# this Service name and Ingress paths are the stable contract for /auth and /api.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: platfarm
+  labels:
+    app: gateway
+spec:
+  selector:
+    app: gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: platfarm
+  namespace: platfarm
+  labels:
+    app.kubernetes.io/part-of: platfarm
+  annotations:
+    # Adjust to your Ingress controller. Example for ingress-nginx:
+    # nginx.ingress.kubernetes.io/proxy-body-size: "32m"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  name: http
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  name: http

@@ -1,0 +1,30 @@
+# Platfarm Prometheus alerting rules.
+# Requires services to export http_requests_total{service,method,code} via sdk/go/metrics.
+groups:
+  - name: platfarm.service
+    rules:
+      # PlatfarmServiceDown: target unreachable for 2 minutes.
+      - alert: PlatfarmServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Platfarm scrape target {{ $labels.job }} is down"
+          description: "Prometheus has seen up==0 for job={{ $labels.job }} instance={{ $labels.instance }} for 2m."
+
+      # PlatfarmHighErrorRatio: 5xx / total > 5% sustained for 5 minutes.
+      # PromQL: rate of 5xx codes over all codes for the same service.
+      - alert: PlatfarmHighErrorRatio
+        expr: |
+          (
+            sum by (service) (rate(http_requests_total{code=~"5.."}[5m]))
+            /
+            clamp_min(sum by (service) (rate(http_requests_total[5m])), 1e-9)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Platfarm service {{ $labels.service }} 5xx ratio > 5%"
+          description: "http_requests_total 5xx/total for service={{ $labels.service }} exceeded 0.05 for 5m."
