@@ -29,4 +29,4 @@ runtime:
     - LOKI_URL
 
 test:
-  command: /server -help >/dev/null 2>&1 || true
+  command: wget -qO- http://127.0.0.1:8080/healthz # compose exec 不经 shell，不能用重定向/管道

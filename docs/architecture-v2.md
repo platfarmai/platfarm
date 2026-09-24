@@ -367,6 +367,20 @@ E:\work\platfarm\
 | 27 | 插件验签（specs/012）= 调外部 cosign CLI 对 image@digest 验签,pctl 不加 Go 加密依赖;PF_COSIGN_MODE(enforce\|warn)/PF_COSIGN_REQUIRED 控松紧 | 签名逻辑用官方工具,pctl 保持单二进制;验签对 digest 不对 tag;运行时 cosign 可选(warn)但推荐 | M2 pctl publish + CI 签名发布链 |
 | 28 | 开放平台计量（specs/013）= 网关 file-log JSON(含 X-PF-App-Key) → promtail → Loki,svc-openapi 用 LogQL 出用量;observability profile 隔离 | 计量从日志派生,请求热路径零额外写入/延迟;Loki 可选,未开优雅降级;M2 仅可见性,限流仍是实时控制 | M3 配额/账单强制、合作方自助门户 |
 | 29 | 用户列表分页搜索（specs/014）= auth `?limit/offset/q` + `{items,total}`,svc-users 防抖搜索+翻页 | total 让 UI 免全量加载;搜索仅用户名;向后兼容(无参→前 20) | M3 角色/状态过滤、外部身份视图 |
+| 30 | 迁移规范（specs/015）= 服务启动自应用 `migrations/NNN_*.sql`（append-only + schema_migrations），第一方声明 data.database 时 pctl check 强制 | 一服务一库需要配套的 schema 演进纪律;不引入外部迁移工具,runner ~50 行随服务走 | 出现需要回滚语义的服务时评估 down 迁移 |
+| 31 | svc-file（specs/016）= 元数据+归属判定+预签名 URL,字节流浏览器↔MinIO 直连;双客户端（内网操作/公网签名） | §5 设计落地,兼作能力服务与 L3 判定参考实现;服务不代理字节流保住吞吐 | 多后端（真 S3/OSS）或图片处理需求时 |
+| 32 | svc-notify（specs/017）= 统一通知出口,email/webhook 走 DB outbox（SKIP LOCKED+指数退避）,SMTP 未配置=dev 模式落日志 | 发信逻辑不随服务复制;outbox 可审计可重试;dev 模式本地零外发 | 量大时评估专用队列（NATS）与模板系统 |
+| 33 | 账号自助（specs/018）= 注册 PF_SELF_REGISTER 门控;TOTP stdlib 实现进 auth（登录即身份);找回密码验证码在 svc-users 自库,auth 只加 lookup/set-password 内网端点 | 附录 G 模式复用:验证是调用方责任,auth 保持薄;验证码 hash 存储+频控+防枚举 | 邮箱验证强制、WebAuthn 需求时 |
+| 34 | 全平台日志（specs/019）= promtail 全容器采集进既有 observability profile,Grafana 全 provisioning（datasource/dashboard/告警文件化） | 兑现附录 B:requestId 全链路检索;文件即真相源延伸到监控配置 | span 级分析需求时上 OTel（ADR #10） |
+| 35 | 备份（specs/020）= pctl backup/restore 覆盖双 PG+.keys+.env.plugins;uninstall --purge 前自动快照 | 密钥与插件凭据不可再生,必须有备份面;外部库模式责任在所有者,工具只提示 | 定时备份/异地存储需求时 |
+| 36 | 账号中心（specs/021）= svc-users 公开静态页（go:embed 零构建）+ 邮箱验证（email_verified,验证在 svc-users、auth 只记结论）+ svc-file 孤儿行时回收 | 018 的 API 有了用户可用的面;附录 G"验证归调用方"模式复用到邮箱归属 | 需要品牌化/多语言时前端工程化 |
+| 37 | 多租户激活（specs/022）= auth tenants 表+users.tenant_id+claims 回填;停用/换租户即用户级吊销;数据隔离仍 L3 | 身份域只管"你属于哪个租户",判定留服务;tenant 0 兼容单租户 | 需要租户级配额/计费时 |
+| 38 | 开放平台日配额（specs/023）= quota_per_day 在 token 签发点强制（TTL 1h 为最大超放窗口）,用量查 Loki,fail-open | 热路径零开销;计量是可选组件不可反噬可用性 | 需要硬实时截断时上网关级计数 |
+| 39 | 插件 egress（specs/024）= squid 白名单 sidecar 双宿主 + HTTP_PROXY 注入,插件网保持 internal | 兑现附录 H 降级③;出网面收敛为"仅代理、仅白名单域、仅 80/443" | K8s 阶段换 NetworkPolicy+egress gateway |
+| 40 | 网关级 calls（specs/025）= 路由级 pre-function 校验 service token scopes 前缀=目标服务;Lua 内含 SSO cookie 映射超集（Kong 同名插件最具体实例覆盖语义） | 兑现附录 H 降级①;插件探不到未声明的服务;首方内网直连不受影响 | Kong 自定义插件化（pre-function 体积增长时） |
+| 41 | svc-jobs（specs/026）= DB 队列（SKIP LOCKED+退避+dead）+ 标准 cron,交付 = webhook 回调携 svc-jobs service token,消费方 accept 白名单授权 | 后台任务/定时从此不再各自造 worker;回调即普通服务间调用,复用全部既有治理 | 吞吐超出 DB 队列时换 NATS,契约不变 |
+| 42 | svc-grants（specs/027）= 分配集中(service_id,role,user_id),语义留 L3;服务只能查自己的成员 | 兑现 ADR #18 触发条件;成员表/邀请流不再随服务复制 | 需要审批流/到期回收时 |
+| 43 | pf-ui（specs/028）= 设计令牌 + 零依赖 Web Components,platform/ui/v1 文件真相源,console 容器静态分发+网关公开路由;明确不选 Vue 组件库（三种界面形态并存,custom elements 是最大公约数,Vue 模板原生可用） | 五个手搓面统一管理/细节/升级;版本化目录即升级路径;契约变更走提案 | 表单校验/复杂表格等重组件需求时评估 v2 |
 
 ---
 

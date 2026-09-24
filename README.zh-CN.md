@@ -34,7 +34,7 @@ PlatFarm 是基于容器服务的**融合开发模式**：一个 API 网关对�
 ```bash
 git clone --recurse-submodules https://github.com/platfarmai/platfarm.git platfarm && cd platfarm
 cp .env.example .env                          # 默认指向捆绑数据库
-docker compose --profile bundled-db up -d --build
+docker compose --profile bundled-db --profile bundled-s3 up -d --build
 ```
 
 **拉已发布镜像（不要 `--build`）：** 从 [Releases](https://github.com/platfarmai/pctl/releases) 下载 `pctl` → `pctl init` → `deploy/compose.release.yml`。见 [docs/docker-compose-quickstart.zh-CN.md](docs/docker-compose-quickstart.zh-CN.md) 路径 B。
@@ -53,7 +53,7 @@ curl -s http://localhost:18000/api/demo/me -H "Authorization: Bearer <accessToke
 curl -s http://localhost:18000/api/demo/public/ping
 ```
 
-已有 PostgreSQL（宿主机实例 / AWS RDS）：改 `.env` 的 `DATABASE_URL`（三种模式见 [.env.example](.env.example)），去掉 `--profile bundled-db`。
+已有 PostgreSQL（宿主机实例 / AWS RDS）：改 `.env` 的 `DATABASE_URL`（三种模式见 [.env.example](.env.example)），去掉 `--profile bundled-db`。对象存储同理：外部 S3/OSS 改 `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT`，去掉 `--profile bundled-s3`（仅 svc-file 需要）。
 
 ### 2.2 构建平台 CLI（首次一次）
 
@@ -164,5 +164,5 @@ docs/                         架构设计 / 接入教程
 
 ## 6. 现状与路线
 
-已落地：auth 底座（RS256+JWKS）、网关验签/限流、pctl 全命令、第三方登录（mock/GitHub）、第三方插件沙箱（专属网络+独立 plugin-pg+凭据体系）、多副本兼容。
-路线图（Phase 4~6 余项：响应加密、svc-console 管理台、日志管道等）：architecture-v2.md §9；插件市场设计：[docs/features/plugin-marketplace.md](docs/features/plugin-marketplace.md)。
+已落地：auth 底座（RS256+JWKS）、网关验签/限流、pctl 全命令、第三方登录（mock/GitHub）、第三方插件沙箱（专属网络+独立 plugin-pg+凭据体系）、多副本兼容、文件服务（svc-file+MinIO 预签名直传，specs/016）、通知服务（svc-notify outbox，specs/017）、账号自助（注册/TOTP/找回密码，specs/018）+ 账号中心页面与邮箱验证（specs/021）、迁移规范（specs/015）、全平台日志管道+Grafana（specs/019）、pctl backup/restore（specs/020）、多租户身份（specs/022）、开放平台日配额强制（specs/023）、插件出网域名白名单（specs/024）、网关级 calls 放行（specs/025）、异步任务队列+定时调度（svc-jobs，specs/026）、业务角色集中分配（svc-grants，specs/027）、统一 UI 组件库 pf-ui（设计令牌+Web Components，specs/028）。
+路线图（Phase 4+ 余项：响应加密、SDK 收敛、密钥轮换、定时备份）：architecture-v2.md §9；插件市场设计：[docs/features/plugin-marketplace.md](docs/features/plugin-marketplace.md)。

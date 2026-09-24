@@ -2,6 +2,23 @@
 
 [English](adding-a-service-on-path-b.md) · 本文记录生产环境把 `services/svc-*` 接到 `deploy/compose.release.yml` 时踩过的坑。源码仓接入仍看 [adding-a-service.md](adding-a-service.md)。
 
+> **pctl 已内置支持（推荐先看这一节）**
+>
+> 在运行目录的 `.env` 里加一行，`pctl sync` 就能扫到放在别处的插件清单，自动生成 Kong 路由与 compose 片段，不必再手改 `gateway/kong.yml`：
+>
+> ```bash
+> PF_SERVICES_DIR=_src/services
+> ```
+>
+> 多个目录用 `:`（Windows 用 `;`）分隔，相对路径相对运行目录解析。
+>
+> 同时，生成的编排已做两项改进：
+>
+> - **健康检查默认不依赖 `wget`**，改用 PID 1 存活检查，精简 Alpine / distroless 镜像都能通过。需要真正的就绪探测时在清单里写 `runtime.healthcheck: http`（要求镜像自带 wget），不想要探活写 `none`。
+> - **环境变量支持服务专属覆盖**：`${SVC_ADS_DATABASE_URL:-${DATABASE_URL}}`。给插件配独立数据库时只需在 `.env` 写 `SVC_ADS_DATABASE_URL=...`，**不会影响 auth**。
+>
+> 下面保留手工接法，供不想改 `.env` 或需要完全掌控的场景参考。
+
 路径 B 的运行目录（例如 `platfarm-run/`）**只有** `compose.yml`（从 `deploy/compose.release.yml` 拷来）、`.env`、`.keys/`、`gateway/kong.yml`。它：
 
 - **没有** `services/`，`pctl sync` 扫不到任何 `plugin.yaml` / `service.yaml`

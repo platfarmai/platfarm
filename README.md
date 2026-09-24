@@ -32,7 +32,7 @@ Full design & 17 ADRs: [docs/architecture-v2.md](docs/architecture-v2.md)
 ```bash
 git clone --recurse-submodules git@github.com:platfarmai/platfarm.git platfarm && cd platfarm
 cp .env.example .env                          # defaults to the bundled database
-docker compose --profile bundled-db up -d --build
+docker compose --profile bundled-db --profile bundled-s3 up -d --build
 ```
 
 **Pre-built images (no `--build`):** download `pctl` from [Releases](https://github.com/platfarmai/pctl/releases), then `pctl init` + `deploy/compose.release.yml`. Guide: [docs/docker-compose-quickstart.md](docs/docker-compose-quickstart.md) Path B · [docs/consuming-images.md](docs/consuming-images.md).
@@ -51,7 +51,7 @@ curl -s http://localhost:18000/api/demo/me -H "Authorization: Bearer <accessToke
 curl -s http://localhost:18000/api/demo/public/ping
 ```
 
-Already have PostgreSQL (host instance / AWS RDS)? Set `DATABASE_URL` in `.env` (three modes documented in [.env.example](.env.example)) and drop `--profile bundled-db`.
+Already have PostgreSQL (host instance / AWS RDS)? Set `DATABASE_URL` in `.env` (three modes documented in [.env.example](.env.example)) and drop `--profile bundled-db`. Likewise for object storage: external S3/OSS = set `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT` and drop `--profile bundled-s3` (only svc-file needs it).
 
 ### 2.2 Build the platform CLI (once)
 
@@ -163,6 +163,6 @@ docs/                         architecture & tutorials
 
 ## 6. Status & Roadmap
 
-Shipped: auth base (RS256+JWKS), gateway verification/rate limiting, the full pctl command set, third-party login (mock/GitHub), the third-party plugin sandbox, admin console, multi-replica Redis, four language templates, GHCR image release on `v*` tags.
+Shipped: auth base (RS256+JWKS), gateway verification/rate limiting, the full pctl command set, third-party login (mock/GitHub), the third-party plugin sandbox, admin console, multi-replica Redis, four language templates, GHCR image release on `v*` tags, file service (svc-file + MinIO presigned transfer, specs/016), notification service (svc-notify outbox, specs/017), account self-service (register / TOTP / password reset, specs/018) with a public account-center UI + email verification (specs/021), migration convention (specs/015), platform-wide log pipeline + Grafana (specs/019), `pctl backup/restore` (specs/020), multi-tenant identity (specs/022), open-platform daily quota enforcement (specs/023), plugin egress domain allowlist (specs/024), gateway-level `calls` enforcement (specs/025), async job queue + cron (svc-jobs, specs/026), centralized role assignment (svc-grants, specs/027), the unified pf-ui kit (design tokens + Web Components, specs/028).
 
-Roadmap (Phase 4+ remainder: response encryption, log pipeline, SDK consolidation): architecture-v2.md §9. Plugin marketplace design: [docs/features/plugin-marketplace.md](docs/features/plugin-marketplace.md).
+Roadmap (Phase 4+ remainder: response encryption, SDK consolidation, key rotation, scheduled backup): architecture-v2.md §9. Plugin marketplace design: [docs/features/plugin-marketplace.md](docs/features/plugin-marketplace.md).
