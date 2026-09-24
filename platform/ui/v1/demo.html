@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Platfarm UI Kit v1</title>
+<link rel="stylesheet" href="./pf-ui.css">
+<script src="./pf-ui.js" defer></script>
+</head>
+<body class="pf-body">
+<pf-topbar title="Platfarm UI Kit v1">
+  <span class="pf-muted" id="themeLabel">浅色主题</span>
+  <pf-button id="themeToggle" variant="default" size="sm">切换深色</pf-button>
+</pf-topbar>
+
+<div class="pf-container">
+  <p class="pf-muted" style="margin-top:0">平台统一组件库 · 设计令牌 + 基础样式 + 无依赖 Web Components（Light DOM）</p>
+
+  <section class="pf-section">
+    <h2>设计令牌 · 颜色</h2>
+    <div class="pf-swatch-grid" id="swatches"></div>
+  </section>
+
+  <section class="pf-section">
+    <h2>设计令牌 · 字体与圆角</h2>
+    <div class="pf-card pf-stack">
+      <div style="font-family:var(--pf-font);font-size:var(--pf-fs-20)">正文 sans · 微软雅黑 / 系统字体 · 20px</div>
+      <div style="font-family:var(--pf-font);font-size:var(--pf-fs-16)">16px 段落示例文字</div>
+      <div style="font-family:var(--pf-font);font-size:var(--pf-fs-14)">14px 默认正文</div>
+      <div style="font-family:var(--pf-font);font-size:var(--pf-fs-13)">13px 次级信息</div>
+      <div style="font-family:var(--pf-font);font-size:var(--pf-fs-12)">12px 辅助说明</div>
+      <div><span class="pf-code">font-mono · ui-monospace</span> · radius 6 / 10 · shadow-1 / shadow-2</div>
+      <div class="pf-row">
+        <div style="width:64px;height:40px;border-radius:var(--pf-radius);background:var(--pf-surface);border:1px solid var(--pf-border);box-shadow:var(--pf-shadow-1)"></div>
+        <div style="width:64px;height:40px;border-radius:var(--pf-radius-lg);background:var(--pf-surface);border:1px solid var(--pf-border);box-shadow:var(--pf-shadow-2)"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>工具类</h2>
+    <div class="pf-card pf-stack">
+      <div class="pf-toolbar">
+        <pf-button variant="primary" size="sm">筛选</pf-button>
+        <pf-button size="sm">刷新</pf-button>
+        <span class="pf-muted">工具栏 .pf-toolbar</span>
+      </div>
+      <p class="pf-muted">这是 .pf-muted 辅助文字。</p>
+      <p>内联代码 <span class="pf-code">pf_access</span> 与链接 <a class="pf-link" href="#tokens">.pf-link</a>。</p>
+      <dl class="pf-kv">
+        <dt>服务 ID</dt><dd>svc-users</dd>
+        <dt>挂载路径</dt><dd><span class="pf-code">/api/users</span></dd>
+        <dt>状态</dt><dd><span class="pf-dot" data-tone="ok">运行中</span></dd>
+      </dl>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>按钮 pf-button</h2>
+    <div class="pf-card pf-stack">
+      <h3>变体</h3>
+      <div class="pf-row">
+        <pf-button variant="primary">主要</pf-button>
+        <pf-button variant="default">默认</pf-button>
+        <pf-button variant="danger">危险</pf-button>
+        <pf-button variant="ghost">幽灵</pf-button>
+      </div>
+      <h3>尺寸 / 状态</h3>
+      <div class="pf-row">
+        <pf-button size="sm">小号</pf-button>
+        <pf-button size="md">中号</pf-button>
+        <pf-button loading>加载中</pf-button>
+        <pf-button disabled>禁用</pf-button>
+      </div>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>徽章 pf-badge / .pf-dot</h2>
+    <div class="pf-card pf-stack">
+      <div class="pf-row">
+        <pf-badge tone="ok">正常</pf-badge>
+        <pf-badge tone="danger">失败</pf-badge>
+        <pf-badge tone="warn">警告</pf-badge>
+        <pf-badge tone="info">信息</pf-badge>
+        <pf-badge tone="neutral">中性</pf-badge>
+      </div>
+      <div class="pf-row">
+        <span class="pf-dot" data-tone="ok">运行中</span>
+        <span class="pf-dot" data-tone="danger">已退出</span>
+        <span class="pf-dot" data-tone="warn">降级</span>
+        <span class="pf-dot" data-tone="info">同步中</span>
+        <span class="pf-dot" data-tone="neutral">未知</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>提示 pf-alert</h2>
+    <div class="pf-stack">
+      <pf-alert tone="ok">操作已完成，配置已同步到网关。</pf-alert>
+      <pf-alert tone="info">提示：创建类操作仍需在宿主机执行 pctl。</pf-alert>
+      <pf-alert tone="warn" closable>令牌将在 2 小时后过期，请及时刷新。</pf-alert>
+      <pf-alert tone="danger" closable>鉴权失败：缺少有效的 Bearer Token。</pf-alert>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>标签页 pf-tabs</h2>
+    <div class="pf-card">
+      <pf-tabs active="overview" id="demoTabs">
+        <pf-tab name="overview" label="概览">概览面板：展示服务健康度与最近审计摘要。</pf-tab>
+        <pf-tab name="logs" label="日志">日志面板：容器 stdout/stderr 实时输出。</pf-tab>
+        <pf-tab name="audit" label="审计">审计面板：启用 / 停用 / 登录等操作记录。</pf-tab>
+      </pf-tabs>
+      <p class="pf-muted" style="margin-top:12px">带 hash 同步的标签页（改 URL #）：</p>
+      <pf-tabs active="a" hash id="hashTabs">
+        <pf-tab name="a" label="标签 A">内容 A — 打开本页后可改 location.hash。</pf-tab>
+        <pf-tab name="b" label="标签 B">内容 B</pf-tab>
+      </pf-tabs>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>表格 + 分页</h2>
+    <div class="pf-card pf-stack">
+      <table class="pf-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>挂载</th>
+            <th>语言</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="demoRows">
+          <tr>
+            <td>svc-users</td>
+            <td><span class="pf-code">/api/users</span></td>
+            <td>go</td>
+            <td><span class="pf-dot" data-tone="ok">运行中</span></td>
+            <td><pf-button size="sm" variant="ghost">日志</pf-button></td>
+          </tr>
+          <tr>
+            <td>svc-file</td>
+            <td><span class="pf-code">/api/file</span></td>
+            <td>go</td>
+            <td><span class="pf-dot" data-tone="ok">运行中</span></td>
+            <td><pf-button size="sm" variant="ghost">日志</pf-button></td>
+          </tr>
+          <tr>
+            <td>svc-notify</td>
+            <td><span class="pf-code">/api/notify</span></td>
+            <td>go</td>
+            <td><span class="pf-dot" data-tone="warn">降级</span></td>
+            <td><pf-button size="sm" variant="ghost">日志</pf-button></td>
+          </tr>
+          <tr>
+            <td>svc-jobs</td>
+            <td><span class="pf-code">/api/jobs</span></td>
+            <td>go</td>
+            <td><span class="pf-dot" data-tone="danger">已退出</span></td>
+            <td><pf-button size="sm" variant="ghost">日志</pf-button></td>
+          </tr>
+        </tbody>
+      </table>
+      <pf-pager id="demoPager" total="48" limit="10" offset="0"></pf-pager>
+      <p class="pf-muted" id="pagerNote">分页事件：offset=0</p>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>表单 .pf-form</h2>
+    <div class="pf-card" style="max-width:420px">
+      <form class="pf-form" id="demoForm">
+        <div class="pf-field">
+          <label for="f-user">用户名</label>
+          <input id="f-user" name="username" placeholder="admin" autocomplete="username">
+        </div>
+        <div class="pf-field">
+          <label for="f-role">角色</label>
+          <select id="f-role" name="role">
+            <option value="admin">admin</option>
+            <option value="user">user</option>
+          </select>
+        </div>
+        <div class="pf-field">
+          <label for="f-note">备注</label>
+          <textarea id="f-note" name="note" placeholder="可选说明"></textarea>
+        </div>
+        <div class="pf-field">
+          <label for="f-dis">禁用字段</label>
+          <input id="f-dis" value="只读示例" disabled>
+        </div>
+        <div class="pf-toolbar"><pf-button id="formSave" variant="primary">保存</pf-button><pf-button id="formCancel" variant="ghost">取消</pf-button></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>对话框 / 确认 / Toast</h2>
+    <div class="pf-card pf-stack">
+      <div class="pf-row">
+        <pf-button id="btnDialog" variant="primary">打开对话框</pf-button>
+        <pf-button id="btnConfirm" variant="danger">危险确认</pf-button>
+        <pf-button id="btnToastOk" size="sm">Toast 成功</pf-button>
+        <pf-button id="btnToastDanger" size="sm" variant="danger">Toast 失败</pf-button>
+        <pf-button id="btnToastInfo" size="sm" variant="ghost">Toast 信息</pf-button>
+      </div>
+      <pf-dialog id="sampleDialog" title="编辑服务">
+        <p style="margin:0 0 12px">修改挂载路径后需执行 <span class="pf-code">pctl sync</span> 才会生效。</p>
+        <div class="pf-field">
+          <label for="dlg-path">挂载路径</label>
+          <input id="dlg-path" value="/api/users">
+        </div>
+        <div class="pf-dialog-actions">
+          <pf-button id="dlgCancel" variant="ghost">取消</pf-button>
+          <pf-button id="dlgOk" variant="primary">保存</pf-button>
+        </div>
+      </pf-dialog>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>密钥展示 pf-secret</h2>
+    <div class="pf-card" style="max-width:520px">
+      <pf-secret label="初始密码">Pf!demo-Init-9xK2</pf-secret>
+    </div>
+  </section>
+
+  <section class="pf-section">
+    <h2>空状态 / 加载</h2>
+    <div class="pf-card pf-stack">
+      <pf-empty>暂无服务，请使用 pctl new 创建</pf-empty>
+      <div class="pf-row">
+        <pf-spinner></pf-spinner>
+        <pf-spinner size="sm"></pf-spinner>
+        <pf-spinner size="lg"></pf-spinner>
+        <span class="pf-muted">加载指示器</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="pf-section" id="tokens">
+    <h2>顶栏 pf-topbar</h2>
+    <p class="pf-muted">本页顶部即为 <span class="pf-code">&lt;pf-topbar&gt;</span> 示例：左侧标题，右侧插槽操作。</p>
+  </section>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  var tokens = [
+    ["--pf-accent", "强调色"],
+    ["--pf-accent-weak", "强调浅底"],
+    ["--pf-success", "成功"],
+    ["--pf-danger", "危险"],
+    ["--pf-warning", "警告"],
+    ["--pf-bg", "页面背景"],
+    ["--pf-surface", "卡片表面"],
+    ["--pf-surface-2", "内嵌表面"],
+    ["--pf-border", "边框"],
+    ["--pf-text", "正文"],
+    ["--pf-text-muted", "次要文字"]
+  ];
+  var host = document.getElementById("swatches");
+  tokens.forEach(function (item) {
+    var name = item[0], label = item[1];
+    var card = document.createElement("div");
+    card.className = "pf-swatch";
+    var chip = document.createElement("div");
+    chip.className = "pf-swatch-chip";
+    chip.style.background = "var(" + name + ")";
+    var meta = document.createElement("div");
+    meta.className = "pf-swatch-meta";
+    var strong = document.createElement("div");
+    strong.textContent = label;
+    var code = document.createElement("div");
+    code.className = "pf-muted";
+    code.textContent = name;
+    meta.appendChild(strong);
+    meta.appendChild(code);
+    card.appendChild(chip);
+    card.appendChild(meta);
+    host.appendChild(card);
+  });
+
+  var root = document.documentElement;
+  var toggle = document.getElementById("themeToggle");
+  var themeLabel = document.getElementById("themeLabel");
+  function syncThemeUi() {
+    var dark = root.getAttribute("data-pf-theme") === "dark";
+    themeLabel.textContent = dark ? "深色主题" : "浅色主题";
+    toggle.textContent = dark ? "切换浅色" : "切换深色";
+  }
+  toggle.addEventListener("click", function () {
+    if (root.getAttribute("data-pf-theme") === "dark") root.removeAttribute("data-pf-theme");
+    else root.setAttribute("data-pf-theme", "dark");
+    syncThemeUi();
+  });
+  syncThemeUi();
+
+  document.getElementById("demoPager").addEventListener("pf-change", function (e) {
+    document.getElementById("pagerNote").textContent = "分页事件：offset=" + e.detail.offset;
+  });
+
+  document.getElementById("demoTabs").addEventListener("pf-change", function (e) {
+    pfToast("切换到标签：" + e.detail.name, "info", 1800);
+  });
+
+  var dlg = document.getElementById("sampleDialog");
+  document.getElementById("btnDialog").addEventListener("click", function () { dlg.show(); });
+  document.getElementById("dlgCancel").addEventListener("click", function () { dlg.close(); });
+  document.getElementById("dlgOk").addEventListener("click", function () {
+    dlg.close();
+    pfToast("已保存（演示）", "ok");
+  });
+
+  document.getElementById("btnConfirm").addEventListener("click", function () {
+    pfConfirm("确定停用该服务？停用后网关将拒绝新请求。", { danger: true }).then(function (ok) {
+      pfToast(ok ? "已确认停用" : "已取消", ok ? "ok" : "info");
+    });
+  });
+
+  document.getElementById("btnToastOk").addEventListener("click", function () { pfToast("同步成功", "ok"); });
+  document.getElementById("btnToastDanger").addEventListener("click", function () { pfToast("请求失败：401", "danger"); });
+  document.getElementById("btnToastInfo").addEventListener("click", function () { pfToast("正在拉取日志…", "info"); });
+
+  document.getElementById("formSave").addEventListener("click", function () { pfToast("已提交（演示）", "ok"); });
+  document.getElementById("formCancel").addEventListener("click", function () { pfToast("已取消", "info"); });
+  document.getElementById("demoForm").addEventListener("submit", function (e) { e.preventDefault(); });
+});
+</script>
+</body>
+</html>
+

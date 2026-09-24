@@ -97,13 +97,21 @@ def me(
 
 
 # admin_ui 嵌入样例（specs/006）：同源 cookie 会话，无需再次登录
-_ADMIN_HTML = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+_ADMIN_HTML = """<!doctype html><html lang="zh-CN" data-pf-theme="dark"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>svc-demo admin</title>
-<style>body{font:14px/1.6 system-ui;background:#0d1117;color:#c9d1d9;padding:24px}
-h2{color:#58a6ff}pre{background:#161b22;padding:12px;border-radius:6px}</style></head>
-<body><h2>svc-demo 后台（SSO 嵌入样例）</h2>
-<p class="muted">本页由平台壳 iframe 嵌入，未再次登录即可读取当前身份：</p>
-<pre id="out">loading…</pre>
+<link rel="stylesheet" href="/platform/ui/v1/pf-ui.css">
+<script src="/platform/ui/v1/pf-ui.js" defer></script>
+<style>
+pre.pf-log{background:var(--pf-surface);border:1px solid var(--pf-border);border-radius:var(--pf-radius);padding:12px;font-family:var(--pf-font-mono);font-size:var(--pf-fs-12);color:var(--pf-text);white-space:pre-wrap;margin:16px 20px}
+.pf-wrap{padding:0 20px 24px}
+</style></head>
+<body class="pf-body">
+<pf-topbar title="svc-demo 后台（SSO 嵌入样例）"></pf-topbar>
+<div class="pf-wrap">
+<p class="pf-muted">本页由平台壳 iframe 嵌入，未再次登录即可读取当前身份：</p>
+<pre id="out" class="pf-log">loading…</pre>
+</div>
 <script>
 fetch('/api/demo/me', { credentials: 'same-origin' })
   .then(r => r.json())

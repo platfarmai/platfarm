@@ -68,7 +68,7 @@ async function setRate(app, val) {
 }
 
 async function rotate(app) {
-  if (!confirm(`换发 ${app.appKey} 的 secret？旧 secret 立即失效。`)) return;
+  if (!(await pfConfirm(`换发 ${app.appKey} 的 secret？旧 secret 立即失效。`, { danger: true }))) return;
   try { newSecret.value = await api("POST", `/apps/${app.appKey}/rotate`); } catch (e) { fail(e); }
 }
 
@@ -76,83 +76,155 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="wrap">
-    <header><b>PlatFarm 开放平台</b><button @click="load">刷新</button>
-      <button class="primary" @click="creating = true">＋ 新建应用</button></header>
-    <p v-if="err" class="err">{{ err }}</p>
+  <div>
+    <pf-topbar title="PlatFarm 开放平台">
+      <pf-button variant="default" size="sm" @click="load">刷新</pf-button>
+      <pf-button variant="primary" size="sm" @click="creating = true">新建应用</pf-button>
+    </pf-topbar>
 
-    <div v-if="newSecret" class="secret">
-      <b>应用密钥（只显示一次，请立即复制）</b>
-      <div>APP_KEY = <code>{{ newSecret.appKey }}</code></div>
-      <div>APP_SECRET = <code>{{ newSecret.appSecret }}</code></div>
-      <button @click="newSecret = null">我已保存</button>
-    </div>
+    <div class="pf-container page">
+      <pf-alert v-if="err" tone="danger">{{ err }}</pf-alert>
 
-    <div v-if="creating" class="editor">
-      <input v-model="form.appKey" placeholder="appKey（唯一）" />
-      <input v-model="form.name" placeholder="名称" />
-      <input v-model.number="form.ratePerMin" type="number" placeholder="每分钟限流" />
-      <div class="scopes">
-        <label v-for="s in scopes" :key="s.name">
-          <input type="checkbox" :value="s.name" v-model="form.scopes" /> {{ s.name }} <span class="muted">{{ s.desc }}</span>
-        </label>
+      <div v-if="newSecret" class="cred-once">
+        <pf-secret label="APP_KEY">{{ newSecret.appKey }}</pf-secret>
+        <pf-secret label="APP_SECRET（只显示一次，请立即复制）">{{ newSecret.appSecret }}</pf-secret>
+        <div class="pf-toolbar">
+          <pf-button variant="default" size="sm" @click="newSecret = null">我已保存</pf-button>
+        </div>
       </div>
-      <div><button class="primary" @click="create">创建</button><button @click="creating = false">取消</button></div>
-    </div>
 
-    <div class="bar">
-      <span class="muted">用量窗口</span>
-      <select v-model="usageWindow" @change="loadUsage"><option>1h</option><option>24h</option><option>168h</option></select>
-      <span v-if="!usage.enabled" class="muted">（用量未启用：需 observability profile + LOKI_URL）</span>
-      <span v-else-if="usage.error" class="muted">Loki: {{ usage.error }}</span>
-    </div>
-    <table>
-      <thead><tr><th>appKey</th><th>名称</th><th>scopes</th><th>限流/min</th><th>用量</th><th>状态</th><th>操作</th></tr></thead>
-      <tbody>
-        <tr v-for="a in apps" :key="a.appKey">
-          <td><code>{{ a.appKey }}</code></td>
-          <td>{{ a.name }}</td>
-          <td class="scopes-cell">
-            <label v-for="s in scopes" :key="s.name" class="chip" :class="{ on: (a.scopes||[]).includes(s.name) }">
-              <input type="checkbox" :checked="(a.scopes||[]).includes(s.name)" @change="toggleScope(a, s.name)" /> {{ s.name }}
+      <div v-if="creating" class="pf-card editor">
+        <form class="pf-form" @submit.prevent="create">
+          <div class="pf-field">
+            <label for="o-appkey">appKey（唯一）</label>
+            <input id="o-appkey" v-model="form.appKey" placeholder="appKey（唯一）" />
+          </div>
+          <div class="pf-field">
+            <label for="o-name">名称</label>
+            <input id="o-name" v-model="form.name" placeholder="名称" />
+          </div>
+          <div class="pf-field">
+            <label for="o-rate">每分钟限流</label>
+            <input id="o-rate" v-model.number="form.ratePerMin" type="number" placeholder="每分钟限流" />
+          </div>
+          <div class="scopes">
+            <label v-for="s in scopes" :key="s.name" class="scope-option">
+              <input type="checkbox" :value="s.name" v-model="form.scopes" />
+              <span>{{ s.name }}</span>
+              <span class="pf-muted">{{ s.desc }}</span>
             </label>
-          </td>
-          <td><input class="rate" :value="a.ratePerMin" @change="e => setRate(a, e.target.value)" type="number" /></td>
-          <td>{{ usage.enabled ? usageFor(a.appKey) : '—' }}</td>
-          <td><span class="badge" :data-s="a.status">{{ a.status === 1 ? '启用' : '停用' }}</span></td>
-          <td class="ops">
-            <button v-if="a.status === 1" @click="setStatus(a, 0)">停用</button>
-            <button v-else @click="setStatus(a, 1)">启用</button>
-            <button @click="rotate(a)">换 secret</button>
-          </td>
-        </tr>
-        <tr v-if="!apps.length"><td colspan="7" class="muted">（暂无应用）</td></tr>
-      </tbody>
-    </table>
-    <p class="muted">后台管理长期凭据与规则；合作方自行调 <code>POST /oauth/token</code> 换 access token。</p>
+          </div>
+          <div class="pf-toolbar">
+            <pf-button variant="primary" @click="create">创建</pf-button>
+            <pf-button variant="ghost" @click="creating = false">取消</pf-button>
+          </div>
+        </form>
+      </div>
+
+      <div class="pf-toolbar">
+        <span class="pf-muted">用量窗口</span>
+        <div class="pf-field window-field">
+          <select v-model="usageWindow" @change="loadUsage">
+            <option>1h</option>
+            <option>24h</option>
+            <option>168h</option>
+          </select>
+        </div>
+        <span v-if="!usage.enabled" class="pf-muted">（用量未启用：需 observability profile + LOKI_URL）</span>
+        <span v-else-if="usage.error" class="pf-muted">Loki: {{ usage.error }}</span>
+      </div>
+
+      <table class="pf-table">
+        <thead>
+          <tr>
+            <th>appKey</th>
+            <th>名称</th>
+            <th>scopes</th>
+            <th>限流/min</th>
+            <th>用量</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="a in apps" :key="a.appKey">
+            <td><span class="pf-code">{{ a.appKey }}</span></td>
+            <td>{{ a.name }}</td>
+            <td class="scopes-cell">
+              <label
+                v-for="s in scopes"
+                :key="s.name"
+                class="chip"
+                :data-on="(a.scopes || []).includes(s.name) ? '1' : null"
+              >
+                <input
+                  type="checkbox"
+                  :checked="(a.scopes || []).includes(s.name)"
+                  @change="toggleScope(a, s.name)"
+                />
+                {{ s.name }}
+              </label>
+            </td>
+            <td>
+              <div class="pf-field rate-field">
+                <input
+                  class="rate"
+                  :value="a.ratePerMin"
+                  @change="e => setRate(a, e.target.value)"
+                  type="number"
+                />
+              </div>
+            </td>
+            <td>{{ usage.enabled ? usageFor(a.appKey) : '—' }}</td>
+            <td>
+              <span class="pf-dot" :data-tone="a.status === 1 ? 'ok' : 'danger'">
+                {{ a.status === 1 ? '启用' : '停用' }}
+              </span>
+            </td>
+            <td class="ops">
+              <pf-button v-if="a.status === 1" variant="default" size="sm" @click="setStatus(a, 0)">停用</pf-button>
+              <pf-button v-else variant="default" size="sm" @click="setStatus(a, 1)">启用</pf-button>
+              <pf-button variant="danger" size="sm" @click="rotate(a)">换 secret</pf-button>
+            </td>
+          </tr>
+          <tr v-if="!apps.length">
+            <td colspan="7"><span class="pf-muted">（暂无应用）</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="pf-muted foot">
+        后台管理长期凭据与规则；合作方自行调
+        <span class="pf-code">POST /oauth/token</span>
+        换 access token。
+      </p>
+    </div>
   </div>
 </template>
 
 <style>
-*{box-sizing:border-box}body{margin:0;font:14px/1.6 system-ui,sans-serif;background:#0d1117;color:#c9d1d9}
-.wrap{max-width:1000px;margin:0 auto;padding:16px 20px}
-header{display:flex;align-items:center;gap:12px;border-bottom:1px solid #21262d;padding-bottom:12px}
-header b{color:#58a6ff;flex:1}
-.err{background:#3d1418;border:1px solid #f85149;color:#ffb4ab;padding:8px 12px;border-radius:6px}
-.secret{background:#1c2b1c;border:1px solid #2ea043;border-radius:8px;padding:14px;margin:14px 0}
-.secret code{color:#3fb950;user-select:all}
-.editor{border:1px solid #21262d;border-radius:8px;padding:14px;margin:14px 0;background:#161b22}
-.editor .scopes{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}
-input{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;padding:7px 10px;font:inherit;margin-bottom:8px}
-input.rate{width:70px;margin:0}
-button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:5px 12px;cursor:pointer;font:inherit;margin-left:6px}
-button:hover{border-color:#58a6ff}button.primary{background:#238636;border-color:#2ea043;color:#fff}
-table{width:100%;border-collapse:collapse;margin-top:14px}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #21262d;vertical-align:top}
-th{color:#8b949e;font-weight:normal}
-.scopes-cell{display:flex;flex-direction:column;gap:2px}
-.chip{font-size:12px;color:#8b949e}.chip.on{color:#3fb950}
-.badge{padding:1px 8px;border-radius:10px;font-size:12px;border:1px solid #30363d}
-.badge[data-s="1"]{color:#3fb950;border-color:#238636}.badge[data-s="0"]{color:#8b949e}
-.ops{white-space:nowrap}.muted{color:#8b949e}code{background:#161b22;padding:1px 5px;border-radius:4px}
+.page { width: min(1000px, calc(100% - 32px)); }
+.cred-once { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
+.editor { margin: 16px 0; padding: 16px; }
+.scopes { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
+.scope-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--pf-fs-13);
+  color: var(--pf-text);
+}
+.window-field { margin: 0; }
+.window-field select { margin: 0; }
+.scopes-cell { display: flex; flex-direction: column; gap: 2px; }
+.chip {
+  font-size: var(--pf-fs-12);
+  color: var(--pf-text-muted);
+}
+.chip[data-on="1"] { color: var(--pf-success); }
+.rate-field { margin: 0; }
+.rate-field .rate { width: 70px; margin: 0; }
+.ops { white-space: nowrap; }
+.ops pf-button { margin-right: 6px; }
+.foot { margin-top: 16px; }
 </style>
