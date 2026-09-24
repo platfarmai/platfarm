@@ -27,24 +27,83 @@ services:
       retries: 10
     networks:
       - core-net
-      - net-plugin-signed
-  plugin-pg: # 插件专属 PG 实例：平台 PG 与插件网络物理隔离（附录 H.3）
-    image: postgres:18-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${PLUGIN_PG_PASSWORD:-plugin_pg_local}
-    volumes:
-      - pf-plugin-pg-data:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    networks:
-      - core-net
-      - net-plugin-signed
   svc-demo:
     build: ./services/svc-demo
+    volumes:
+      - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - core-net
+  svc-file:
+    build: ./services/svc-file
+    environment:
+      FILE_DATABASE_URL: ${FILE_DATABASE_URL}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+    volumes:
+      - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - core-net
+  svc-grants:
+    build: ./services/svc-grants
+    environment:
+      GRANTS_DATABASE_URL: ${GRANTS_DATABASE_URL}
+      PF_ACCEPT_SERVICE_TOKENS: svc-demo,svc-file,svc-notify,svc-users,svc-openapi,svc-oauth
+    volumes:
+      - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - core-net
+  svc-jobs:
+    build: ./services/svc-jobs
+    environment:
+      JOBS_DATABASE_URL: ${JOBS_DATABASE_URL}
+      JOBS_CLIENT_ID: ${JOBS_CLIENT_ID}
+      JOBS_CLIENT_SECRET: ${JOBS_CLIENT_SECRET}
+      PF_ACCEPT_SERVICE_TOKENS: svc-file,svc-notify,svc-users
+    volumes:
+      - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - core-net
+  svc-notify:
+    build: ./services/svc-notify
+    environment:
+      NOTIFY_DATABASE_URL: ${NOTIFY_DATABASE_URL}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
+      PF_ACCEPT_SERVICE_TOKENS: svc-users,svc-jobs
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
@@ -92,25 +151,13 @@ services:
       start_period: 15s
     networks:
       - core-net
-  svc-plugin-signed:
-    image: ghcr.io/platfarmai/plugin-echo@sha256:aaaa
-    env_file: [.env.plugins/svc-plugin-signed.env]
-    read_only: true
-    security_opt: ["no-new-privileges:true"]
-    stop_grace_period: 30s
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 15s
-    networks:
-      - net-plugin-signed
   svc-users:
     build: ./services/svc-users
     environment:
       USERS_CLIENT_ID: ${USERS_CLIENT_ID}
       USERS_CLIENT_SECRET: ${USERS_CLIENT_SECRET}
+      USERS_DATABASE_URL: ${USERS_DATABASE_URL}
+      NOTIFY_URL: ${NOTIFY_URL}
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
     stop_grace_period: 30s
@@ -122,10 +169,3 @@ services:
       start_period: 15s
     networks:
       - core-net
-
-networks:
-  net-plugin-signed:
-    internal: true # 断外网；需 egress 的插件走代理（附录 H.4）
-
-volumes:
-  pf-plugin-pg-data:
