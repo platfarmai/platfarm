@@ -1,0 +1,40 @@
+# svc-grants — 集中式业务角色分配能力服务（ADR #18）。
+# 角色"分配"集中于本服务；角色"语义"仍留在各服务代码（L3）。
+# 服务用自身 service token 查询自己的成员；用户查看自己的分配；平台管理员管理分配。
+manifest: v1
+id: svc-grants
+version: 0.1.0
+lang: go
+
+mount:
+  path: /api/grants
+  strip_path: false
+
+auth:
+  required: true
+  accept_service_tokens:
+    - svc-demo
+    - svc-file
+    - svc-notify
+    - svc-users
+    - svc-openapi
+    - svc-oauth
+
+limits:
+  rate_per_minute: 120
+
+exposes:
+  scopes:
+    - { name: read, desc: 查询角色分配 }
+
+runtime:
+  port: 8080
+  health: /healthz
+  env:
+    - GRANTS_DATABASE_URL
+
+data:
+  database: pf_svc_grants
+
+test:
+  command: /contract-test
