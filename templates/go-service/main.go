@@ -48,6 +48,10 @@ var (
 // 用法：tableName("users") → "users" 或 "cms_users"。
 func tableName(name string) string { return os.Getenv("PF_TABLE_PREFIX") + name }
 
+// 若服务声明 data.database（自有库），须遵循 specs/015 迁移规范：
+// migrations/NNN_name.sql（append-only）+ 启动时自应用（参考 services/svc-file/migrate.go），
+// 否则 pctl check 拒绝。裸模板不带数据库依赖，故不含 runner。
+
 func mustLoadPub() {
 	path := os.Getenv("JWT_PUBLIC_KEY_FILE")
 	if path == "" {
