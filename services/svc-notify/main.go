@@ -125,7 +125,12 @@ func handleSend(c *gin.Context) {
 	}
 	status := "pending"
 	switch in.Channel {
-	case "email", "webhook":
+	case "email":
+	case "webhook":
+		if err := validateWebhook(in.To); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
 	case "inbox":
 		status = "unread"
 		if _, err := strconv.Atoi(in.To); err != nil {

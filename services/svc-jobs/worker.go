@@ -95,17 +95,20 @@ func deliverBatch(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
-// deliver POST job.webhook，body {"jobId","type","payload"}，带 service token（若可得）。
-func deliver(ctx context.Context, id int64, jobType, payload, webhook string) error {
-	body, _ := json.Marshal(map[string]any{"jobId": id, "type": jobType, "payload": payload})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if tok, terr := serviceToken(); terr == nil && tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
+	// deliver POST job.webhook。service token 只附给平台内服务名（svc-* / auth），
+	// 外网回调不带凭据——否则任意 webhook 会把平台身份带出 core-net（审计 H1）。
+	func deliver(ctx context.Context, id int64, jobType, payload, webhook string) error {
+		body, _ := json.Marshal(map[string]any{"jobId": id, "type": jobType, "payload": payload})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if platformWebhook(webhook) {
+			if tok, terr := serviceToken(); terr == nil && tok != "" {
+				req.Header.Set("Authorization", "Bearer "+tok)
+			}
+		}
 	resp, err := webhookClient.Do(req)
 	if err != nil {
 		return err
@@ -196,6 +199,10 @@ func runSchedules(ctx context.Context) error {
 			continue
 		}
 		if !schedule.Next(s.base).After(now) {
+			if err := validateWebhook(s.webhook); err != nil {
+				log.Printf("scheduler: schedule %q webhook rejected: %v", s.name, err)
+				continue
+			}
 			tx, terr := db.Begin(ctx)
 			if terr != nil {
 				return terr

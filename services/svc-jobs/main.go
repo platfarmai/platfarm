@@ -126,14 +126,14 @@ func handleEnqueue(c *gin.Context) {
 		RunAt       string `json:"runAt"`
 		MaxAttempts int    `json:"maxAttempts"`
 	}
-	if c.ShouldBindJSON(&in) != nil || in.Type == "" || in.Webhook == "" {
-		c.JSON(400, gin.H{"error": "type and webhook required"})
-		return
-	}
-	if !strings.HasPrefix(in.Webhook, "http://") && !strings.HasPrefix(in.Webhook, "https://") {
-		c.JSON(400, gin.H{"error": "webhook must start with http:// or https://"})
-		return
-	}
+		if c.ShouldBindJSON(&in) != nil || in.Type == "" || in.Webhook == "" {
+			c.JSON(400, gin.H{"error": "type and webhook required"})
+			return
+		}
+		if err := validateWebhook(in.Webhook); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
 	runAt := time.Now()
 	if in.RunAt != "" {
 		t, perr := time.Parse(time.RFC3339, in.RunAt)
