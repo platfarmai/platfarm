@@ -3,46 +3,24 @@ package main
 
 import (
 	"context"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
-	"errors"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/platfarmai/sdk/go/pfauth"
 )
 
-const (
-	mount  = "__MOUNT__"
-	issuer = "pf-auth"
-)
+const mount = "__MOUNT__"
 
-// Claims 契约：docs/architecture-v2.md §2.1
-type Claims struct {
-	TokenType string   `json:"tokenType"`
-	UserId    int      `json:"userId,omitempty"`
-	Username  string   `json:"username,omitempty"`
-	Role      string   `json:"role,omitempty"`
-	TenantId  int      `json:"tenantId"`
-	Svc       string   `json:"svc,omitempty"`
-	Scopes    []string `json:"scopes,omitempty"`
-	jwt.RegisteredClaims
-}
+// 验签唯一实现在 sdk/go/pfauth（含 kid 轮换）。Claims 见 pfauth.Claims。
 
-var (
-	pubKey         *rsa.PublicKey
-	acceptServices = map[string]bool{}
-	draining       atomic.Bool
-)
+var draining atomic.Bool
 
 // tableName 给业务表名加上可选前缀（specs/007）。默认空 → 原样返回。
 // 用法：tableName("users") → "users" 或 "cms_users"。
@@ -52,80 +30,12 @@ func tableName(name string) string { return os.Getenv("PF_TABLE_PREFIX") + name 
 // migrations/NNN_name.sql（append-only）+ 启动时自应用（参考 services/svc-file/migrate.go），
 // 否则 pctl check 拒绝。裸模板不带数据库依赖，故不含 runner。
 
-func mustLoadPub() {
-	path := os.Getenv("JWT_PUBLIC_KEY_FILE")
-	if path == "" {
-		path = "/pf/jwt.pub"
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatalf("read public key: %v", err)
-	}
-	block, _ := pem.Decode(raw)
-	if block == nil {
-		log.Fatal("invalid public key PEM")
-	}
-	key, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		log.Fatalf("parse public key: %v", err)
-	}
-	pk, ok := key.(*rsa.PublicKey)
-	if !ok {
-		log.Fatal("public key is not RSA")
-	}
-	pubKey = pk
-	for _, s := range strings.Split(os.Getenv("PF_ACCEPT_SERVICE_TOKENS"), ",") {
-		if s = strings.TrimSpace(s); s != "" {
-			acceptServices[s] = true
-		}
-	}
-}
-
-func decode(token string) (*Claims, error) {
-	claims := &Claims{}
-	tok, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return pubKey, nil
-	}, jwt.WithIssuer(issuer))
-	if err != nil || !tok.Valid {
-		return nil, errors.New("invalid token")
-	}
-	return claims, nil
-}
-
-// identity 六步约定 + OBO：access 直接得身份；service 需在白名单，可携 X-PF-User-Token 代表用户。
-func identity(c *gin.Context) (*Claims, error) {
-	h := c.GetHeader("Authorization")
-	if !strings.HasPrefix(h, "Bearer ") {
-		return nil, errors.New("missing bearer token")
-	}
-	claims, err := decode(strings.TrimPrefix(h, "Bearer "))
-	if err != nil {
-		return nil, err
-	}
-	switch claims.TokenType {
-	case "access":
-		return claims, nil
-	case "service":
-		if !acceptServices[claims.Svc] {
-			return nil, errors.New("service caller not allowed")
-		}
-		if userTok := c.GetHeader("X-PF-User-Token"); userTok != "" {
-			uc, uerr := decode(userTok)
-			if uerr != nil || uc.TokenType != "access" {
-				return nil, errors.New("X-PF-User-Token must be an access token")
-			}
-			return uc, nil
-		}
-		return claims, nil
-	}
-	return nil, errors.New("access or service token required")
+func identity(c *gin.Context) (*pfauth.Claims, error) {
+	return pfauth.Identity(c.GetHeader("Authorization"), c.GetHeader("X-PF-User-Token"))
 }
 
 func main() {
-	mustLoadPub()
+	pfauth.Load()
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())

@@ -5,64 +5,21 @@
  */
 
 const MOUNT = '__MOUNT__';
-const ISSUER = 'pf-auth';
 
-function b64url_decode(string $s): string|false
-{
-    return base64_decode(strtr($s, '-_', '+/'));
+$pfSdk = getenv('PF_SDK_PHP') ?: '';
+if ($pfSdk === '' || !is_file($pfSdk . '/pfauth.php')) {
+    foreach ([__DIR__ . '/sdk/pfauth.php', __DIR__ . '/../../sdk/php/pfauth.php'] as $candidate) {
+        if (is_file($candidate)) {
+            $pfSdk = dirname($candidate);
+            break;
+        }
+    }
 }
+require $pfSdk . '/pfauth.php';
 
-/** RS256 验签 + iss/exp 校验，返回 claims（openssl 内建，无外部依赖）。 */
-function decode_jwt(string $token): array
-{
-    $parts = explode('.', $token);
-    if (count($parts) !== 3) {
-        throw new RuntimeException('malformed token');
-    }
-    [$h, $p, $sig] = $parts;
-    $pubPath = getenv('JWT_PUBLIC_KEY_FILE') ?: '/pf/jwt.pub';
-    $pub = openssl_pkey_get_public(file_get_contents($pubPath));
-    if ($pub === false || openssl_verify("$h.$p", b64url_decode($sig), $pub, OPENSSL_ALGO_SHA256) !== 1) {
-        throw new RuntimeException('invalid signature');
-    }
-    $claims = json_decode(b64url_decode($p), true);
-    if (!is_array($claims) || ($claims['iss'] ?? '') !== ISSUER) {
-        throw new RuntimeException('invalid issuer');
-    }
-    if (($claims['exp'] ?? 0) < time()) {
-        throw new RuntimeException('token expired');
-    }
-    return $claims;
-}
-
-/** 六步约定 + OBO：access 直接得身份；service 需在白名单，可携 X-PF-User-Token 代表用户。 */
 function identity(array $headers): array
 {
-    $auth = $headers['Authorization'] ?? $headers['authorization'] ?? '';
-    if (!str_starts_with($auth, 'Bearer ')) {
-        throw new RuntimeException('missing bearer token');
-    }
-    $claims = decode_jwt(substr($auth, 7));
-    $type = $claims['tokenType'] ?? '';
-    if ($type === 'access') {
-        return $claims;
-    }
-    if ($type === 'service') {
-        $accept = array_filter(array_map('trim', explode(',', getenv('PF_ACCEPT_SERVICE_TOKENS') ?: '')));
-        if (!in_array($claims['svc'] ?? '', $accept, true)) {
-            throw new RuntimeException('service caller not allowed');
-        }
-        $userTok = $headers['X-PF-User-Token'] ?? $headers['x-pf-user-token'] ?? '';
-        if ($userTok !== '') {
-            $uc = decode_jwt($userTok);
-            if (($uc['tokenType'] ?? '') !== 'access') {
-                throw new RuntimeException('X-PF-User-Token must be an access token');
-            }
-            return $uc;
-        }
-        return $claims; // 后台任务上下文（无用户身份）
-    }
-    throw new RuntimeException('access or service token required');
+    return pf_identity($headers);
 }
 
 function respond(int $code, array $body): never
