@@ -49,3 +49,7 @@ services/*/*.exe
 # pctl sync 放进构建上下文的验签 SDK 副本
 services/*/sdk/
 services/*/sdk/
+
+# Rust build output
+sdk/rust/target/
+templates/rust-service/target/
