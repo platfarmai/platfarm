@@ -136,7 +136,8 @@ func main() {
 	r.GET(mount+"/stats", handleStats)
 	// 管理面：数据集/规则运行时编辑（admin，见 admin.go）+ 内嵌控制台
 	registerAdminRoutes(r)
-	r.GET(mount+"/console", handleConsole)
+	// 管理页是给人看的 UI，不挂在 /api 下
+	r.GET("/data/console", handleConsole)
 
 	r.GET(mount+"/public/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"pong": true, "service": "svc-data", "auth": "not required"})

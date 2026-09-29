@@ -29,7 +29,7 @@ open_api:
   - { route: "GET /api/data/records", scope: data.records.read }
 
 admin_ui:
-  path: /console
+  path: /data/console
   embed: true
   title: Datasets
 
