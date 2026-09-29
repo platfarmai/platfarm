@@ -4,6 +4,7 @@ go 1.23
 
 require (
 	github.com/gin-gonic/gin v1.10.0
+	github.com/platfarmai/sdk/go/pfauth v0.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.7.1
 )
@@ -42,3 +43,5 @@ require (
 	google.golang.org/protobuf v1.34.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/platfarmai/sdk/go/pfauth => ./sdk/pfauth

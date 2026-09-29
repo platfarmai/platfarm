@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/platfarmai/sdk/go/pfauth"
 )
 
 // requireUser 任意登录用户（access token）→ claims；失败已写响应。
@@ -20,7 +21,7 @@ func requireUser(c *gin.Context) *Claims {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
 		return nil
 	}
-	claims, err := decode(strings.TrimPrefix(h, "Bearer "))
+	claims, err := pfauth.Verify(strings.TrimPrefix(h, "Bearer "))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return nil

@@ -45,3 +45,7 @@ backups/
 # build artifacts (auth/service binaries built during local QA)
 platform/auth/*.exe
 services/*/*.exe
+
+# pctl sync 放进构建上下文的验签 SDK 副本
+services/*/sdk/
+services/*/sdk/

@@ -1,71 +1,19 @@
 package main
 
 import (
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
-	"errors"
-	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/platfarmai/sdk/go/pfauth"
 )
 
-const issuer = "pf-auth"
+type Claims = pfauth.Claims
 
-// Claims: platform identity contract (architecture-v2 §2.1).
-type Claims struct {
-	TokenType string `json:"tokenType"`
-	UserId    int    `json:"userId"`
-	Username  string `json:"username"`
-	Role      string `json:"role"`
-	jwt.RegisteredClaims
-}
+func mustLoadPub() { pfauth.Load() }
 
-var pubKey *rsa.PublicKey
-
-func mustLoadPub() {
-	path := os.Getenv("JWT_PUBLIC_KEY_FILE")
-	if path == "" {
-		path = "/pf/jwt.pub"
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatalf("read public key: %v", err)
-	}
-	block, _ := pem.Decode(raw)
-	if block == nil {
-		log.Fatal("invalid public key PEM")
-	}
-	key, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		log.Fatalf("parse public key: %v", err)
-	}
-	pk, ok := key.(*rsa.PublicKey)
-	if !ok {
-		log.Fatal("public key is not RSA")
-	}
-	pubKey = pk
-}
-
-func decode(token string) (*Claims, error) {
-	claims := &Claims{}
-	tok, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return pubKey, nil
-	}, jwt.WithIssuer(issuer))
-	if err != nil || !tok.Valid {
-		return nil, errors.New("invalid token")
-	}
-	if claims.TokenType != "access" {
-		return nil, errors.New("access token required")
-	}
-	return claims, nil
+func identity(c *gin.Context) (*Claims, error) {
+	return pfauth.Identity(c.GetHeader("Authorization"), c.GetHeader("X-PF-User-Token"))
 }
 
 // requireAdmin: platform-admin only; stores the raw user token for OBO forwarding.
@@ -76,7 +24,7 @@ func requireAdmin(c *gin.Context) {
 		return
 	}
 	raw := strings.TrimPrefix(h, "Bearer ")
-	claims, err := decode(raw)
+	claims, err := pfauth.Verify(raw)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
