@@ -1,0 +1,46 @@
+# Platfarm 服务清单（契约见 docs/architecture-v2.md §3）
+# svc-data：通用数据中转——数据集/字段规则全部后台可配（dataset 表），代码零结构假设。
+# 下游承接：POST /api/data/ingest/{dataset}（per-dataset HMAC 验签）
+# 上游分发：GET /api/data/records（开放 API，按 app 计量）
+manifest: v1
+id: svc-data
+version: 0.1.0
+lang: go
+
+mount:
+  path: /api/data
+  strip_path: false
+  public_routes:
+    - GET /public/*
+    - POST /ingest/* # 各数据集 webhook：网关放行，服务内按数据集密钥 HMAC-SHA256 验签
+
+auth:
+  required: true
+  accept_service_tokens: []
+
+limits:
+  rate_per_minute: 240 # 多数据集共用入口，按源数扩余量
+
+exposes:
+  scopes:
+    - { name: data.records.read, desc: 读取数据中台各数据集记录（开放 API） }
+
+open_api:
+  - { route: "GET /api/data/records", scope: data.records.read }
+
+admin_ui:
+  path: /console
+  embed: true
+  title: Datasets
+
+data:
+  database: pf_od_data
+
+runtime:
+  port: 8080
+  health: /healthz
+  env:
+    - DATA_DATABASE_URL
+
+test:
+  command: /contract-test
