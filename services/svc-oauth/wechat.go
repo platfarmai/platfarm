@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 )
 
 // wechatGet 可被测试替换，避免真实出网。
@@ -43,6 +44,10 @@ func (p *wechatProvider) Start(state string) (string, error) {
 func (p *wechatProvider) Callback(code string) (*ExternalProfile, error) {
 	if p.appID == "" || p.secret == "" {
 		return nil, misconfig(p.ID())
+	}
+	// WECHAT_STUB=on：本地往返，不打微信。code 即 openid，供无 AppId 时验证 authorize→callback。
+	if os.Getenv("WECHAT_STUB") == "on" {
+		return &ExternalProfile{Provider: "wechat", Subject: "stub-" + code, DisplayName: "wechat-stub"}, nil
 	}
 	tokURL := "https://api.weixin.qq.com/sns/oauth2/access_token?" + url.Values{
 		"appid":      {p.appID},

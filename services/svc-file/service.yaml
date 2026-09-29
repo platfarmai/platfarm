@@ -16,6 +16,14 @@ auth:
 limits:
   rate_per_minute: 120
 
+crypto:
+  encrypt_response: true
+  exempt:
+    - /healthz
+    - /readyz
+    - /metrics
+    - /me
+
 exposes:
   scopes:
     - { name: read, desc: 读取文件元数据与下载链接 }

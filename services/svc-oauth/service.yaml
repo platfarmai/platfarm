@@ -26,6 +26,7 @@ runtime:
     - GITHUB_CLIENT_SECRET
     - WECHAT_APPID
     - WECHAT_SECRET
+    - WECHAT_STUB
     - PF_REDIS_URL
 
 test:

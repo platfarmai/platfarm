@@ -221,6 +221,9 @@
 
   function applyLoggedIn(pair) {
     if (pair && pair.accessToken) saveToken(pair.accessToken);
+    if (pair && pair.dataKey) {
+      try { sessionStorage.setItem("pf_data_key", pair.dataKey); } catch (e) { /* ignore */ }
+    }
     state.loginNeedsTotp = false;
     $("loginTotpWrap").hidden = true;
     var totpInput = qs('#formLogin input[name="totp"]');
@@ -776,6 +779,11 @@
 
   function boot() {
     state.token = loadToken();
+    if (typeof pfInstallFetch === "function") {
+      pfInstallFetch(function () {
+        try { return sessionStorage.getItem("pf_data_key"); } catch (e) { return null; }
+      });
+    }
     bind();
     showTab(currentTab());
     fetchMe().then(function (ok) {
