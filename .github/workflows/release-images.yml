@@ -38,6 +38,12 @@ jobs:
           entries=()
           for d in services/*/; do
             [ -f "$d/Dockerfile" ] || continue
+            # 依赖仓库内 SDK（go.mod replace 指向服务目录之外）的服务无法以
+            # 服务目录单独作为构建上下文，跳过，留给平台组件流程处理。
+            if grep -qE '^replace .*=> \.\./' "$d/go.mod" 2>/dev/null; then
+              echo "skip $(basename "$d"): replace points outside service dir" >&2
+              continue
+            fi
             name=$(basename "$d")
             entries+=("{\"name\":\"$name\",\"context\":\"services/$name\",\"file\":\"services/$name/Dockerfile\"}")
           done
