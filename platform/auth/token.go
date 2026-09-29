@@ -64,7 +64,7 @@ func (s *server) signUser(u user, tokenType string, ttl time.Duration) (string, 
 	c.Role = u.Role
 	c.TenantId = u.TenantID // 多租户激活（specs/022）：0 = 未分配/单租户
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, &c)
-	tok.Header["kid"] = keyID
+	tok.Header["kid"] = keyIDOf(&s.key.PublicKey)
 	signed, err := tok.SignedString(s.key)
 	return signed, &c, err
 }
@@ -75,7 +75,7 @@ func (s *server) signService(svc string, scopes []string) (string, error) {
 	c.Svc = svc
 	c.Scopes = scopes
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, &c)
-	tok.Header["kid"] = keyID
+	tok.Header["kid"] = keyIDOf(&s.key.PublicKey)
 	return tok.SignedString(s.key)
 }
 
@@ -85,7 +85,7 @@ func (s *server) signApp(appKey string, scopes []string) (string, error) {
 	c.AppKey = appKey
 	c.Scopes = scopes
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, &c)
-	tok.Header["kid"] = keyID
+	tok.Header["kid"] = keyIDOf(&s.key.PublicKey)
 	return tok.SignedString(s.key)
 }
 
@@ -156,7 +156,7 @@ type tokenPair struct {
 }
 
 func (s *server) issuePair(w http.ResponseWriter, u user) {
-		access, accessClaims, err := s.signUser(u, "access", accessTTL)
+	access, accessClaims, err := s.signUser(u, "access", accessTTL)
 	if err != nil {
 		writeErr(w, 500, "sign failed")
 		return
@@ -167,8 +167,8 @@ func (s *server) issuePair(w http.ResponseWriter, u user) {
 		return
 	}
 	// SSO 会话 Cookie（specs/006）：同源浏览器免二次登录；Bearer 仍照常返回给 API/curl。
-		setSessionCookie(w, access)
-		writeJSON(w, 200, tokenPair{access, refresh, int(accessTTL.Seconds()), dataKey(accessClaims.TokenId)})
+	setSessionCookie(w, access)
+	writeJSON(w, 200, tokenPair{access, refresh, int(accessTTL.Seconds()), dataKey(accessClaims.TokenId)})
 }
 
 const sessionCookie = "pf_access"

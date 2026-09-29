@@ -1,0 +1,57 @@
+# 第一方服务模板。复制后替换 SVC（svc-file / svc-notify / svc-jobs / svc-grants / svc-users / svc-oauth）。
+# 镜像、专属 env 按 service.yaml 的 runtime.env 补进 platfarm-env。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: SVC
+  namespace: platfarm
+  labels:
+    app: SVC
+    app.kubernetes.io/part-of: platfarm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: SVC
+  template:
+    metadata:
+      labels:
+        app: SVC
+    spec:
+      containers:
+        - name: SVC
+          image: platfarm/SVC:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: platfarm-env
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: SVC
+  namespace: platfarm
+  labels:
+    app: SVC
+spec:
+  selector:
+    app: SVC
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -11,11 +11,13 @@
 
 ```
 deploy/k8s/
-  README.md          this file
+  README.md
   base/
-    namespace.yaml    Namespace platfarm
-    auth.yaml        Deployment + Service for auth
-    gateway-ingress.yaml  Service gateway + Ingress (/auth, /api)
+    namespace.yaml
+    auth.yaml              Deployment + Service auth
+    gateway.yaml           Kong Deployment + ConfigMap platfarm-kong
+    gateway-ingress.yaml   Service gateway + Ingress
+    service.yaml           第一方服务模板（复制后替换 SVC）
 ```
 
 ## Prerequisites
@@ -39,8 +41,10 @@ kubectl apply -f deploy/k8s/base/
 |---|---|
 | Namespace `platfarm` | Isolation boundary for platform workloads |
 | Deployment + Service `auth` | Identity base; readiness `/healthz` on port 8080; env from `platfarm-env` |
-| Service `gateway` | Named target for Ingress (selector `app: gateway`) |
+| Deployment `gateway` | Kong 3.9, declarative config from ConfigMap `platfarm-kong` |
+| Service `gateway` | Ingress target (selector `app: gateway`) |
 | Ingress | Routes external `/auth` and `/api` to Service `gateway` |
+| `service.yaml` | Copy per first-party service; replace `SVC` |
 
 ## What is intentionally omitted
 

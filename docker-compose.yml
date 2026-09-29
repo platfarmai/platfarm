@@ -129,6 +129,20 @@ services:
     networks:
       - core-net
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.listen-address=:9090
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "127.0.0.1:19090:9090"
+    networks:
+      - core-net
+
   grafana:
     image: grafana/grafana:11.4.0
     profiles: ["observability"]
