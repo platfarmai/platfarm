@@ -23,6 +23,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -32,6 +35,14 @@ const (
 )
 
 var (
+	httpRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_requests_total", Help: "HTTP requests handled.",
+	}, []string{"service", "method", "code"})
+	httpRequestDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "http_request_duration_seconds", Help: "HTTP request duration.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"service", "method", "code"})
+
 	db       *pgxpool.Pool
 	s3       *minio.Client // 内网端点：bucket 管理、删除对象
 	s3Sign   *minio.Client // 公网端点：预签名（浏览器可达的 host 才能通过签名校验）
@@ -42,6 +53,7 @@ var (
 type fileRow struct {
 	ID         int64  `json:"id"`
 	OwnerID    int    `json:"ownerId"`
+	TenantID   int    `json:"tenantId"`
 	Visibility string `json:"visibility"`
 	Filename   string `json:"filename"`
 	Mime       string `json:"mime"`
@@ -90,7 +102,8 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(gin.Recovery(), metricsMiddleware("svc-file"))
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
 	r.GET("/readyz", func(c *gin.Context) {
 		if draining.Load() {
@@ -140,6 +153,17 @@ func main() {
 }
 
 func claimsOf(c *gin.Context) *Claims { return c.MustGet("claims").(*Claims) }
+
+// metricsMiddleware 记录 http_requests_total / http_request_duration_seconds（sdk/go/metrics 同名指标）。
+func metricsMiddleware(service string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		code := strconv.Itoa(c.Writer.Status())
+		httpRequestsTotal.WithLabelValues(service, c.Request.Method, code).Inc()
+		httpRequestDurationSeconds.WithLabelValues(service, c.Request.Method, code).Observe(time.Since(start).Seconds())
+	}
+}
 
 // handleUploadURL 建元数据行 + 预签名 PUT（15min）；storage_key 归属前缀防越权覆盖。
 func handleUploadURL(c *gin.Context) {
@@ -193,20 +217,20 @@ func handleUploadURL(c *gin.Context) {
 
 func loadFile(c *gin.Context) (fileRow, string, bool) {
 	ref := c.Param("id")
-	query := `SELECT id, owner_id, visibility, filename, mime, size, storage_key, created_at::text
+	query := `SELECT id, owner_id, tenant_id, visibility, filename, mime, size, storage_key, created_at::text
 		 FROM files WHERE id=$1`
 	var arg any
 	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
 		arg = id
 	} else {
-		query = `SELECT id, owner_id, visibility, filename, mime, size, storage_key, created_at::text
+		query = `SELECT id, owner_id, tenant_id, visibility, filename, mime, size, storage_key, created_at::text
 		 FROM files WHERE public_token=$1 AND public_token <> ''`
 		arg = ref
 	}
 	var f fileRow
 	var key string
 	err := db.QueryRow(c.Request.Context(), query, arg).
-		Scan(&f.ID, &f.OwnerID, &f.Visibility, &f.Filename, &f.Mime, &f.Size, &key, &f.CreatedAt)
+		Scan(&f.ID, &f.OwnerID, &f.TenantID, &f.Visibility, &f.Filename, &f.Mime, &f.Size, &key, &f.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(404, gin.H{"error": "file not found"})
 		return fileRow{}, "", false
@@ -218,11 +242,26 @@ func loadFile(c *gin.Context) (fileRow, string, bool) {
 	return f, key, true
 }
 
+// sameTenant 多租户隔离参考（specs/022）：tenant 0 视为未分租户，不额外隔离；
+// 非 0 租户只能碰本租户的行。平台 admin 跨租户。
+func sameTenant(f fileRow, claims *Claims) bool {
+	if claims.Role == "admin" || claims.TenantId == 0 || f.TenantID == 0 {
+		return true
+	}
+	return f.TenantID == claims.TenantId
+}
+
 // L3 归属判定（架构 §5）：private 仅 owner；admin 越权；public 任意登录者可读。
 func canRead(f fileRow, claims *Claims) bool {
+	if !sameTenant(f, claims) {
+		return false
+	}
 	return f.Visibility == "public" || f.OwnerID == claims.UserId || claims.Role == "admin"
 }
 func canWrite(f fileRow, claims *Claims) bool {
+	if !sameTenant(f, claims) {
+		return false
+	}
 	return f.OwnerID == claims.UserId || claims.Role == "admin"
 }
 
@@ -266,8 +305,9 @@ func handleDelete(c *gin.Context) {
 func handleMine(c *gin.Context) {
 	claims := claimsOf(c)
 	rows, err := db.Query(c.Request.Context(),
-		`SELECT id, owner_id, visibility, filename, mime, size, storage_key, created_at::text
-		 FROM files WHERE owner_id=$1 ORDER BY id DESC LIMIT 200`, claims.UserId)
+		`SELECT id, owner_id, tenant_id, visibility, filename, mime, size, storage_key, created_at::text
+		 FROM files WHERE owner_id=$1 AND (tenant_id=$2 OR $2=0 OR tenant_id=0)
+		 ORDER BY id DESC LIMIT 200`, claims.UserId, claims.TenantId)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "query failed"})
 		return
@@ -277,7 +317,7 @@ func handleMine(c *gin.Context) {
 	for rows.Next() {
 		var f fileRow
 		var key string
-		if rows.Scan(&f.ID, &f.OwnerID, &f.Visibility, &f.Filename, &f.Mime, &f.Size, &key, &f.CreatedAt) == nil {
+		if rows.Scan(&f.ID, &f.OwnerID, &f.TenantID, &f.Visibility, &f.Filename, &f.Mime, &f.Size, &key, &f.CreatedAt) == nil {
 			items = append(items, f)
 		}
 	}

@@ -10,6 +10,7 @@ CREATE TABLE notifications (
     last_error      TEXT NOT NULL DEFAULT '',
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by      TEXT NOT NULL DEFAULT '',             -- 发起方（svc id 或 username）
+    tenant_id       INT  NOT NULL DEFAULT 0,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     sent_at         TIMESTAMPTZ
 );

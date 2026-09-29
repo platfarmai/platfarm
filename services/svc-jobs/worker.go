@@ -95,20 +95,20 @@ func deliverBatch(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
-	// deliver POST job.webhook。service token 只附给平台内服务名（svc-* / auth），
-	// 外网回调不带凭据——否则任意 webhook 会把平台身份带出 core-net（审计 H1）。
-	func deliver(ctx context.Context, id int64, jobType, payload, webhook string) error {
-		body, _ := json.Marshal(map[string]any{"jobId": id, "type": jobType, "payload": payload})
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
-		if err != nil {
-			return err
+// deliver POST job.webhook。service token 只附给平台内服务名（svc-* / auth），
+// 外网回调不带凭据——否则任意 webhook 会把平台身份带出 core-net（审计 H1）。
+func deliver(ctx context.Context, id int64, jobType, payload, webhook string) error {
+	body, _ := json.Marshal(map[string]any{"jobId": id, "type": jobType, "payload": payload})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if platformWebhook(webhook) {
+		if tok, terr := serviceToken(); terr == nil && tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
 		}
-		req.Header.Set("Content-Type", "application/json")
-		if platformWebhook(webhook) {
-			if tok, terr := serviceToken(); terr == nil && tok != "" {
-				req.Header.Set("Authorization", "Bearer "+tok)
-			}
-		}
+	}
 	resp, err := webhookClient.Do(req)
 	if err != nil {
 		return err
@@ -171,7 +171,7 @@ func schedulerWorker(ctx context.Context) {
 
 func runSchedules(ctx context.Context) error {
 	rows, err := db.Query(ctx,
-		`SELECT id, name, cron, type, payload, webhook,
+		`SELECT id, name, cron, type, payload, webhook, tenant_id,
 		        COALESCE(last_run_at, created_at)
 		 FROM schedules WHERE enabled=true`)
 	if err != nil {
@@ -180,12 +180,13 @@ func runSchedules(ctx context.Context) error {
 	type sched struct {
 		id                                        int64
 		name, cronExpr, jobType, payload, webhook string
+		tenant                                    int
 		base                                      time.Time
 	}
 	var scheds []sched
 	for rows.Next() {
 		var s sched
-		if rows.Scan(&s.id, &s.name, &s.cronExpr, &s.jobType, &s.payload, &s.webhook, &s.base) == nil {
+		if rows.Scan(&s.id, &s.name, &s.cronExpr, &s.jobType, &s.payload, &s.webhook, &s.tenant, &s.base) == nil {
 			scheds = append(scheds, s)
 		}
 	}
@@ -208,9 +209,9 @@ func runSchedules(ctx context.Context) error {
 				return terr
 			}
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO jobs (type, payload, webhook, created_by)
-				 VALUES ($1,$2,$3,$4)`,
-				s.jobType, s.payload, s.webhook, "schedule:"+s.name); err != nil {
+				`INSERT INTO jobs (type, payload, webhook, created_by, tenant_id)
+				 VALUES ($1,$2,$3,$4,$5)`,
+				s.jobType, s.payload, s.webhook, "schedule:"+s.name, s.tenant); err != nil {
 				_ = tx.Rollback(ctx)
 				return err
 			}

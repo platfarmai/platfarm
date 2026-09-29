@@ -143,9 +143,9 @@ func handleSend(c *gin.Context) {
 	}
 	var id int64
 	err := db.QueryRow(c.Request.Context(),
-		`INSERT INTO notifications (channel, recipient, subject, body, status, created_by)
-		 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		in.Channel, in.To, in.Subject, in.Body, status, sender).Scan(&id)
+		`INSERT INTO notifications (channel, recipient, subject, body, status, created_by, tenant_id)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		in.Channel, in.To, in.Subject, in.Body, status, sender, claimsOf(c).TenantId).Scan(&id)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "insert failed"})
 		return
@@ -157,8 +157,10 @@ func handleMine(c *gin.Context) {
 	claims := claimsOf(c)
 	rows, err := db.Query(c.Request.Context(),
 		`SELECT id, subject, body, status, created_at::text FROM notifications
-		 WHERE channel='inbox' AND recipient=$1 ORDER BY id DESC LIMIT 100`,
-		strconv.Itoa(claims.UserId))
+		 WHERE channel='inbox' AND recipient=$1
+		   AND (tenant_id=$2 OR $2=0 OR tenant_id=0)
+		 ORDER BY id DESC LIMIT 100`,
+		strconv.Itoa(claims.UserId), claims.TenantId)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "query failed"})
 		return
@@ -189,8 +191,9 @@ func handleMarkRead(c *gin.Context) {
 		return
 	}
 	tag, err := db.Exec(c.Request.Context(),
-		`UPDATE notifications SET status='read' WHERE id=$1 AND channel='inbox' AND recipient=$2`,
-		id, strconv.Itoa(claims.UserId))
+		`UPDATE notifications SET status='read' WHERE id=$1 AND channel='inbox' AND recipient=$2
+		   AND (tenant_id=$3 OR $3=0 OR tenant_id=0)`,
+		id, strconv.Itoa(claims.UserId), claims.TenantId)
 	if err != nil || tag.RowsAffected() == 0 {
 		c.JSON(404, gin.H{"error": "message not found"})
 		return
@@ -207,7 +210,9 @@ func handleOutbox(c *gin.Context) {
 	}
 	rows, err := db.Query(c.Request.Context(),
 		`SELECT id, channel, recipient, subject, status, attempts, last_error, created_by, created_at::text
-		 FROM notifications WHERE channel IN ('email','webhook') ORDER BY id DESC LIMIT 100`)
+		 FROM notifications WHERE channel IN ('email','webhook')
+		   AND (tenant_id=$1 OR $1=0)
+		 ORDER BY id DESC LIMIT 100`, claims.TenantId)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "query failed"})
 		return

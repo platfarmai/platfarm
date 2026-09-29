@@ -5,6 +5,7 @@ CREATE TABLE grants (
     role        TEXT NOT NULL,                        -- 服务内业务角色名（语义由该服务定义）
     user_id     INT  NOT NULL,                        -- 被授予的用户 id
     granted_by  TEXT NOT NULL DEFAULT '',             -- 授予人（admin username）
+    tenant_id   INT  NOT NULL DEFAULT 0,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (service_id, role, user_id)
 );

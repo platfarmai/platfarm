@@ -10,6 +10,7 @@ CREATE TABLE jobs (
     run_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_error   TEXT NOT NULL DEFAULT '',
     created_by   TEXT NOT NULL DEFAULT '',
+    tenant_id    INT NOT NULL DEFAULT 0,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     done_at      TIMESTAMPTZ
 );
@@ -26,5 +27,6 @@ CREATE TABLE schedules (
     webhook     TEXT NOT NULL,
     enabled     BOOL NOT NULL DEFAULT true,
     last_run_at TIMESTAMPTZ,
+    tenant_id   INT NOT NULL DEFAULT 0,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

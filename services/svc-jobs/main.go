@@ -126,14 +126,14 @@ func handleEnqueue(c *gin.Context) {
 		RunAt       string `json:"runAt"`
 		MaxAttempts int    `json:"maxAttempts"`
 	}
-		if c.ShouldBindJSON(&in) != nil || in.Type == "" || in.Webhook == "" {
-			c.JSON(400, gin.H{"error": "type and webhook required"})
-			return
-		}
-		if err := validateWebhook(in.Webhook); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
+	if c.ShouldBindJSON(&in) != nil || in.Type == "" || in.Webhook == "" {
+		c.JSON(400, gin.H{"error": "type and webhook required"})
+		return
+	}
+	if err := validateWebhook(in.Webhook); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	runAt := time.Now()
 	if in.RunAt != "" {
 		t, perr := time.Parse(time.RFC3339, in.RunAt)
@@ -149,9 +149,9 @@ func handleEnqueue(c *gin.Context) {
 	}
 	var id int64
 	err := db.QueryRow(c.Request.Context(),
-		`INSERT INTO jobs (type, payload, webhook, run_at, max_attempts, created_by)
-		 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-		in.Type, in.Payload, in.Webhook, runAt, maxAttempts, sender).Scan(&id)
+		`INSERT INTO jobs (type, payload, webhook, run_at, max_attempts, created_by, tenant_id)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		in.Type, in.Payload, in.Webhook, runAt, maxAttempts, sender, claimsOf(c).TenantId).Scan(&id)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "insert failed"})
 		return
@@ -213,10 +213,10 @@ func handleList(c *gin.Context) {
 	}
 	status := c.Query("status")
 	query := `SELECT id, type, webhook, status, attempts, max_attempts, last_error, created_by, created_at::text
-		 FROM jobs`
-	args := []any{}
+		 FROM jobs WHERE (tenant_id=$1 OR $1=0)`
+	args := []any{claims.TenantId}
 	if status != "" {
-		query += ` WHERE status=$1`
+		query += ` AND status=$2`
 		args = append(args, status)
 	}
 	query += ` ORDER BY id DESC LIMIT 100`
@@ -275,9 +275,9 @@ func handleCreateSchedule(c *gin.Context) {
 	}
 	var id int64
 	err := db.QueryRow(c.Request.Context(),
-		`INSERT INTO schedules (name, cron, type, payload, webhook)
-		 VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-		in.Name, in.Cron, in.Type, in.Payload, in.Webhook).Scan(&id)
+		`INSERT INTO schedules (name, cron, type, payload, webhook, tenant_id)
+		 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+		in.Name, in.Cron, in.Type, in.Payload, in.Webhook, claims.TenantId).Scan(&id)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "insert failed (name must be unique)"})
 		return
@@ -294,7 +294,7 @@ func handleListSchedules(c *gin.Context) {
 	rows, err := db.Query(c.Request.Context(),
 		`SELECT id, name, cron, type, payload, webhook, enabled,
 		        COALESCE(last_run_at::text,''), created_at::text
-		 FROM schedules ORDER BY id DESC LIMIT 100`)
+		 FROM schedules WHERE (tenant_id=$1 OR $1=0) ORDER BY id DESC LIMIT 100`, claims.TenantId)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "query failed"})
 		return

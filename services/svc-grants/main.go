@@ -101,7 +101,8 @@ func handleMine(c *gin.Context) {
 	claims := claimsOf(c)
 	rows, err := db.Query(c.Request.Context(),
 		`SELECT service_id, role, created_at::text FROM grants
-		 WHERE user_id=$1 ORDER BY id DESC LIMIT 500`, claims.UserId)
+		 WHERE user_id=$1 AND (tenant_id=$2 OR $2=0 OR tenant_id=0)
+		 ORDER BY id DESC LIMIT 500`, claims.UserId, claims.TenantId)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "query failed"})
 		return
@@ -138,10 +139,11 @@ func handleUsers(c *gin.Context) {
 		c.JSON(403, gin.H{"error": "admin user or matching service token required"})
 		return
 	}
-	sql := `SELECT user_id, role, granted_by, created_at::text FROM grants WHERE service_id=$1`
-	args := []any{service}
+	sql := `SELECT user_id, role, granted_by, created_at::text FROM grants
+		WHERE service_id=$1 AND (tenant_id=$2 OR $2=0)`
+	args := []any{service, claims.TenantId}
 	if role != "" {
-		sql += ` AND role=$2`
+		sql += ` AND role=$3`
 		args = append(args, role)
 	}
 	sql += ` ORDER BY id DESC LIMIT 500`
@@ -179,9 +181,9 @@ func handleGrant(c *gin.Context) {
 		return
 	}
 	if _, err := db.Exec(c.Request.Context(),
-		`INSERT INTO grants (service_id, role, user_id, granted_by)
-		 VALUES ($1,$2,$3,$4) ON CONFLICT (service_id, role, user_id) DO NOTHING`,
-		service, role, userId, claims.Username); err != nil {
+		`INSERT INTO grants (service_id, role, user_id, granted_by, tenant_id)
+		 VALUES ($1,$2,$3,$4,$5) ON CONFLICT (service_id, role, user_id) DO NOTHING`,
+		service, role, userId, claims.Username, claims.TenantId); err != nil {
 		c.JSON(500, gin.H{"error": "insert failed"})
 		return
 	}
@@ -200,8 +202,9 @@ func handleRevoke(c *gin.Context) {
 		return
 	}
 	tag, err := db.Exec(c.Request.Context(),
-		`DELETE FROM grants WHERE service_id=$1 AND role=$2 AND user_id=$3`,
-		service, role, userId)
+		`DELETE FROM grants WHERE service_id=$1 AND role=$2 AND user_id=$3
+		   AND (tenant_id=$4 OR $4=0)`,
+		service, role, userId, claims.TenantId)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "delete failed"})
 		return
