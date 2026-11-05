@@ -1,0 +1,62 @@
+# svc-pay — 微信/支付宝支付服务商系统（specs/030）。
+# M1：商户/应用/服务商配置 + 微信普通服务商（直清）JSAPI/Native 支付、退款、下游通知。
+manifest: v1
+id: svc-pay
+version: 0.1.0
+lang: go
+
+mount:
+  path: /api/pay
+  strip_path: false
+  public_routes:
+    - POST /notify/* # 渠道回调：网关放行，服务内验签
+
+auth:
+  required: true
+  accept_service_tokens:
+    - svc-jobs # 下游通知的重试调度（specs/026）
+
+limits:
+  rate_per_minute: 600
+
+roles:
+  vocabulary:
+    - { name: reviewer, desc: 审核进件资料 }
+    - { name: operator, desc: 管理商户、应用与渠道配置 }
+  bootstrap: platform-admin=operator
+
+exposes:
+  scopes:
+    - { name: pay.order.create, desc: 创建支付订单（开放 API） }
+    - { name: pay.order.query, desc: 查询支付订单（开放 API） }
+    - { name: pay.refund.create, desc: 发起退款（开放 API） }
+
+open_api:
+  - { route: "POST /api/pay/v1/orders", scope: pay.order.create }
+  - { route: "GET /api/pay/v1/orders/*", scope: pay.order.query }
+  - { route: "POST /api/pay/v1/orders/*/close", scope: pay.order.create }
+  - { route: "POST /api/pay/v1/refunds", scope: pay.refund.create }
+
+admin_ui:
+  path: /console
+  embed: true
+  title: 支付中心
+
+runtime:
+  port: 8080
+  health: /healthz
+  env:
+    - PAY_DATABASE_URL
+    - PAY_SECRET_KEY
+    - PAY_ENV
+    - PAY_PUBLIC_BASE
+    - WXPAY_API_BASE
+    - PF_REDIS_URL
+    - PAY_CLIENT_ID
+    - PAY_CLIENT_SECRET
+
+data:
+  database: pf_svc_pay
+
+test:
+  command: /contract-test

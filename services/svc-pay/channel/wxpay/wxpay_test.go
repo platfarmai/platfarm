@@ -1,0 +1,67 @@
+package wxpay
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"strings"
+	"testing"
+)
+
+func TestSignRoundTrip(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}))
+
+	sig, err := sign(pemStr, "GET\n/v3/x\n1\nn\n\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(sig, "=") && len(sig) < 300 {
+		t.Fatalf("signature looks wrong: %d bytes", len(sig))
+	}
+	if _, err := parsePrivateKey(pemStr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parsePrivateKey("not pem"); err == nil {
+		t.Fatal("garbage pem should fail")
+	}
+}
+
+func TestTradeStateFold(t *testing.T) {
+	cases := map[string]string{
+		`{"trade_state":"SUCCESS","transaction_id":"T1"}`:  "SUCCESS",
+		`{"trade_state":"NOTPAY"}`:                          "WAITING",
+		`{"trade_state":"USERPAYING"}`:                      "WAITING",
+		`{"trade_state":"CLOSED","trade_state_desc":"已关"}`: "FAIL",
+		`{"trade_state":"PAYERROR"}`:                        "FAIL",
+	}
+	for raw, want := range cases {
+		if got := tradeState([]byte(raw)).State; got != want {
+			t.Errorf("%s → %s, want %s", raw, got, want)
+		}
+	}
+	if got := tradeState([]byte(`{"trade_state":"SUCCESS","transaction_id":"T9"}`)).ChannelOrderNo; got != "T9" {
+		t.Errorf("channel order no = %s", got)
+	}
+}
+
+func TestRefundState(t *testing.T) {
+	if refundState("PROCESSING") != "WAITING" || refundState("SUCCESS") != "SUCCESS" || refundState("ABNORMAL") != "FAIL" {
+		t.Fatal("refund state fold mismatch")
+	}
+}
+
+func TestFailFromBody(t *testing.T) {
+	res := failFromBody([]byte(`{"code":"PARAM_ERROR","message":"缺参数"}`))
+	if res.State != "FAIL" || res.ErrCode != "PARAM_ERROR" || res.ErrMsg != "缺参数" {
+		t.Fatalf("%+v", res)
+	}
+}

@@ -46,6 +46,23 @@ services:
       start_period: 15s
     networks:
       - core-net
+  svc-data:
+    build: ./services/svc-data
+    environment:
+      JWT_EXTRA_PUB_DIR: /pf/jwt-extra
+      DATA_DATABASE_URL: ${SVC_DATA_DATA_DATABASE_URL:-${DATA_DATABASE_URL}}
+    volumes:
+      - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+      - ./.keys/jwks-extra:/pf/jwt-extra:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - core-net
   svc-demo:
     build: ./services/svc-demo
     environment:
@@ -131,7 +148,7 @@ services:
       JOBS_DATABASE_URL: ${SVC_JOBS_JOBS_DATABASE_URL:-${JOBS_DATABASE_URL}}
       JOBS_CLIENT_ID: ${SVC_JOBS_JOBS_CLIENT_ID:-${JOBS_CLIENT_ID}}
       JOBS_CLIENT_SECRET: ${SVC_JOBS_JOBS_CLIENT_SECRET:-${JOBS_CLIENT_SECRET}}
-      PF_ACCEPT_SERVICE_TOKENS: svc-file,svc-notify,svc-users
+      PF_ACCEPT_SERVICE_TOKENS: svc-file,svc-notify,svc-users,svc-pay
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
       - ./.keys/jwks-extra:/pf/jwt-extra:ro
@@ -198,6 +215,31 @@ services:
       OPENAPI_CLIENT_ID: ${SVC_OPENAPI_OPENAPI_CLIENT_ID:-${OPENAPI_CLIENT_ID}}
       OPENAPI_CLIENT_SECRET: ${SVC_OPENAPI_OPENAPI_CLIENT_SECRET:-${OPENAPI_CLIENT_SECRET}}
       LOKI_URL: ${LOKI_URL:-}
+    volumes:
+      - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
+      - ./.keys/jwks-extra:/pf/jwt-extra:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - core-net
+  svc-pay:
+    build: ./services/svc-pay
+    environment:
+      JWT_EXTRA_PUB_DIR: /pf/jwt-extra
+      PAY_DATABASE_URL: ${SVC_PAY_PAY_DATABASE_URL:-${PAY_DATABASE_URL}}
+      PAY_SECRET_KEY: ${SVC_PAY_PAY_SECRET_KEY:-${PAY_SECRET_KEY}}
+      PAY_ENV: ${SVC_PAY_PAY_ENV:-${PAY_ENV}}
+      PAY_PUBLIC_BASE: ${SVC_PAY_PAY_PUBLIC_BASE:-${PAY_PUBLIC_BASE}}
+      WXPAY_API_BASE: ${SVC_PAY_WXPAY_API_BASE:-${WXPAY_API_BASE}}
+      PF_REDIS_URL: ${PF_REDIS_URL:-redis://redis:6379/0}
+      PAY_CLIENT_ID: ${SVC_PAY_PAY_CLIENT_ID:-${PAY_CLIENT_ID}}
+      PAY_CLIENT_SECRET: ${SVC_PAY_PAY_CLIENT_SECRET:-${PAY_CLIENT_SECRET}}
+      PF_ACCEPT_SERVICE_TOKENS: svc-jobs
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
       - ./.keys/jwks-extra:/pf/jwt-extra:ro

@@ -15,6 +15,7 @@ auth:
     - svc-file
     - svc-notify
     - svc-users
+    - svc-pay
 
 limits:
   rate_per_minute: 120
