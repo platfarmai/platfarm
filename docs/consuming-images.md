@@ -37,7 +37,7 @@ docker compose --profile bundled-db up -d
 Use the Dockerfiles under `templates/*-service` (or your own). Typical Go pattern:
 
 ```dockerfile
-FROM golang:1.23-alpine AS build
+FROM golang:1.26.10-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/server .
