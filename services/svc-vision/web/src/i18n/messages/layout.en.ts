@@ -1,0 +1,33 @@
+export default {
+  layout: {
+    appName: 'Vision',
+    system: 'Surveillance',
+    logout: 'Sign out',
+    accountCenter: 'Account center',
+    language: 'Language',
+    menu: {
+      login: 'Login',
+      dashboard: 'Dashboard',
+      cameras: 'Cameras',
+      camerasList: 'Camera list',
+      camerasAdd: 'Add camera',
+      camerasEdit: 'Edit camera',
+      camerasDetail: 'Camera detail',
+      recordings: 'Recordings',
+      recordingsList: 'Recording list',
+      snapshots: 'Snapshots',
+      playback: 'Playback',
+      analytics: 'Analytics',
+      alerts: 'Alerts',
+      storage: 'Storage',
+      settings: 'Settings',
+      settingsSystem: 'System',
+      settingsCameraDefaults: 'Camera defaults',
+      settingsStorage: 'Storage settings',
+      settingsAlerts: 'Alert config',
+    },
+    footer: {
+      app: 'Vision',
+    },
+  },
+}

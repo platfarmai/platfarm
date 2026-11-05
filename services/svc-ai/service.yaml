@@ -1,0 +1,38 @@
+# svc-ai — 平台 AI 管理中心（specs/029）：LLM 网关 + provider 凭据 + 虚拟 key + 用量计量。
+# 业务服务内网直调 http://svc-ai:8080/api/ai/v1/messages（Anthropic Messages 协议，虚拟 key 鉴权）。
+manifest: v1
+id: svc-ai
+version: 0.1.0
+lang: go
+
+mount:
+  path: /api/ai
+  strip_path: false
+  public_routes:
+    - GET /console/*  # console 静态页公开，API 仍受 JWT 保护；SPA 内 401 自动跳登录
+
+auth:
+  required: true
+  accept_service_tokens: []
+
+limits:
+  rate_per_minute: 300
+
+admin_ui:
+  path: /console
+  embed: true
+  title: AI 中心
+
+runtime:
+  port: 8080
+  health: /healthz
+  env:
+    - AI_DATABASE_URL
+    - AI_SEED_ANTHROPIC_KEY
+    - AI_SEED_ANTHROPIC_BASE_URL
+
+data:
+  database: pf_svc_ai
+
+test:
+  command: /contract-test

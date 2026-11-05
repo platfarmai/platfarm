@@ -1,0 +1,21 @@
+export default {
+  settingsDefaults: {
+    defaultRecordingSettings: '默认录像设置',
+    defaultRecordEnabled: '默认启用录像',
+    defaultRecordType: '默认录像类型',
+    selectType: '选择类型',
+    continuous: '连续录像',
+    motion: '移动侦测',
+    schedule: '定时录像',
+    save: '保存',
+    defaultVideoSettings: '默认画面设置',
+    defaultResolution: '默认分辨率',
+    width: '宽',
+    height: '高',
+    defaultFps: '默认帧率',
+    defaultCodec: '默认编码',
+    selectCodec: '选择编码',
+    defaultBitrate: '默认码率',
+    saveSuccess: '摄像头默认配置保存成功',
+  },
+}

@@ -1,0 +1,21 @@
+export default {
+  settingsDefaults: {
+    defaultRecordingSettings: 'Default Recording Settings',
+    defaultRecordEnabled: 'Recording Enabled by Default',
+    defaultRecordType: 'Default Recording Type',
+    selectType: 'Select type',
+    continuous: 'Continuous',
+    motion: 'Motion Detection',
+    schedule: 'Scheduled',
+    save: 'Save',
+    defaultVideoSettings: 'Default Video Settings',
+    defaultResolution: 'Default Resolution',
+    width: 'Width',
+    height: 'Height',
+    defaultFps: 'Default Frame Rate',
+    defaultCodec: 'Default Codec',
+    selectCodec: 'Select codec',
+    defaultBitrate: 'Default Bitrate',
+    saveSuccess: 'Camera defaults saved successfully',
+  },
+}

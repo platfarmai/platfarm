@@ -1,0 +1,204 @@
+@use 'variables' as *;
+
+// Map Element Plus CSS vars to PlatFarm design tokens (standalone fallbacks)
+:root {
+  --el-color-primary: var(--pf-accent, #409eff);
+  --el-color-success: var(--pf-success, #67c23a);
+  --el-color-danger: var(--pf-danger, #f56c6c);
+  --el-color-warning: var(--pf-warning, #e6a23c);
+  --el-border-radius-base: var(--pf-radius, 4px);
+  --el-bg-color: var(--pf-surface, #ffffff);
+  --el-text-color-primary: var(--pf-text, #303133);
+  --el-text-color-secondary: var(--pf-text-muted, #909399);
+  --el-border-color: var(--pf-border, #dcdfe6);
+  --el-font-family: var(--pf-font, 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif);
+}
+// 重置样式
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #app {
+  height: 100%;
+  font-family: var(--el-font-family);
+  font-size: 14px;
+  color: $text-primary;
+  background: $bg-color;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: $color-primary;
+}
+
+// 滚动条样式
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #c0c4cc;
+  border-radius: 3px;
+  &:hover { background: #909399; }
+}
+
+// Element Plus 组件样式覆盖
+.el-card {
+  border-radius: $border-radius;
+  box-shadow: $box-shadow;
+  border: 1px solid $border-color;
+}
+
+.el-table {
+  border-radius: $border-radius;
+  overflow: hidden;
+}
+
+.el-input__inner {
+  border-radius: 6px;
+}
+
+.el-button {
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.el-tag {
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+// 通用工具类
+.flex { display: flex; }
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.flex-col { display: flex; flex-direction: column; }
+
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
+.gap-24 { gap: 24px; }
+
+.text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+
+.mt-8 { margin-top: 8px; }
+.mt-16 { margin-top: 16px; }
+.mt-24 { margin-top: 24px; }
+.mb-8 { margin-bottom: 8px; }
+.mb-16 { margin-bottom: 16px; }
+.mb-24 { margin-bottom: 24px; }
+
+.w-full { width: 100%; }
+.h-full { height: 100%; }
+
+// 状态标签
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+
+  &::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+
+  &.online {
+    background: #f0f9eb;
+    color: $color-success;
+    &::before { background: $color-success; }
+  }
+  &.offline {
+    background: #fdf6ec;
+    color: $color-warning;
+    &::before { background: $color-warning; }
+  }
+  &.error {
+    background: #fef0f0;
+    color: $color-danger;
+    &::before { background: $color-danger; }
+  }
+  &.recording {
+    background: #fef0f0;
+    color: $color-danger;
+    &::before { background: $color-danger; animation: blink 1s infinite; }
+  }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+// 视频播放器容器
+.video-container {
+  position: relative;
+  width: 100%;
+  background: #000;
+  border-radius: $border-radius;
+  overflow: hidden;
+
+  &.aspect-16-9 { aspect-ratio: 16/9; }
+  &.aspect-4-3 { aspect-ratio: 4/3; }
+
+  video, .hls-video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 12px 16px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #fff;
+
+    .btn {
+      background: rgba(255,255,255,0.2);
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.2s;
+      &:hover { background: rgba(255,255,255,0.3); }
+    }
+  }
+}
+
+// 页面过渡动画
+.page-enter-active, .page-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.page-enter-from, .page-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+// 响应式
+@media (max-width: $breakpoint-md) {
+  .el-main { padding: 16px !important; }
+  .el-aside { z-index: 1000; }
+}

@@ -1,0 +1,30 @@
+// 变量定义（与 pf 令牌对齐；无 pf-ui 时回退到默认值）
+$color-primary: var(--pf-accent, #409eff);
+$color-success: var(--pf-success, #67c23a);
+$color-warning: var(--pf-warning, #e6a23c);
+$color-danger: var(--pf-danger, #f56c6c);
+$color-info: #909399;
+
+$bg-color: var(--pf-bg, #f0f2f5);
+$card-bg: var(--pf-surface, #fff);
+$text-primary: var(--pf-text, #303133);
+$text-secondary: var(--pf-text-muted, #606266);
+$border-color: var(--pf-border, #dcdfe6);
+
+$sidebar-bg: #1f2d3d;
+$sidebar-text: #b4c2d4;
+$sidebar-active-bg: #1e3a5f;
+$sidebar-hover-bg: #2d3a4a;
+
+$header-bg: var(--pf-surface, #fff);
+$header-height: 60px;
+
+$transition-duration: 0.3s;
+$border-radius: var(--pf-radius, 4px);
+$box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+
+$breakpoint-xs: 480px;
+$breakpoint-sm: 768px;
+$breakpoint-md: 992px;
+$breakpoint-lg: 1200px;
+$breakpoint-xl: 1920px;

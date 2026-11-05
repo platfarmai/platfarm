@@ -1,0 +1,33 @@
+export default {
+  layout: {
+    appName: 'Vision',
+    system: '监控系统',
+    logout: '退出登录',
+    accountCenter: '账号中心',
+    language: '语言',
+    menu: {
+      login: '登录',
+      dashboard: '仪表盘',
+      cameras: '摄像头管理',
+      camerasList: '摄像头列表',
+      camerasAdd: '添加摄像头',
+      camerasEdit: '编辑摄像头',
+      camerasDetail: '摄像头详情',
+      recordings: '录像管理',
+      recordingsList: '录像列表',
+      snapshots: '抓拍图片',
+      playback: '历史回放',
+      analytics: '智能分析',
+      alerts: '报警记录',
+      storage: '存储管理',
+      settings: '系统设置',
+      settingsSystem: '系统配置',
+      settingsCameraDefaults: '摄像头默认配置',
+      settingsStorage: '存储设置',
+      settingsAlerts: '报警配置',
+    },
+    footer: {
+      app: 'Vision',
+    },
+  },
+}

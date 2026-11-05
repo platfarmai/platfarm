@@ -1,0 +1,45 @@
+# svc-vision — 视频监控服务（cineye 移植：ONVIF/RTSP 摄像头、FFmpeg 录像、HLS 直播、告警）。
+# 媒体路由（HLS/WS/下载）走 /media/* 公开段，由服务自行校验短时签名 token（VISION_MEDIA_SECRET）。
+# 录像持久化走 MinIO（S3_*），容器文件系统仅存直播段与在制分片 → 满足无状态纪律。
+manifest: v1
+id: svc-vision
+version: 0.1.0
+lang: go
+
+mount:
+  path: /api/vision
+  strip_path: false
+  public_routes:
+    - GET /public/*
+    - GET /console/*
+    - GET /media/*
+
+auth:
+  required: true
+  accept_service_tokens: []
+
+limits:
+  rate_per_minute: 1200
+
+admin_ui:
+  path: /console
+  embed: true
+  title: 视频监控
+
+runtime:
+  port: 8080
+  health: /healthz
+  env:
+    - VISION_DATABASE_URL
+    - VISION_MEDIA_SECRET
+    - VISION_S3_BUCKET
+    - VISION_SCAN_CIDRS
+    - S3_ENDPOINT
+    - S3_ACCESS_KEY
+    - S3_SECRET_KEY
+
+data:
+  database: pf_svc_vision
+
+test:
+  command: /contract-test

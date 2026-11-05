@@ -6,3 +6,6 @@ CREATE DATABASE pf_svc_notify OWNER platfarm;
 CREATE DATABASE pf_svc_users OWNER platfarm;
 CREATE DATABASE pf_svc_jobs OWNER platfarm;
 CREATE DATABASE pf_svc_grants OWNER platfarm;
+CREATE DATABASE pf_svc_vision OWNER platfarm;
+CREATE DATABASE pf_svc_gitpulse OWNER platfarm;
+CREATE DATABASE pf_svc_ai OWNER platfarm;

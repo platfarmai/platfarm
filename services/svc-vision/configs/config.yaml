@@ -1,0 +1,105 @@
+server:
+    host: 0.0.0.0
+    http_port: 8080
+    ws_port: 8081
+    grpc_port: 9090
+    mode: release
+database:
+    type: sqlite
+    sqlite:
+        path: ./data/surveillance.db
+    postgres:
+        host: localhost
+        port: 5432
+        user: surveillance
+        password: changeme
+        dbname: surveillance
+        sslmode: disable
+storage:
+    local:
+        enabled: true
+        root_path: ./recordings
+        segment_duration: 180
+        max_days: 7
+        max_storage_gb: 10
+        cleanup_interval: 3600
+    minio:
+        enabled: false
+        endpoint: localhost:9000
+        access_key: minioadmin
+        secret_key: minioadmin
+        bucket: surveillance
+        use_ssl: false
+        base_path: surveillance
+        max_days: 30
+        max_storage_gb: 0
+        only: false
+    webdav:
+        enabled: true
+        url: http://127.0.0.1:5244/dav
+        username: ""
+        password: ""
+        base_path: surveillance
+        max_days: 30
+        max_storage_gb: 150
+        only: false
+camera:
+    discovery_timeout: 10
+    stream_timeout: 30
+    reconnect_interval: 5
+    max_reconnect: 10
+    snapshot_enabled: false
+    snapshot_interval: 300
+    # 预览源码流：main=主码流（高清，默认）| sub=子码流（低分辨率，省带宽/CPU）
+    preview_stream: main
+    onvif_event:
+        enabled: true
+        poll_interval: 10
+        subscription_timeout: 60
+    motion_record:
+        duration: 60
+        pre_record: 0
+        cooldown: 60
+alert:
+    enabled: true
+    channels:
+        webhook:
+            enabled: true
+            url: ""
+            type: generic        # generic=通用JSON(钉钉/飞书/企微等) | gotify=Gotify(/message?token=xxx)
+        email:
+            enabled: false
+            smtp_host: smtp.example.com
+            smtp_port: 587
+            username: ""
+            password: ""
+            from: ""
+            to: []
+        sms:
+            enabled: false
+            provider: aliyun
+            access_key: ""
+            secret_key: ""
+            sign_name: ""
+            template_code: ""
+gb28181:
+    enabled: false
+    sip_id: "34020000002000000001"
+    sip_domain: "3402000000"
+    sip_password: "12345678"
+    sip_port: 5060
+    media_port: 30000
+    expires: 3600
+logging:
+    level: info
+    format: json
+    output: ./logs/surveillance.log
+    max_size: 100
+    max_backups: 30
+    max_age: 30
+    compress: true
+# 程序自更新
+update:
+    # 更新检查/下载使用的 HTTP 代理（留空 = 直连）；
+    # 直连 GitHub 不稳定/被干扰的网络请配置代理，如 http://192.168.1.5:7890
+    proxy: ""
