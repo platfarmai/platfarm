@@ -158,12 +158,9 @@
   background: var(--pf-surface-2);
 }
 
+/* 卡片表面交给 .pf-card（HTML 写 class="pf-card card"）；这里只管间距与标题 */
 .card {
-  border: 1px solid var(--pf-border);
-  border-radius: var(--pf-radius);
-  padding: 16px;
   margin-bottom: 16px;
-  background: var(--pf-surface-2);
 }
 
 .card:last-child {

@@ -76,6 +76,7 @@ onMounted(load);
 <template>
   <div>
     <pf-topbar title="PlatFarm 用户管理">
+      <pf-theme-toggle></pf-theme-toggle>
       <pf-button v-if="isAdmin" variant="default" size="sm" @click="load">刷新</pf-button>
       <pf-button v-if="isAdmin" variant="primary" size="sm" @click="creating = true">新建用户</pf-button>
     </pf-topbar>
@@ -84,7 +85,7 @@ onMounted(load);
       <pf-alert v-if="err" tone="danger">{{ err }}</pf-alert>
       <pf-alert v-if="ok" tone="ok">{{ ok }}</pf-alert>
 
-      <div v-if="newCred" class="cred-once">
+      <div v-if="newCred" class="my-4 flex flex-col gap-3">
         <pf-secret label="用户名">{{ newCred.username || ('#' + newCred.id) }}</pf-secret>
         <pf-secret label="初始密码（只显示一次，请立即复制）">{{ newCred.password }}</pf-secret>
         <div class="pf-toolbar">
@@ -92,7 +93,7 @@ onMounted(load);
         </div>
       </div>
 
-      <div v-if="creating" class="pf-card editor">
+      <div v-if="creating" class="pf-card my-4">
         <form class="pf-form" @submit.prevent="create">
           <div class="pf-field">
             <label for="u-username">用户名</label>
@@ -112,19 +113,21 @@ onMounted(load);
         </form>
       </div>
 
-      <div v-if="isAdmin" class="pf-toolbar">
-        <div class="pf-field search-field">
-          <input v-model="q" @input="onSearch" placeholder="搜索用户名…" />
+      <div v-if="isAdmin" class="pf-card flex flex-col gap-3">
+        <div class="pf-toolbar">
+          <div class="pf-field w-60">
+            <input v-model="q" @input="onSearch" placeholder="搜索用户名…" />
+          </div>
+          <pf-pager
+            class="ml-auto"
+            :total="total"
+            :limit="limit"
+            :offset="offset"
+            @pf-change="e => { offset = e.detail.offset; load(); }"
+          ></pf-pager>
         </div>
-        <pf-pager
-          :total="total"
-          :limit="limit"
-          :offset="offset"
-          @pf-change="e => { offset = e.detail.offset; load(); }"
-        ></pf-pager>
-      </div>
 
-      <table v-if="isAdmin" class="pf-table">
+        <table class="pf-table">
         <thead>
           <tr>
             <th>ID</th>
@@ -134,39 +137,40 @@ onMounted(load);
             <th>操作</th>
           </tr>
         </thead>
-        <tbody>
-          <tr v-for="u in users" :key="u.id">
-            <td>{{ u.id }}</td>
-            <td>{{ u.username }}</td>
-            <td>
-              <div class="pf-field cell-field">
-                <select :value="u.role" @change="e => setRole(u, e.target.value)">
-                  <option value="user">user</option>
-                  <option value="admin">admin</option>
-                </select>
-              </div>
-            </td>
-            <td>
-              <span class="pf-dot" :data-tone="u.status === 1 ? 'ok' : 'danger'">
-                {{ u.status === 1 ? '启用' : '停用' }}
-              </span>
-            </td>
-            <td class="ops">
-              <pf-button v-if="u.status === 1" variant="default" size="sm" @click="setStatus(u, 0)">停用</pf-button>
-              <pf-button v-else variant="default" size="sm" @click="setStatus(u, 1)">启用</pf-button>
-              <pf-button variant="danger" size="sm" @click="reset(u)">重置密码</pf-button>
-            </td>
-          </tr>
-          <tr v-if="!users.length">
-            <td colspan="5"><span class="pf-muted">（无匹配用户）</span></td>
-          </tr>
-        </tbody>
-      </table>
+          <tbody>
+            <tr v-for="u in users" :key="u.id">
+              <td>{{ u.id }}</td>
+              <td>{{ u.username }}</td>
+              <td>
+                <div class="pf-field">
+                  <select :value="u.role" @change="e => setRole(u, e.target.value)">
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </div>
+              </td>
+              <td>
+                <span class="pf-dot" :data-tone="u.status === 1 ? 'ok' : 'danger'">
+                  {{ u.status === 1 ? '启用' : '停用' }}
+                </span>
+              </td>
+              <td class="whitespace-nowrap space-x-1.5">
+                <pf-button v-if="u.status === 1" variant="default" size="sm" @click="setStatus(u, 0)">停用</pf-button>
+                <pf-button v-else variant="default" size="sm" @click="setStatus(u, 1)">启用</pf-button>
+                <pf-button variant="danger" size="sm" @click="reset(u)">重置密码</pf-button>
+              </td>
+            </tr>
+            <tr v-if="!users.length">
+              <td colspan="5"><span class="pf-muted">（无匹配用户）</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p v-else class="pf-muted">你不是平台管理员，仅可修改自己的密码。</p>
 
-      <section class="self">
-        <h3>修改我的密码</h3>
-        <form class="pf-form self-form" @submit.prevent="changeOwn">
+      <section class="pf-card mt-6">
+        <h3 class="m-0 mb-3 text-[16px] font-semibold">修改我的密码</h3>
+        <form class="pf-form max-w-80" @submit.prevent="changeOwn">
           <div class="pf-field">
             <label for="pw-old">旧密码</label>
             <input id="pw-old" v-model="pw.old" type="password" placeholder="旧密码" />
@@ -185,24 +189,5 @@ onMounted(load);
   </div>
 </template>
 
-<style>
-.cred-once { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
-.editor { margin: 16px 0; padding: 16px; }
-.search-field { width: 240px; margin: 0; }
-.search-field input { margin: 0; }
-.cell-field { margin: 0; }
-.ops { white-space: nowrap; }
-.ops pf-button { margin-right: 6px; }
-.self {
-  margin-top: 28px;
-  border-top: 1px solid var(--pf-border);
-  padding-top: 16px;
-}
-.self h3 {
-  margin: 0 0 12px;
-  font-size: var(--pf-fs-16);
-  font-weight: 600;
-  color: var(--pf-text);
-}
-.self-form { max-width: 320px; }
-</style>
+<!-- 布局一律用 pf-ui 组件类 + tw 工具类，不再写局部 <style> -->
+

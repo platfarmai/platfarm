@@ -8,6 +8,8 @@
 # 构建产物（勿把 Release 二进制提交进仓库根目录）
 tools/pctl/pctl
 tools/pctl/pctl.exe
+tools/tailwindcss
+tools/tailwindcss.exe
 /pctl
 /pctl.exe
 /pctl_*

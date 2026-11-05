@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
   <title>Platfarm 账号中心</title>
   <link rel="stylesheet" href="/platform/ui/v1/pf-ui.css">
+  <link rel="stylesheet" href="/platform/ui/v1/tw.css">
   <link rel="stylesheet" href="./style.css">
   <script src="/platform/ui/v1/pf-crypto-core.js"></script>
   <script src="/platform/ui/v1/pf-crypto.js"></script>
@@ -21,9 +21,12 @@
           <p class="pf-muted sub">登录、注册与账号安全自助</p>
         </div>
       </div>
-      <div class="session" id="sessionBar" hidden>
-        <span class="session-label" id="sessionLabel"></span>
-        <pf-button variant="ghost" size="sm" id="btnLogout">退出登录</pf-button>
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <div class="session" id="sessionBar" hidden>
+          <span class="session-label" id="sessionLabel"></span>
+          <pf-button variant="ghost" size="sm" id="btnLogout">退出登录</pf-button>
+        </div>
+        <pf-theme-toggle></pf-theme-toggle>
       </div>
     </header>
 
@@ -126,13 +129,13 @@
           <pf-button variant="primary" id="btnGateLogin">前往登录</pf-button>
         </div>
         <div id="securityBody" hidden>
-          <article class="card" id="identityCard">
+          <article class="pf-card card" id="identityCard">
             <h3>身份信息</h3>
             <dl class="pf-kv" id="identityMeta"></dl>
             <pf-button variant="ghost" size="sm" id="btnRefreshMe">刷新</pf-button>
           </article>
 
-          <article class="card">
+          <article class="pf-card card">
             <h3>邮箱验证</h3>
             <p class="pf-muted hint">向账号绑定邮箱发送验证码，确认归属后标记为已验证。</p>
             <div class="row">
@@ -149,7 +152,7 @@
             <pf-alert id="verifyMsg" hidden role="status" aria-live="polite"></pf-alert>
           </article>
 
-          <article class="card">
+          <article class="pf-card card">
             <h3>修改密码</h3>
             <p class="pf-muted hint">成功后当前会话将失效，需重新登录。</p>
             <form id="formChangePassword" class="pf-form" novalidate>
@@ -167,7 +170,7 @@
             </form>
           </article>
 
-          <article class="card">
+          <article class="pf-card card">
             <h3>两步验证（TOTP）</h3>
             <p class="pf-muted hint" id="totpStatusHint">加载中…</p>
             <div id="totpSetupBlock">

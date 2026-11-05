@@ -1,0 +1,44 @@
+/* Platfarm UI — Tailwind 工具类层（仅 utilities，无 preflight，不进 CDN）
+ *
+ * 构建（仓库根目录执行；二进制从 tailwindcss releases 下载，已 gitignore）：
+ *   ./tools/tailwindcss.exe -i platform/ui/src/tw.css -o platform/ui/v1/tw.css --minify
+ *
+ * 产物 platform/ui/v1/tw.css 提交进 git，由 console 容器与 pf-ui.css 一起静态分发。
+ * 颜色/圆角一律映射 pf-ui 设计令牌（--pf-*），禁用 Tailwind 默认调色板，
+ * 避免出现第二套取值。页面先引 pf-ui.css 再引 tw.css。
+ *
+ * 注意：utilities 在 @layer 里，级联上永远输给 pf-ui.css 的未分层规则。
+ * 所以工具类只用来排版（flex/gap/margin/width 等）没有 pf-ui 规则竞争的地方；
+ * 要改 pf 组件自身样式（如 .pf-field input 的宽度），把类加在外层容器上，
+ * 不要试图用工具类硬压组件规则。
+ */
+@layer theme, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme {
+  /* 禁用默认调色板，只允许 pf 令牌色 */
+  --color-*: initial;
+  --color-bg: var(--pf-bg);
+  --color-surface: var(--pf-surface);
+  --color-surface-2: var(--pf-surface-2);
+  --color-border: var(--pf-border);
+  --color-text: var(--pf-text);
+  --color-muted: var(--pf-text-muted);
+  --color-accent: var(--pf-accent);
+  --color-accent-fg: var(--pf-accent-fg);
+  --color-accent-weak: var(--pf-accent-weak);
+  --color-success: var(--pf-success);
+  --color-danger: var(--pf-danger);
+  --color-warning: var(--pf-warning);
+  --color-info: var(--pf-info);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  /* 圆角对齐 pf 令牌（rounded = 8px，rounded-lg = 12px） */
+  --radius-*: initial;
+  --radius-DEFAULT: var(--pf-radius);
+  --radius-md: var(--pf-radius);
+  --radius-lg: var(--pf-radius-lg);
+  --radius-full: 999px;
+}

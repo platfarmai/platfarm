@@ -9,8 +9,7 @@
 </head>
 <body class="pf-body">
 <pf-topbar title="Platfarm UI Kit v1">
-  <span class="pf-muted" id="themeLabel">浅色主题</span>
-  <pf-button id="themeToggle" variant="default" size="sm">切换深色</pf-button>
+  <pf-theme-toggle></pf-theme-toggle>
 </pf-topbar>
 
 <div class="pf-container">
@@ -284,21 +283,6 @@ document.addEventListener("DOMContentLoaded", function () {
     card.appendChild(meta);
     host.appendChild(card);
   });
-
-  var root = document.documentElement;
-  var toggle = document.getElementById("themeToggle");
-  var themeLabel = document.getElementById("themeLabel");
-  function syncThemeUi() {
-    var dark = root.getAttribute("data-pf-theme") === "dark";
-    themeLabel.textContent = dark ? "深色主题" : "浅色主题";
-    toggle.textContent = dark ? "切换浅色" : "切换深色";
-  }
-  toggle.addEventListener("click", function () {
-    if (root.getAttribute("data-pf-theme") === "dark") root.removeAttribute("data-pf-theme");
-    else root.setAttribute("data-pf-theme", "dark");
-    syncThemeUi();
-  });
-  syncThemeUi();
 
   document.getElementById("demoPager").addEventListener("pf-change", function (e) {
     document.getElementById("pagerNote").textContent = "分页事件：offset=" + e.detail.offset;

@@ -2,62 +2,71 @@
 
 :root {
   color-scheme: light;
-  --pf-accent: #2563eb;
-  --pf-accent-weak: #eff4ff;
-  --pf-success: #067647;
-  --pf-success-weak: #ecfdf3;
-  --pf-danger: #b42318;
-  --pf-danger-weak: #fef3f2;
-  --pf-warning: #b54708;
-  --pf-warning-weak: #fffaeb;
-  --pf-info: #175cd3;
-  --pf-info-weak: #eff8ff;
-  --pf-bg: #f4f6f8;
+  /* shadcn zinc：中性底 + 近黑强调色；语义色（success/danger/…）单独给弱底变体 */
+  --pf-accent: #18181b;
+  --pf-accent-fg: #fafafa;
+  --pf-accent-weak: #f4f4f5;
+  --pf-success: #166534;
+  --pf-success-weak: #f0fdf4;
+  --pf-danger: #b91c1c;
+  --pf-danger-weak: #fef2f2;
+  --pf-warning: #a16207;
+  --pf-warning-weak: #fefce8;
+  --pf-info: #1d4ed8;
+  --pf-info-weak: #eff6ff;
+  --pf-bg: #fafafa;
   --pf-surface: #ffffff;
-  --pf-surface-2: #f0f3f6;
-  --pf-border: #d8e0e8;
-  --pf-text: #1a2332;
-  --pf-text-muted: #5b6b7c;
-  --pf-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
-  --pf-font-mono: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  --pf-surface-2: #f4f4f5;
+  --pf-sidebar: #fafafa;
+  --pf-border: #e4e4e7;
+  --pf-text: #09090b;
+  --pf-text-muted: #71717a;
+  --pf-font: Inter, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+  --pf-font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
   --pf-fs-12: 12px;
   --pf-fs-13: 13px;
   --pf-fs-14: 14px;
   --pf-fs-16: 16px;
   --pf-fs-20: 20px;
-  --pf-radius: 6px;
-  --pf-radius-lg: 10px;
-  --pf-shadow-1: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
-  --pf-shadow-2: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.08);
-  --pf-ring: 0 0 0 3px color-mix(in srgb, var(--pf-accent) 28%, transparent);
-  --pf-overlay: rgba(16, 24, 40, 0.45);
+  --pf-radius: 8px;
+  --pf-radius-lg: 12px;
+  --pf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --pf-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --pf-ring: 0 0 0 2px var(--pf-bg), 0 0 0 4px #a1a1aa;
+  --pf-overlay: rgba(9, 9, 11, 0.45);
 }
 
 [data-pf-theme="dark"] {
   color-scheme: dark;
-  --pf-accent: #58a6ff;
-  --pf-accent-weak: rgba(56, 139, 253, 0.15);
-  --pf-success: #3fb950;
-  --pf-success-weak: rgba(63, 185, 80, 0.15);
-  --pf-danger: #f85149;
-  --pf-danger-weak: rgba(248, 81, 73, 0.15);
-  --pf-warning: #d29922;
-  --pf-warning-weak: rgba(210, 153, 34, 0.15);
-  --pf-info: #58a6ff;
-  --pf-info-weak: rgba(56, 139, 253, 0.15);
-  --pf-bg: #0d1117;
-  --pf-surface: #161b22;
-  --pf-surface-2: #0d1117;
-  --pf-border: #30363d;
-  --pf-text: #c9d1d9;
-  --pf-text-muted: #8b949e;
-  --pf-shadow-1: 0 0 0 1px rgba(240, 246, 252, 0.04);
-  --pf-shadow-2: 0 8px 24px rgba(1, 4, 9, 0.55);
-  --pf-ring: 0 0 0 3px rgba(56, 139, 253, 0.35);
-  --pf-overlay: rgba(1, 4, 9, 0.72);
+  --pf-accent: #fafafa;
+  --pf-accent-fg: #18181b;
+  --pf-accent-weak: #27272a;
+  --pf-success: #4ade80;
+  --pf-success-weak: rgba(74, 222, 128, 0.12);
+  --pf-danger: #f87171;
+  --pf-danger-weak: rgba(248, 113, 113, 0.12);
+  --pf-warning: #facc15;
+  --pf-warning-weak: rgba(250, 204, 21, 0.12);
+  --pf-info: #93c5fd;
+  --pf-info-weak: rgba(147, 197, 253, 0.12);
+  --pf-bg: #09090b;
+  --pf-surface: #09090b;
+  --pf-surface-2: #18181b;
+  --pf-sidebar: #09090b;
+  --pf-border: #27272a;
+  --pf-text: #fafafa;
+  --pf-text-muted: #a1a1aa;
+  --pf-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --pf-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --pf-ring: 0 0 0 2px var(--pf-bg), 0 0 0 4px #d4d4d8;
+  --pf-overlay: rgba(0, 0, 0, 0.7);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+
+/* 组件样式普遍显式给 display（pf-button 等），会压过 UA 的 [hidden]{display:none}。
+   统一兜底：带 hidden 属性的元素必须不可见，JS 用添加/移除属性控制显隐。 */
+[hidden] { display: none !important; }
 
 .pf-body,
 body.pf-body {
@@ -75,6 +84,75 @@ body.pf-body {
   width: min(960px, calc(100% - 32px));
   margin: 0 auto;
   padding: 24px 0 48px;
+}
+
+/* shadcn-admin 壳：左栏 + 内容。静态页、Vue、内联 HTML 都用这些 class。 */
+.pf-shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--pf-bg);
+}
+.pf-side {
+  width: 240px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 12px;
+  background: var(--pf-sidebar, var(--pf-bg));
+  border-right: 1px solid var(--pf-border);
+}
+.pf-brand {
+  padding: 4px 8px 16px;
+  font-size: var(--pf-fs-14);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.pf-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pf-nav a,
+.pf-nav pf-button {
+  display: flex;
+}
+.pf-nav pf-button button,
+.pf-nav a {
+  width: 100%;
+  justify-content: flex-start;
+  border-radius: var(--pf-radius);
+  text-decoration: none;
+  color: var(--pf-text-muted);
+  padding: 8px 10px;
+}
+.pf-nav pf-button[variant="primary"] button,
+.pf-nav a[aria-current="page"] {
+  background: var(--pf-accent-weak);
+  color: var(--pf-text);
+  border-color: transparent;
+}
+.pf-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pf-main-pad {
+  padding: 24px;
+}
+/* 卡片：全站唯一定义（勿在下方 demo helpers 再写一份） */
+.pf-card {
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-lg);
+  box-shadow: var(--pf-shadow-1);
+  padding: 20px;
+}
+@media (max-width: 720px) {
+  .pf-shell { flex-direction: column; }
+  .pf-side { width: auto; border-right: 0; border-bottom: 1px solid var(--pf-border); }
+  .pf-nav { flex-direction: row; flex-wrap: wrap; }
 }
 
 :where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible,
@@ -275,9 +353,8 @@ pf-button[size="sm"] button { padding: 4px 10px; font-size: var(--pf-fs-12); }
 pf-button[variant="primary"] button {
   background: var(--pf-accent);
   border-color: var(--pf-accent);
-  color: #fff;
+  color: var(--pf-accent-fg);
 }
-[data-pf-theme="dark"] pf-button[variant="primary"] button { color: #0d1117; }
 pf-button[variant="primary"] button:hover:not(:disabled) {
   filter: brightness(1.05);
 }
@@ -649,6 +726,33 @@ pf-spinner .pf-spin {
   animation: pf-spin 0.7s linear infinite;
 }
 
+/* theme toggle */
+pf-theme-toggle {
+  display: inline-flex;
+  vertical-align: middle;
+}
+pf-theme-toggle .pf-theme-btn {
+  font: inherit;
+  font-size: var(--pf-fs-12);
+  line-height: 1.2;
+  padding: 4px 10px;
+  border-radius: var(--pf-radius);
+  border: 1px solid var(--pf-border);
+  background: transparent;
+  color: var(--pf-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+pf-theme-toggle .pf-theme-btn:hover {
+  background: var(--pf-surface-2);
+  color: var(--pf-text);
+}
+pf-theme-toggle .pf-theme-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--pf-ring);
+}
+
 /* topbar */
 pf-topbar {
   display: block;
@@ -677,14 +781,7 @@ pf-topbar .pf-topbar-actions {
   justify-content: flex-end;
 }
 
-/* demo helpers */
-.pf-card {
-  background: var(--pf-surface);
-  border: 1px solid var(--pf-border);
-  border-radius: var(--pf-radius-lg);
-  box-shadow: var(--pf-shadow-1);
-  padding: 16px;
-}
+/* demo helpers（.pf-card 定义在上方壳层区，这里不再重复） */
 .pf-swatch-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

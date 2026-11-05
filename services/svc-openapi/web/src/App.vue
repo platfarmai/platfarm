@@ -78,14 +78,15 @@ onMounted(load);
 <template>
   <div>
     <pf-topbar title="PlatFarm 开放平台">
+      <pf-theme-toggle></pf-theme-toggle>
       <pf-button variant="default" size="sm" @click="load">刷新</pf-button>
       <pf-button variant="primary" size="sm" @click="creating = true">新建应用</pf-button>
     </pf-topbar>
 
-    <div class="pf-container page">
+    <div class="pf-container">
       <pf-alert v-if="err" tone="danger">{{ err }}</pf-alert>
 
-      <div v-if="newSecret" class="cred-once">
+      <div v-if="newSecret" class="my-4 flex flex-col gap-3">
         <pf-secret label="APP_KEY">{{ newSecret.appKey }}</pf-secret>
         <pf-secret label="APP_SECRET（只显示一次，请立即复制）">{{ newSecret.appSecret }}</pf-secret>
         <div class="pf-toolbar">
@@ -93,7 +94,7 @@ onMounted(load);
         </div>
       </div>
 
-      <div v-if="creating" class="pf-card editor">
+      <div v-if="creating" class="pf-card my-4">
         <form class="pf-form" @submit.prevent="create">
           <div class="pf-field">
             <label for="o-appkey">appKey（唯一）</label>
@@ -107,8 +108,8 @@ onMounted(load);
             <label for="o-rate">每分钟限流</label>
             <input id="o-rate" v-model.number="form.ratePerMin" type="number" placeholder="每分钟限流" />
           </div>
-          <div class="scopes">
-            <label v-for="s in scopes" :key="s.name" class="scope-option">
+          <div class="my-2 flex flex-wrap gap-3">
+            <label v-for="s in scopes" :key="s.name" class="inline-flex items-center gap-1.5 text-[13px]">
               <input type="checkbox" :value="s.name" v-model="form.scopes" />
               <span>{{ s.name }}</span>
               <span class="pf-muted">{{ s.desc }}</span>
@@ -121,20 +122,21 @@ onMounted(load);
         </form>
       </div>
 
-      <div class="pf-toolbar">
-        <span class="pf-muted">用量窗口</span>
-        <div class="pf-field window-field">
-          <select v-model="usageWindow" @change="loadUsage">
-            <option>1h</option>
-            <option>24h</option>
-            <option>168h</option>
-          </select>
+      <div class="pf-card flex flex-col gap-3">
+        <div class="pf-toolbar">
+          <span class="pf-muted">用量窗口</span>
+          <div class="pf-field w-24">
+            <select v-model="usageWindow" @change="loadUsage">
+              <option>1h</option>
+              <option>24h</option>
+              <option>168h</option>
+            </select>
+          </div>
+          <span v-if="!usage.enabled" class="pf-muted">（用量未启用：需 observability profile + LOKI_URL）</span>
+          <span v-else-if="usage.error" class="pf-muted">Loki: {{ usage.error }}</span>
         </div>
-        <span v-if="!usage.enabled" class="pf-muted">（用量未启用：需 observability profile + LOKI_URL）</span>
-        <span v-else-if="usage.error" class="pf-muted">Loki: {{ usage.error }}</span>
-      </div>
 
-      <table class="pf-table">
+        <table class="pf-table">
         <thead>
           <tr>
             <th>appKey</th>
@@ -146,54 +148,56 @@ onMounted(load);
             <th>操作</th>
           </tr>
         </thead>
-        <tbody>
-          <tr v-for="a in apps" :key="a.appKey">
-            <td><span class="pf-code">{{ a.appKey }}</span></td>
-            <td>{{ a.name }}</td>
-            <td class="scopes-cell">
-              <label
-                v-for="s in scopes"
-                :key="s.name"
-                class="chip"
-                :data-on="(a.scopes || []).includes(s.name) ? '1' : null"
-              >
-                <input
-                  type="checkbox"
-                  :checked="(a.scopes || []).includes(s.name)"
-                  @change="toggleScope(a, s.name)"
-                />
-                {{ s.name }}
-              </label>
-            </td>
-            <td>
-              <div class="pf-field rate-field">
-                <input
-                  class="rate"
-                  :value="a.ratePerMin"
-                  @change="e => setRate(a, e.target.value)"
-                  type="number"
-                />
-              </div>
-            </td>
-            <td>{{ usage.enabled ? usageFor(a.appKey) : '—' }}</td>
-            <td>
-              <span class="pf-dot" :data-tone="a.status === 1 ? 'ok' : 'danger'">
-                {{ a.status === 1 ? '启用' : '停用' }}
-              </span>
-            </td>
-            <td class="ops">
-              <pf-button v-if="a.status === 1" variant="default" size="sm" @click="setStatus(a, 0)">停用</pf-button>
-              <pf-button v-else variant="default" size="sm" @click="setStatus(a, 1)">启用</pf-button>
-              <pf-button variant="danger" size="sm" @click="rotate(a)">换 secret</pf-button>
-            </td>
-          </tr>
-          <tr v-if="!apps.length">
-            <td colspan="7"><span class="pf-muted">（暂无应用）</span></td>
-          </tr>
-        </tbody>
-      </table>
+          <tbody>
+            <tr v-for="a in apps" :key="a.appKey">
+              <td><span class="pf-code">{{ a.appKey }}</span></td>
+              <td>{{ a.name }}</td>
+              <td>
+                <div class="flex flex-col gap-0.5">
+                  <label
+                    v-for="s in scopes"
+                    :key="s.name"
+                    class="chip text-[12px] text-muted"
+                    :data-on="(a.scopes || []).includes(s.name) ? '1' : null"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="(a.scopes || []).includes(s.name)"
+                      @change="toggleScope(a, s.name)"
+                    />
+                    {{ s.name }}
+                  </label>
+                </div>
+              </td>
+              <td>
+                <div class="pf-field w-20">
+                  <input
+                    :value="a.ratePerMin"
+                    @change="e => setRate(a, e.target.value)"
+                    type="number"
+                  />
+                </div>
+              </td>
+              <td>{{ usage.enabled ? usageFor(a.appKey) : '—' }}</td>
+              <td>
+                <span class="pf-dot" :data-tone="a.status === 1 ? 'ok' : 'danger'">
+                  {{ a.status === 1 ? '启用' : '停用' }}
+                </span>
+              </td>
+              <td class="whitespace-nowrap space-x-1.5">
+                <pf-button v-if="a.status === 1" variant="default" size="sm" @click="setStatus(a, 0)">停用</pf-button>
+                <pf-button v-else variant="default" size="sm" @click="setStatus(a, 1)">启用</pf-button>
+                <pf-button variant="danger" size="sm" @click="rotate(a)">换 secret</pf-button>
+              </td>
+            </tr>
+            <tr v-if="!apps.length">
+              <td colspan="7"><span class="pf-muted">（暂无应用）</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-      <p class="pf-muted foot">
+      <p class="pf-muted mt-4">
         后台管理长期凭据与规则；合作方自行调
         <span class="pf-code">POST /oauth/token</span>
         换 access token。
@@ -203,28 +207,6 @@ onMounted(load);
 </template>
 
 <style>
-.page { width: min(1000px, calc(100% - 32px)); }
-.cred-once { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
-.editor { margin: 16px 0; padding: 16px; }
-.scopes { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
-.scope-option {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--pf-fs-13);
-  color: var(--pf-text);
-}
-.window-field { margin: 0; }
-.window-field select { margin: 0; }
-.scopes-cell { display: flex; flex-direction: column; gap: 2px; }
-.chip {
-  font-size: var(--pf-fs-12);
-  color: var(--pf-text-muted);
-}
+/* 仅保留无法用工具类表达的状态选择器；其余布局用 pf-ui 组件类 + tw 工具类 */
 .chip[data-on="1"] { color: var(--pf-success); }
-.rate-field { margin: 0; }
-.rate-field .rate { width: 70px; margin: 0; }
-.ops { white-space: nowrap; }
-.ops pf-button { margin-right: 6px; }
-.foot { margin-top: 16px; }
 </style>

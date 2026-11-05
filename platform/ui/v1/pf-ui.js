@@ -606,6 +606,79 @@
     }
   }
 
+  /* ---------- theme: light / dark / auto（跟随系统） ----------
+     偏好存 localStorage("pf-theme")，同源页面（控制台与各服务后台）共享；
+     auto 模式监听系统深浅变化，storage 事件做跨标签页同步。 */
+  var THEME_KEY = "pf-theme";
+  var themeMq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var themeToggleSeq = 0;
+
+  function pfThemeMode() {
+    var v = null;
+    try { v = localStorage.getItem(THEME_KEY); } catch (e) { /* 隐私模式等 */ }
+    return v === "light" || v === "dark" ? v : "auto";
+  }
+
+  function applyTheme() {
+    var mode = pfThemeMode();
+    var dark = mode === "dark" || (mode === "auto" && !!(themeMq && themeMq.matches));
+    if (dark) document.documentElement.setAttribute("data-pf-theme", "dark");
+    else document.documentElement.removeAttribute("data-pf-theme");
+    document.dispatchEvent(new CustomEvent("pf-theme-change", { detail: { mode: mode, dark: dark } }));
+  }
+
+  function pfThemeSet(mode) {
+    try {
+      if (mode === "light" || mode === "dark") localStorage.setItem(THEME_KEY, mode);
+      else localStorage.removeItem(THEME_KEY); // auto
+    } catch (e) { /* ignore */ }
+    applyTheme();
+  }
+
+  if (themeMq) {
+    var onMq = function () { if (pfThemeMode() === "auto") applyTheme(); };
+    if (themeMq.addEventListener) themeMq.addEventListener("change", onMq);
+    else if (themeMq.addListener) themeMq.addListener(onMq); // 旧 Safari
+  }
+  window.addEventListener("storage", function (e) {
+    if (e.key === THEME_KEY) applyTheme();
+  });
+  applyTheme();
+
+  /* ---------- pf-theme-toggle ---------- */
+  var THEME_LABELS = { auto: "跟随系统", light: "亮色", dark: "暗色" };
+  var THEME_ORDER = ["auto", "light", "dark"];
+
+  class PfThemeToggle extends HTMLElement {
+    connectedCallback() {
+      if (!this._btn) {
+        this._btn = document.createElement("button");
+        this._btn.type = "button";
+        this._btn.className = "pf-theme-btn";
+        this.appendChild(this._btn);
+        bindOnce(this._btn, "click", function () {
+          var next = THEME_ORDER[(THEME_ORDER.indexOf(pfThemeMode()) + 1) % THEME_ORDER.length];
+          pfThemeSet(next);
+        }, "cycle");
+      }
+      if (!this._syncKey) this._syncKey = "themeSync" + (++themeToggleSeq);
+      bindOnce(document, "pf-theme-change", this._render.bind(this), this._syncKey);
+      this._render();
+    }
+
+    disconnectedCallback() {
+      if (this._syncKey) unbind(document, "pf-theme-change", this._syncKey);
+    }
+
+    _render() {
+      if (!this._btn) return;
+      var mode = pfThemeMode();
+      this._btn.textContent = "主题：" + THEME_LABELS[mode];
+      this._btn.title = "切换主题（跟随系统 → 亮色 → 暗色）";
+      this._btn.setAttribute("aria-label", "主题：" + THEME_LABELS[mode]);
+    }
+  }
+
   /* ---------- toast ---------- */
   function toastHost() {
     var host = document.querySelector(".pf-toast-host");
@@ -693,8 +766,10 @@
   define("pf-empty", PfEmpty);
   define("pf-spinner", PfSpinner);
   define("pf-topbar", PfTopbar);
+  define("pf-theme-toggle", PfThemeToggle);
 
   window.pfToast = pfToast;
   window.pfConfirm = pfConfirm;
+  window.pfTheme = { get: pfThemeMode, set: pfThemeSet };
 })();
 
