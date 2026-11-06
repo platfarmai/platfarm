@@ -16,7 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	_ "platfarm/svc-pay/channel/wxpay" // 注册 wxpay_partner
+	_ "platfarm/svc-pay/channel/alipay" // 注册 alipay_zft
+	_ "platfarm/svc-pay/channel/wxpay"  // 注册 wxpay_partner、wxpay_ecommerce
 )
 
 const mount = "/api/pay"
@@ -48,6 +49,7 @@ func main() {
 	go reconcileWorker(wctx)
 	go applymentWorker(wctx)
 	go divisionWorker(wctx)
+	go withdrawalWorker(wctx)
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -82,6 +84,10 @@ func main() {
 	v1.POST("/refunds", handleCreateRefund)
 	v1.POST("/divisions", handleCreateDivision)
 	v1.GET("/divisions/:mchOrderNo", handleQueryDivision)
+	v1.POST("/orders/:mchOrderNo/settle", handleSettleOrder)
+	v1.POST("/withdrawals", handleCreateWithdrawal)
+	v1.GET("/withdrawals/:mchWithdrawNo", handleQueryWithdrawal)
+	v1.GET("/balance", handleBalance)
 
 	// 内部回调：svc-jobs cron（服务 token）触发每日对账。
 	r.POST(mount+"/internal/recon/daily", handleDailyRecon)
@@ -129,6 +135,7 @@ func registerAdminRoutes(admin *gin.RouterGroup) {
 	admin.GET("/orders", handleListOrders)
 	registerApplymentRoutes(admin)
 	registerDivisionReconRoutes(admin)
+	registerControlledRoutes(admin)
 }
 
 // dialRedis 防重放随机串的存储。PF_REDIS_URL 为空时返回 nil，随机串校验降级为跳过。

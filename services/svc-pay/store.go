@@ -72,6 +72,7 @@ type Order struct {
 	DivisionState  string     `json:"divisionState"` // none|pending|done（M3）
 	RebateRateBps  int        `json:"rebateRateBps"` // 服务商返佣费率快照（M3）
 	RebateAmount   int64      `json:"rebateAmount"`
+	SettleState    string     `json:"settleState"` // none|pending|done（M4 归集结算确认）
 }
 
 // Refund 退款订单。
@@ -132,7 +133,7 @@ const orderCols = `pay_order_id, mch_no, isv_no, app_id, mch_type, mch_order_no,
 	amount, currency, fee_rate_bps, fee_amount, state, refund_state, refund_amount, subject, body,
 	client_ip, channel_extra, channel_user, channel_order_no, err_code, err_msg, notify_url, return_url,
 	notify_state, ext_param, expired_at, success_at, tenant_id, created_at,
-	division_state, rebate_rate_bps, rebate_amount`
+	division_state, rebate_rate_bps, rebate_amount, settle_state`
 
 func scanOrder(row pgx.Row) (Order, error) {
 	var o Order
@@ -141,7 +142,7 @@ func scanOrder(row pgx.Row) (Order, error) {
 		&o.RefundState, &o.RefundAmount, &o.Subject, &o.Body, &o.ClientIP, &o.ChannelExtra,
 		&o.ChannelUser, &o.ChannelOrderNo, &o.ErrCode, &o.ErrMsg, &o.NotifyURL, &o.ReturnURL,
 		&o.NotifyState, &o.ExtParam, &o.ExpiredAt, &o.SuccessAt, &o.TenantID, &o.CreatedAt,
-		&o.DivisionState, &o.RebateRateBps, &o.RebateAmount)
+		&o.DivisionState, &o.RebateRateBps, &o.RebateAmount, &o.SettleState)
 	return o, err
 }
 

@@ -45,6 +45,7 @@ func TestMain(m *testing.M) {
 		db = pool
 	}
 	registerStubChannel()
+	registerControlledStub()
 	os.Exit(m.Run())
 }
 
@@ -180,6 +181,57 @@ var registerStubOnce sync.Once
 func registerStubChannel() {
 	registerStubOnce.Do(func() { channel.Register(stub) })
 }
+
+// controlledStub 归集模式桩。余额由用例设定；提现/结算确认的结果可按用例切换。
+type controlledStub struct {
+	stubChannel
+	mu            sync.Mutex
+	available     int64
+	pending       int64
+	balanceErr    error
+	settleRes     channel.Result
+	withdrawRes   channel.Result
+	queryRes      channel.Result
+	settleCalls   int
+	withdrawCalls int
+}
+
+func (c *controlledStub) IfCode() string   { return "stub_controlled" }
+func (c *controlledStub) FundMode() string { return channel.FundControlled }
+func (c *controlledStub) Ways() []string   { return []string{"STUB_PAY"} }
+
+func (c *controlledStub) SettleConfirm(_ context.Context, _ channel.SettleIn) (channel.Result, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.settleCalls++
+	return c.settleRes, nil
+}
+func (c *controlledStub) Withdraw(_ context.Context, _ channel.WithdrawIn) (channel.Result, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.withdrawCalls++
+	return c.withdrawRes, nil
+}
+func (c *controlledStub) QueryWithdraw(_ context.Context, _ channel.WithdrawRef) (channel.Result, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.queryRes, nil
+}
+func (c *controlledStub) Balance(context.Context, map[string]string, map[string]string) (channel.Balance, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return channel.Balance{Available: c.available, Pending: c.pending}, c.balanceErr
+}
+
+var ctrlStub = &controlledStub{}
+
+var registerCtrlOnce sync.Once
+
+func registerControlledStub() {
+	registerCtrlOnce.Do(func() { channel.Register(ctrlStub) })
+}
+
+var _ channel.ControlledChannel = (*controlledStub)(nil)
 
 func (s *stubChannel) IfCode() string   { return "stub_channel" }
 func (s *stubChannel) FundMode() string { return channel.FundDirect }

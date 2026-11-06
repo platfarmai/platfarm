@@ -2,9 +2,10 @@
 # M1：商户/应用/服务商配置 + 微信普通服务商（直清）JSAPI/Native 支付、退款、下游通知。
 # M2：子商户进件（归一资料 + 图片经 svc-file）+ 审核流（reviewer 角色来自 svc-grants）+ 微信 applyment4sub。
 # M3：分账（接收方绑定 / 比例封顶 / 快照）+ 台账（手续费 / 返佣 / 分账）+ 每日对账（账单 diff，cron 经 svc-jobs 回调）。
+# M4：归集模式（微信收付通 + 支付宝直付通）结算确认、提现、余额对照。
 manifest: v1
 id: svc-pay
-version: 0.3.0
+version: 0.4.0
 lang: go
 
 mount:
@@ -34,6 +35,9 @@ exposes:
     - { name: pay.refund.create, desc: 发起退款（开放 API） }
     - { name: pay.division.create, desc: 对已支付订单发起分账（开放 API） }
     - { name: pay.division.query, desc: 查询分账单（开放 API） }
+    - { name: pay.settle.confirm, desc: 归集模式确认结算（开放 API） }
+    - { name: pay.withdrawal.create, desc: 归集模式发起提现（开放 API） }
+    - { name: pay.withdrawal.query, desc: 查询提现单与余额（开放 API） }
 
 open_api:
   - { route: "POST /api/pay/v1/orders", scope: pay.order.create }
@@ -42,6 +46,10 @@ open_api:
   - { route: "POST /api/pay/v1/refunds", scope: pay.refund.create }
   - { route: "POST /api/pay/v1/divisions", scope: pay.division.create }
   - { route: "GET /api/pay/v1/divisions/*", scope: pay.division.query }
+  - { route: "POST /api/pay/v1/orders/*/settle", scope: pay.settle.confirm }
+  - { route: "POST /api/pay/v1/withdrawals", scope: pay.withdrawal.create }
+  - { route: "GET /api/pay/v1/withdrawals/*", scope: pay.withdrawal.query }
+  - { route: "GET /api/pay/v1/balance", scope: pay.withdrawal.query }
 
 admin_ui:
   path: /console
@@ -57,6 +65,7 @@ runtime:
     - PAY_ENV
     - PAY_PUBLIC_BASE
     - WXPAY_API_BASE
+    - ALIPAY_GATEWAY # 默认 https://openapi.alipay.com/gateway.do（直付通）
     - PF_REDIS_URL
     - PAY_CLIENT_ID
     - PAY_CLIENT_SECRET

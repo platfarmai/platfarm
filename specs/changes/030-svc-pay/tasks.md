@@ -41,8 +41,8 @@ Phasing per proposal. A phase starts only when the previous one is green. Do not
 
 ## M4 — controlled mode (支付宝直付通 + 微信收付通)
 
-- [ ] migration `004_controlled.sql`: `pay_withdrawal`, balance columns/ledger kinds
-- [ ] `alipay_zft` adapter: zft onboarding, trade, settle confirm, royalty, uni.transfer, bill
-- [ ] `wxpay_ecommerce` adapter: ecommerce applyments, combine/regular pay, profitsharing, fund withdraw
-- [ ] withdrawal flow + balance invariant (ledger sum == reported balance) checked in tests
-- [ ] QA: sandbox settle-confirm → sharing → withdrawal balances to zero; direct-mode isv cannot call withdrawal (400)
+- [x] migration `004_controlled.sql`: `pay_settle`, `pay_withdrawal`, `pay_order.settle_state`; ledger kinds `settle` / `withdrawal` / `withdrawal_reversal` (added in M3's ledger, posted here)
+- [x] `alipay_zft` adapter: zft onboarding, trade (royalty freeze), settle confirm, royalty, uni.transfer, bill
+- [x] `wxpay_ecommerce` adapter: ecommerce applyments, combine/regular pay (profit_sharing frozen), profitsharing + finish-order, fund withdraw, balance
+- [x] withdrawal flow + balance invariant (ledger sum == reported balance) checked before any withdrawal; mismatch refuses without calling the channel
+- [x] QA (stub channel + real Postgres): settle-confirm → sharing → withdrawal balances to zero; direct-mode isv calling withdrawal/settle/balance → 400; idempotent withdrawal; over-balance and mismatch rejected; channel FAIL on a succeeded withdrawal posts `withdrawal_reversal`; adapter fake-server tests for both channels
