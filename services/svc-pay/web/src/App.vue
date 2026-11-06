@@ -3,12 +3,16 @@ import { ref, onMounted, onUnmounted } from "vue";
 import Orders from "./views/Orders.vue";
 import Merchants from "./views/Merchants.vue";
 import Applyments from "./views/Applyments.vue";
+import Divisions from "./views/Divisions.vue";
+import Recon from "./views/Recon.vue";
 
-// hash 路由：#orders | #merchants | #applyments（docs/ui-frameworks.md：不用 browser history）
+// hash 路由：#orders | #merchants | #applyments | #divisions | #recon（docs/ui-frameworks.md：不用 browser history）
 const tabs = [
   { key: "orders", label: "订单", comp: Orders },
   { key: "merchants", label: "商户", comp: Merchants },
   { key: "applyments", label: "进件审核", comp: Applyments },
+  { key: "divisions", label: "分账·台账", comp: Divisions },
+  { key: "recon", label: "对账", comp: Recon },
 ];
 const fromHash = () => tabs.find((t) => "#" + t.key === location.hash)?.key || "orders";
 const tab = ref(fromHash());

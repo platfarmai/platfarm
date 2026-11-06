@@ -1,9 +1,10 @@
 # svc-pay — 微信/支付宝支付服务商系统（specs/030）。
 # M1：商户/应用/服务商配置 + 微信普通服务商（直清）JSAPI/Native 支付、退款、下游通知。
 # M2：子商户进件（归一资料 + 图片经 svc-file）+ 审核流（reviewer 角色来自 svc-grants）+ 微信 applyment4sub。
+# M3：分账（接收方绑定 / 比例封顶 / 快照）+ 台账（手续费 / 返佣 / 分账）+ 每日对账（账单 diff，cron 经 svc-jobs 回调）。
 manifest: v1
 id: svc-pay
-version: 0.2.0
+version: 0.3.0
 lang: go
 
 mount:
@@ -31,12 +32,16 @@ exposes:
     - { name: pay.order.create, desc: 创建支付订单（开放 API） }
     - { name: pay.order.query, desc: 查询支付订单（开放 API） }
     - { name: pay.refund.create, desc: 发起退款（开放 API） }
+    - { name: pay.division.create, desc: 对已支付订单发起分账（开放 API） }
+    - { name: pay.division.query, desc: 查询分账单（开放 API） }
 
 open_api:
   - { route: "POST /api/pay/v1/orders", scope: pay.order.create }
   - { route: "GET /api/pay/v1/orders/*", scope: pay.order.query }
   - { route: "POST /api/pay/v1/orders/*/close", scope: pay.order.create }
   - { route: "POST /api/pay/v1/refunds", scope: pay.refund.create }
+  - { route: "POST /api/pay/v1/divisions", scope: pay.division.create }
+  - { route: "GET /api/pay/v1/divisions/*", scope: pay.division.query }
 
 admin_ui:
   path: /console
@@ -58,6 +63,8 @@ runtime:
     - AUTH_URL   # 默认 http://auth:8080（服务 token）
     - GRANTS_URL # 默认 http://svc-grants:8080（operator/reviewer 角色查询）
     - FILE_URL   # 默认 http://svc-file:8080（进件图片预签名上传/拉取）
+    - JOBS_URL   # 默认 http://svc-jobs:8080（注册每日对账计划）
+    - PAY_INTERNAL_BASE # 默认 http://svc-pay:8080（svc-jobs 回调本服务的地址）
 
 data:
   database: pf_svc_pay

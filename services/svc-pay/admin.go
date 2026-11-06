@@ -67,9 +67,10 @@ func handleCreateISV(c *gin.Context) {
 		return
 	}
 	var in struct {
-		IsvNo    string `json:"isvNo"`
-		IsvName  string `json:"isvName"`
-		FundMode string `json:"fundMode"`
+		IsvNo         string `json:"isvNo"`
+		IsvName       string `json:"isvName"`
+		FundMode      string `json:"fundMode"`
+		RebateRateBps int    `json:"rebateRateBps"` // 渠道返佣费率（万分位），下单时快照到订单
 	}
 	if c.ShouldBindJSON(&in) != nil || in.IsvNo == "" || in.IsvName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "isvNo 与 isvName 必填"})
@@ -82,8 +83,14 @@ func handleCreateISV(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "fundMode 只能是 direct 或 controlled"})
 		return
 	}
-	_, err := db.Exec(c.Request.Context(), `INSERT INTO pay_isv (isv_no, isv_name, fund_mode, tenant_id)
-		VALUES ($1,$2,$3,$4)`, in.IsvNo, in.IsvName, in.FundMode, claims.TenantId)
+	if in.RebateRateBps < 0 || in.RebateRateBps > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rebateRateBps 须在 0..1000"})
+		return
+	}
+	_, err := db.Exec(c.Request.Context(), `INSERT INTO pay_isv (isv_no, isv_name, fund_mode, rebate_rate_bps, tenant_id)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (isv_no) DO UPDATE SET isv_name=$2, fund_mode=$3, rebate_rate_bps=$4, updated_at=now()`,
+		in.IsvNo, in.IsvName, in.FundMode, in.RebateRateBps, claims.TenantId)
 	if isUniqueViolation(err) {
 		c.JSON(http.StatusConflict, gin.H{"error": "服务商号已存在"})
 		return

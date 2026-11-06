@@ -130,7 +130,48 @@ type stubChannel struct {
 	view        channel.ApplymentView
 	payResult   channel.Result
 	queryResult channel.Result
+	// M3
+	receivers   []channel.ReceiverIn
+	shareResult channel.DivisionResult
+	queryShare  channel.DivisionResult
+	shareCalls  int
+	billRows    []channel.BillRow
+	billErr     error
 }
+
+func (s *stubChannel) AddReceiver(_ context.Context, in channel.ReceiverIn) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if in.Account == "BAD" {
+		return fmt.Errorf("add receiver: PARAM_ERROR 账户不存在")
+	}
+	s.receivers = append(s.receivers, in)
+	return nil
+}
+func (s *stubChannel) Share(_ context.Context, _ channel.DivisionIn) (channel.DivisionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shareCalls++
+	return s.shareResult, nil
+}
+func (s *stubChannel) QueryShare(_ context.Context, _ channel.DivisionRef) (channel.DivisionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.queryShare, nil
+}
+func (s *stubChannel) FinishShare(_ context.Context, _ channel.DivisionRef) (channel.DivisionResult, error) {
+	return channel.DivisionResult{State: channel.StateSuccess}, nil
+}
+func (s *stubChannel) TradeBill(_ context.Context, _, _ string, _, _ map[string]string) ([]channel.BillRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.billRows, s.billErr
+}
+
+var (
+	_ channel.SharingChannel = (*stubChannel)(nil)
+	_ channel.BillChannel    = (*stubChannel)(nil)
+)
 
 var stub = &stubChannel{}
 
@@ -195,6 +236,58 @@ func (s *stubChannel) setView(v channel.ApplymentView) {
 }
 
 // ── 种子数据 ────────────────────────────────────────────────
+
+// seedSuccessOrder 直接落一笔已成功的支付单（绕过渠道），返回订单。
+func seedSuccessOrder(t *testing.T, mchNo, isvNo, appID, payOrderID string, amount int64, feeBps, rebateBps int) Order {
+	t.Helper()
+	ctx := context.Background()
+	o := Order{
+		PayOrderID: payOrderID, MchNo: mchNo, IsvNo: isvNo, AppID: appID, MchType: 2, MchOrderNo: "M-" + payOrderID,
+		IfCode: "stub_channel", WayCode: "STUB_PAY", Amount: amount, Currency: "CNY", FeeRateBps: feeBps,
+		FeeAmount: feeAmount(amount, feeBps), Subject: "t", RebateRateBps: rebateBps, RebateAmount: feeAmount(amount, rebateBps),
+	}
+	saved, dup, err := insertOrder(ctx, o)
+	if err != nil || dup {
+		t.Fatalf("seed order: %v dup=%v", err, dup)
+	}
+	if ok, err := casOrder(ctx, saved.PayOrderID, orderCreated, orderSuccess, "T-"+payOrderID, "openid", "", ""); err != nil || !ok {
+		t.Fatalf("seed success: %v", err)
+	}
+	saved, _ = findOrder(ctx, payOrderID)
+	return saved
+}
+
+// seedApp 建应用（商户须已存在），返回 App 与明文密钥。
+func seedApp(t *testing.T, mchNo, appID string) (App, string) {
+	t.Helper()
+	secret := "s3cret-" + appID
+	sealed, err := seal(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), `INSERT INTO pay_app (app_id, app_name, mch_no, app_secret)
+		VALUES ($1,$1,$2,$3) ON CONFLICT (app_id) DO NOTHING`, appID, mchNo, sealed); err != nil {
+		t.Fatal(err)
+	}
+	app, err := loadApp(context.Background(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return app, secret
+}
+
+// seedMerchantParams 商户侧渠道参数（sub_mchid 等）。
+func seedMerchantParams(t *testing.T, mchNo, ifCode string, params map[string]string) {
+	t.Helper()
+	sealed, err := mustSealParams(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), `INSERT INTO pay_channel_config (owner_type, owner_id, if_code, if_params)
+		VALUES ('merchant',$1,$2,$3) ON CONFLICT (owner_type, owner_id, if_code) DO UPDATE SET if_params=$3`, mchNo, ifCode, sealed); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // seedISVAndMerchant 建服务商 + 挂在其下的特约商户 + 服务商渠道参数，返回 mchNo。
 func seedISVAndMerchant(t *testing.T, isvNo, mchNo, ifCode string) {

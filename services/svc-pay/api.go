@@ -131,6 +131,7 @@ func handleCreateOrder(c *gin.Context) {
 	}
 
 	exp := time.Now().Add(orderTTL)
+	rebateBps := isvRebateRate(ctx, mch.IsvNo)
 	order := Order{
 		PayOrderID: newOrderID("P"), MchNo: mch.MchNo, IsvNo: mch.IsvNo, AppID: app.AppID,
 		MchType: mch.MchType, MchOrderNo: in.MchOrderNo, IfCode: passage.IfCode, WayCode: in.WayCode,
@@ -138,6 +139,7 @@ func handleCreateOrder(c *gin.Context) {
 		FeeAmount: feeAmount(in.Amount, passage.RateBps), Subject: in.Subject, Body: in.Body,
 		ClientIP: in.ClientIP, NotifyURL: in.NotifyURL, ReturnURL: in.ReturnURL,
 		ExtParam: in.ExtParam, ExpiredAt: &exp, TenantID: mch.TenantID,
+		RebateRateBps: rebateBps, RebateAmount: feeAmount(in.Amount, rebateBps),
 	}
 	if len(in.ChannelExtra) > 0 {
 		extra, _ := json.Marshal(in.ChannelExtra)
@@ -181,6 +183,8 @@ func handleCreateOrder(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"order": saved, "idempotent": true})
 		return
 	}
+	// 同步即终态的渠道（如付款码）也要记台账 / 通知，不能只靠回调。
+	onOrderTerminal(ctx, order.PayOrderID, to)
 	saved, _ = findOrder(ctx, order.PayOrderID)
 	c.JSON(http.StatusOK, gin.H{"order": saved, "credential": res.Credential})
 }
@@ -276,7 +280,7 @@ func reconcileOrder(ctx context.Context, order Order) (Order, error) {
 	if err != nil || !advanced {
 		return findOrder(ctx, order.PayOrderID)
 	}
-	_ = enqueueNotify(ctx, "pay", order.PayOrderID)
+	onOrderTerminal(ctx, order.PayOrderID, to)
 	return findOrder(ctx, order.PayOrderID)
 }
 
@@ -382,10 +386,7 @@ func handleCreateRefund(c *gin.Context) {
 		return
 	}
 	if to == refundSuccess || to == refundFailed {
-		_ = rollupRefund(ctx, order.PayOrderID, saved.RefundAmount, to == refundSuccess)
-		if saved.NotifyURL != "" {
-			_ = enqueueNotify(ctx, "refund", saved.RefundOrderID)
-		}
+		onRefundTerminal(ctx, saved, to)
 	}
 	saved, _ = findRefund(ctx, saved.RefundOrderID)
 	c.JSON(http.StatusOK, gin.H{"refund": saved})

@@ -69,6 +69,9 @@ type Order struct {
 	SuccessAt      *time.Time `json:"successAt"`
 	TenantID       int        `json:"tenantId"`
 	CreatedAt      time.Time  `json:"createdAt"`
+	DivisionState  string     `json:"divisionState"` // none|pending|done（M3）
+	RebateRateBps  int        `json:"rebateRateBps"` // 服务商返佣费率快照（M3）
+	RebateAmount   int64      `json:"rebateAmount"`
 }
 
 // Refund 退款订单。
@@ -128,7 +131,8 @@ type Passage struct {
 const orderCols = `pay_order_id, mch_no, isv_no, app_id, mch_type, mch_order_no, if_code, way_code,
 	amount, currency, fee_rate_bps, fee_amount, state, refund_state, refund_amount, subject, body,
 	client_ip, channel_extra, channel_user, channel_order_no, err_code, err_msg, notify_url, return_url,
-	notify_state, ext_param, expired_at, success_at, tenant_id, created_at`
+	notify_state, ext_param, expired_at, success_at, tenant_id, created_at,
+	division_state, rebate_rate_bps, rebate_amount`
 
 func scanOrder(row pgx.Row) (Order, error) {
 	var o Order
@@ -136,8 +140,19 @@ func scanOrder(row pgx.Row) (Order, error) {
 		&o.IfCode, &o.WayCode, &o.Amount, &o.Currency, &o.FeeRateBps, &o.FeeAmount, &o.State,
 		&o.RefundState, &o.RefundAmount, &o.Subject, &o.Body, &o.ClientIP, &o.ChannelExtra,
 		&o.ChannelUser, &o.ChannelOrderNo, &o.ErrCode, &o.ErrMsg, &o.NotifyURL, &o.ReturnURL,
-		&o.NotifyState, &o.ExtParam, &o.ExpiredAt, &o.SuccessAt, &o.TenantID, &o.CreatedAt)
+		&o.NotifyState, &o.ExtParam, &o.ExpiredAt, &o.SuccessAt, &o.TenantID, &o.CreatedAt,
+		&o.DivisionState, &o.RebateRateBps, &o.RebateAmount)
 	return o, err
+}
+
+// isvRebateRate 服务商返佣费率（万分位）；无服务商或未配置为 0。
+func isvRebateRate(ctx context.Context, isvNo string) int {
+	if isvNo == "" {
+		return 0
+	}
+	var bps int
+	_ = db.QueryRow(ctx, `SELECT rebate_rate_bps FROM pay_isv WHERE isv_no=$1`, isvNo).Scan(&bps)
+	return bps
 }
 
 // findOrderByMch 按商户订单号查（幂等返回用）。
@@ -157,12 +172,12 @@ func insertOrder(ctx context.Context, o Order) (Order, bool, error) {
 	row := db.QueryRow(ctx, `INSERT INTO pay_order
 		(pay_order_id, mch_no, isv_no, app_id, mch_type, mch_order_no, if_code, way_code, amount, currency,
 		 fee_rate_bps, fee_amount, subject, body, client_ip, channel_extra, notify_url, return_url,
-		 ext_param, expired_at, tenant_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+		 ext_param, expired_at, tenant_id, rebate_rate_bps, rebate_amount)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
 		RETURNING `+orderCols,
 		o.PayOrderID, o.MchNo, o.IsvNo, o.AppID, o.MchType, o.MchOrderNo, o.IfCode, o.WayCode,
 		o.Amount, o.Currency, o.FeeRateBps, o.FeeAmount, o.Subject, o.Body, o.ClientIP, o.ChannelExtra,
-		o.NotifyURL, o.ReturnURL, o.ExtParam, o.ExpiredAt, o.TenantID)
+		o.NotifyURL, o.ReturnURL, o.ExtParam, o.ExpiredAt, o.TenantID, o.RebateRateBps, o.RebateAmount)
 	saved, err := scanOrder(row)
 	if isUniqueViolation(err) {
 		existing, ferr := findOrderByMch(ctx, o.MchNo, o.MchOrderNo)

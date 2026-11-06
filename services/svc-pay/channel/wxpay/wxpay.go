@@ -19,6 +19,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -56,6 +57,7 @@ type jsapiReq struct {
 	Amount      map[string]any `json:"amount"`
 	Payer       map[string]any `json:"payer,omitempty"`
 	SceneInfo   map[string]any `json:"scene_info,omitempty"`
+	SettleInfo  map[string]any `json:"settle_info,omitempty"`
 }
 
 func (p *partner) Pay(ctx context.Context, in channel.PayIn) (channel.Result, error) {
@@ -65,6 +67,10 @@ func (p *partner) Pay(ctx context.Context, in channel.PayIn) (channel.Result, er
 		SubMchID: in.Sub["sub_mchid"], Description: in.Subject,
 		OutTradeNo: in.PayOrderID, NotifyURL: in.NotifyURL,
 		Amount: map[string]any{"total": in.Amount, "currency": orDefault(in.Currency, "CNY")},
+	}
+	// 分账订单必须在下单时声明，微信才会冻结待分资金（specs/030 M3）。
+	if in.ChannelExtra["profitSharing"] == "true" || in.Sub["profit_sharing"] == "true" {
+		req.SettleInfo = map[string]any{"profit_sharing": true}
 	}
 	switch in.WayCode {
 	case "WX_NATIVE":
@@ -219,21 +225,31 @@ func doSigned(ctx context.Context, method, path string, body []byte, prov map[st
 
 // doRequest 发一个带微信 v3 签名的请求。signBody 是参与签名的正文（multipart 上传时是 meta JSON，
 // 与实际发送的 body 不同）；extra 为附加头（如敏感字段加密所需的 Wechatpay-Serial）。
+// path 以 http 开头时视为完整 URL（账单下载地址由微信给出），签名串用其 RequestURI。
 func doRequest(ctx context.Context, method, path string, signBody []byte, body io.Reader, contentType string,
 	extra map[string]string, prov map[string]string) (*http.Response, []byte, error) {
+	target := apiBase() + path
+	signPath := path
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		u, err := url.Parse(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		target, signPath = path, u.RequestURI()
+	}
 	ts := fmt.Sprintf("%d", time.Now().Unix())
 	nonce, err := randNonce()
 	if err != nil {
 		return nil, nil, err
 	}
-	msg := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n", method, path, ts, nonce, string(signBody))
+	msg := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n", method, signPath, ts, nonce, string(signBody))
 	sig, err := sign(prov["private_key"], msg)
 	if err != nil {
 		return nil, nil, err
 	}
 	auth := fmt.Sprintf(`WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",signature="%s",timestamp="%s",serial_no="%s"`,
 		prov["sp_mchid"], nonce, sig, ts, prov["mch_serial_no"])
-	req, err := http.NewRequestWithContext(ctx, method, apiBase()+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return nil, nil, err
 	}

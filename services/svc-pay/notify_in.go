@@ -49,9 +49,8 @@ func handleChannelNotify(c *gin.Context) {
 	to := foldOrderState(n.Result)
 	if to != "" && (order.State == orderCreated || order.State == orderPaying) {
 		if advanced, _ := casOrder(ctx, order.PayOrderID, order.State, to,
-			n.Result.ChannelOrderNo, n.Result.ChannelUser, n.Result.ErrCode, n.Result.ErrMsg); advanced &&
-			(to == orderSuccess || to == orderFailed) {
-			_ = enqueueNotify(ctx, "pay", order.PayOrderID)
+			n.Result.ChannelOrderNo, n.Result.ChannelUser, n.Result.ErrCode, n.Result.ErrMsg); advanced {
+			onOrderTerminal(ctx, order.PayOrderID, to)
 		}
 	}
 	ack(c, n)
@@ -78,8 +77,7 @@ func applyRefundNotify(c *gin.Context, n channel.Notify) {
 		if advanced, _ := casRefund(ctx, refund.RefundOrderID, refund.State, to,
 			n.Result.ChannelOrderNo, n.Result.ErrCode, n.Result.ErrMsg); advanced &&
 			(to == refundSuccess || to == refundFailed) {
-			_ = rollupRefund(ctx, refund.PayOrderID, refund.RefundAmount, to == refundSuccess)
-			_ = enqueueNotify(ctx, "refund", refund.RefundOrderID)
+			onRefundTerminal(ctx, refund, to)
 		}
 	}
 	ack(c, n)

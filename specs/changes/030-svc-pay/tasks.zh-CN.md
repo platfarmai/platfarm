@@ -32,12 +32,12 @@
 
 ## M3 — 分账 + 对账 + 返佣台账（直清模式）
 
-- [ ] 迁移 `003_division_recon.sql`：`pay_division_receiver` `pay_division` `pay_ledger` `pay_recon_batch` `pay_recon_diff`
-- [ ] 接收方绑定 + 分账执行，比例快照入库，按子商户被授予的上限校验比例
-- [ ] 下单时手续费快照（`amount * rate_bps / 10000`，四舍五入）+ 返佣台账行
-- [ ] 每日账单拉取（微信交易账单）+ 差异比对；cron 走 svc-jobs
-- [ ] 管理台：对账差异视图
-- [ ] QA：构造少一笔的账单产生一条差异；已分过账的订单再次分账无副作用
+- [x] 迁移 `003_division_recon.sql`：`pay_division_receiver` `pay_division`（`pay_order_id` 上 `state<>'failed'` 的部分唯一索引）`pay_ledger`（`(kind, ref_type, ref_id, ref_sub)` 唯一 = 重放安全）`pay_recon_batch` `pay_recon_diff`；`pay_order.division_state/rebate_*`、`pay_isv.rebate_rate_bps` 向前加列
+- [x] 接收方绑定（`/admin/division/receivers` → 微信 `profitsharing/receivers/add`，名称 RSA-OAEP）+ 分账执行（`POST /v1/divisions`，scope `pay.division.create`），比例快照入库，逐个按授权上限校验、合计按商户参数 `max_division_ratio_bps`（默认 30%）封顶，金额向下取整；下单时 `channelExtra.profitSharing` 带上 `settle_info.profit_sharing`
+- [x] 下单时手续费 + 返佣快照（四舍五入）→ 成功记 `fee`/`rebate`，退款成功按比例冲回 `fee_refund`/`rebate_refund`，分账成功逐接收方记 `sharing`；`onOrderTerminal`/`onRefundTerminal` 统一三条终态路径（顺带修了 M1 的漏洞：`Pay` 同步返回 SUCCESS 时没有入通知队列）
+- [x] 每日账单拉取（`GET /v3/bill/tradebill` → 签名下载 → 按表头名解析 CSV，反引号字段，剔除汇总行）+ `diffBill`（missing_local / missing_channel / amount_mismatch / state_mismatch，支付 + 退款）；`/internal/recon/daily` 给 svc-jobs cron（服务 token），`/admin/recon/schedule` 用管理员自己的 token 注册计划（svc-jobs 的计划接口只认 admin）
+- [x] 管理台：分账·台账（接收方、分账单、台账）+ 对账（手动跑、批次、差异、标记处理、注册计划）
+- [x] QA（桩渠道 + 真实 Postgres）：构造少一笔的账单恰好产生一条 `missing_channel` 差异；已分过账的订单再分返回原单、渠道 `Share` 只调一次；分账失败释放订单可重试；台账重放不新增行；对账批次幂等（除非 `force`）；`no_bill` / `failed` 状态
 
 ## M4 — 归集模式（支付宝直付通 + 微信收付通）
 

@@ -32,12 +32,12 @@ Phasing per proposal. A phase starts only when the previous one is green. Do not
 
 ## M3 — profit sharing + reconciliation + rebate ledger (direct mode)
 
-- [ ] migration `003_division_recon.sql`: `pay_division_receiver` `pay_division` `pay_ledger` `pay_recon_batch` `pay_recon_diff`
-- [ ] receiver bind + sharing execution, ratios snapshotted, ratio cap enforced from sub-merchant grant
-- [ ] fee snapshot on order creation (`amount * rate_bps / 10000`, half-up) + rebate ledger rows
-- [ ] daily bill pull (WeChat trade bill) + diff; cron via svc-jobs
-- [ ] console: reconciliation diff view
-- [ ] QA: synthetic bill missing one order produces one diff; sharing of an already-shared order is a no-op
+- [x] migration `003_division_recon.sql`: `pay_division_receiver` `pay_division` (partial unique on `pay_order_id WHERE state<>'failed'`) `pay_ledger` (unique `(kind, ref_type, ref_id, ref_sub)` = replay-safe) `pay_recon_batch` `pay_recon_diff`; `pay_order.division_state/rebate_*`, `pay_isv.rebate_rate_bps` added forward
+- [x] receiver bind (`/admin/division/receivers` → wxpay `profitsharing/receivers/add`, name RSA-OAEP) + sharing execution (`POST /v1/divisions`, scope `pay.division.create`), ratios snapshotted, per-receiver cap from grant + total cap from merchant param `max_division_ratio_bps` (default 30%), amounts floored; pay-time `settle_info.profit_sharing` via `channelExtra.profitSharing`
+- [x] fee + rebate snapshot on order creation (half-up) → ledger `fee`/`rebate` rows on success, proportional `fee_refund`/`rebate_refund` on refund success, `sharing` rows per succeeded receiver; `onOrderTerminal`/`onRefundTerminal` unify the three terminal paths (also fixes M1 gap: synchronous SUCCESS from `Pay` never enqueued notify)
+- [x] daily bill pull (`GET /v3/bill/tradebill` → signed download → CSV parse by header names, backtick fields, summary excluded) + `diffBill` (missing_local / missing_channel / amount_mismatch / state_mismatch, pay + refund); `/internal/recon/daily` for the svc-jobs cron (service token), `/admin/recon/schedule` registers the schedule with the admin's own token (svc-jobs schedules are admin-only)
+- [x] console: 分账·台账 (receivers, divisions, ledger) + 对账 (run, batches, diff view, resolve, schedule)
+- [x] QA (stub channel + real Postgres): synthetic bill missing one order → exactly one `missing_channel` diff; already-shared order → same division returned, channel `Share` called once; failed division releases the order for retry; ledger replay adds no rows; recon batch idempotent unless `force`; `no_bill` / `failed` states
 
 ## M4 — controlled mode (支付宝直付通 + 微信收付通)
 
