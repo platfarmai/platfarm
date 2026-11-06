@@ -46,6 +46,7 @@ func main() {
 	wctx, wcancel := context.WithCancel(ctx)
 	go notifyWorker(wctx)
 	go reconcileWorker(wctx)
+	go applymentWorker(wctx)
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -88,13 +89,7 @@ func main() {
 		}
 		c.Set("claims", claims)
 	})
-	admin.POST("/isv", handleCreateISV)
-	admin.POST("/merchants", handleCreateMerchant)
-	admin.GET("/merchants", handleListMerchants)
-	admin.POST("/apps", handleCreateApp)
-	admin.PUT("/channel-config", handlePutChannelConfig)
-	admin.PUT("/passages", handlePutPassage)
-	admin.GET("/orders", handleListOrders)
+	registerAdminRoutes(admin)
 	mountConsole(r)
 
 	srv := &http.Server{Addr: ":8080", Handler: r}
@@ -115,6 +110,19 @@ func main() {
 }
 
 func claimsOf(c *gin.Context) *Claims { return c.MustGet("claims").(*Claims) }
+
+// registerAdminRoutes 管理接口全集；测试用自定义身份中间件挂同一组路由。
+func registerAdminRoutes(admin *gin.RouterGroup) {
+	admin.POST("/isv", handleCreateISV)
+	admin.POST("/merchants", handleCreateMerchant)
+	admin.GET("/merchants", handleListMerchants)
+	admin.POST("/apps", handleCreateApp)
+	admin.PUT("/channel-config", handlePutChannelConfig)
+	admin.POST("/channel-config/wxpay/platform-cert", handleSyncPlatformCert)
+	admin.PUT("/passages", handlePutPassage)
+	admin.GET("/orders", handleListOrders)
+	registerApplymentRoutes(admin)
+}
 
 // dialRedis 防重放随机串的存储。PF_REDIS_URL 为空时返回 nil，随机串校验降级为跳过。
 func dialRedis() *redis.Client {

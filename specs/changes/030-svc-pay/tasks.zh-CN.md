@@ -20,14 +20,15 @@
 
 ## M2 — 进件 + 审核
 
-- [ ] 迁移 `002_applyment.sql`：`pay_applyment`
-- [ ] 规范化资料校验（subject/legal_person/contact/business/settlement_account/rates/images）+ 证件号/账号密封
-- [ ] 图片经 svc-file 预签名上传，资料里只存 file id
-- [ ] 审核流：draft → reviewing → approved/rejected，reviewer 角色闸门，驳回写理由
-- [ ] `wxpay_partner` 的 `OnboardingChannel`：媒体上传、applyment4sub 提交、查询、渠道状态折叠进进件状态、`sub_mchid` 回写 `pay_channel_config`
-- [ ] 非终态进件的轮询任务
-- [ ] 管理台：审核队列（通过/驳回）
-- [ ] QA：沙箱走完 draft → finished；被驳回的申请可修改重提；非 reviewer → 403
+- [x] 迁移 `002_applyment.sql`：`pay_applyment` + `pay_applyment_media`（图片字节留存，审核员提交渠道无需文件读权限）
+- [x] 规范化资料校验（`channel.Applyment.Problems()`）+ 证件号/账号密封，所有响应只回掩码
+- [x] 图片经 svc-file 预签名上传（控制台 → `/admin/applyments/upload-url` 代理 → PUT），资料里只存 file id，字节用操作员自己的 token 拉取
+- [x] 审核流：draft → reviewing → approved/rejected，reviewer 角色闸门查 svc-grants `/mine`（admin 直通），驳回写理由，提交渠道前可取消
+- [x] `wxpay_partner` 的 `OnboardingChannel`：媒体上传（multipart，meta 签名）、applyment4sub 提交（敏感字段 RSA-OAEP + `Wechatpay-Serial`）、查询、状态折叠、`sub_mchid` 并入商户 `pay_channel_config`；`/admin/channel-config/wxpay/platform-cert` 拉取并解密平台证书
+- [x] 轮询 worker（1m → 2m → … → 1h 退避）覆盖 submitted/channel_auditing/need_sign/need_verify
+- [x] 管理台：审核队列（状态筛选、详情、通过/驳回/同步/取消、新建与修改资料含图片上传）
+- [x] QA（桩渠道 + 真实 Postgres）：draft → finished 回填 sub_mchid；驳回 → 改资料 → 重提；非 reviewer 通过 → 403；轮询遵守 `next_poll_at`；finished 为终态；渠道提交报错保持 approved 可重试
+- [ ] QA（真实微信）：applyment4sub 提交需要真实子商户证照，未执行（请求签名、APIv3 解密、响应验签已由 `wxpay/live_test.go` 真实联调证明）
 
 ## M3 — 分账 + 对账 + 返佣台账（直清模式）
 

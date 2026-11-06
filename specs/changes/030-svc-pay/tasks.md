@@ -20,14 +20,15 @@ Phasing per proposal. A phase starts only when the previous one is green. Do not
 
 ## M2 — onboarding + review
 
-- [ ] migration `002_applyment.sql`: `pay_applyment`
-- [ ] normalized payload validation (subject/legal_person/contact/business/settlement_account/rates/images) + sealed id_no/account_no
-- [ ] image upload via svc-file presigned URLs, file ids referenced from payload
-- [ ] review flow: draft → reviewing → approved/rejected, reviewer role gate, rejection reason
-- [ ] `OnboardingChannel` for `wxpay_partner`: media upload, applyment4sub submit, query, state fold into applyment states, `sub_mchid` written back to `pay_channel_config`
-- [ ] applyment polling job for non-terminal channel states
-- [ ] console: review queue with approve/reject
-- [ ] QA: full path draft → finished against sandbox; rejected application resubmittable; non-reviewer → 403
+- [x] migration `002_applyment.sql`: `pay_applyment` + `pay_applyment_media` (image bytes retained so the reviewer's channel submit needs no file read permission)
+- [x] normalized payload validation (`channel.Applyment.Problems()`) + sealed id_no/account_no, masked in every response
+- [x] image upload via svc-file presigned URLs (console → `/admin/applyments/upload-url` proxy → PUT), file ids referenced from payload, bytes fetched with the operator's own token
+- [x] review flow: draft → reviewing → approved/rejected, reviewer role gate via svc-grants `/mine` (admin bypass), rejection reason, cancel before channel submit
+- [x] `OnboardingChannel` for `wxpay_partner`: media upload (multipart, meta-signed), applyment4sub submit (RSA-OAEP sensitive fields + `Wechatpay-Serial`), query, state fold, `sub_mchid` merged into merchant `pay_channel_config`; `/admin/channel-config/wxpay/platform-cert` pulls + decrypts the platform certificate
+- [x] applyment polling worker (1m → 2m → … → 1h backoff) for submitted/channel_auditing/need_sign/need_verify
+- [x] console: review queue with filter, detail, approve/reject/sync/cancel, new/edit form with image upload
+- [x] QA (stub channel + real Postgres): draft → finished writes sub_mchid; rejected → edit → resubmit; non-reviewer approve → 403; poll respects `next_poll_at`; finished is terminal; channel submit error keeps `approved` and is retryable
+- [ ] QA against real WeChat: applyment4sub submit needs a genuine sub-merchant's documents — not exercised (request signing, APIv3 decryption and response verification are proven live by `wxpay/live_test.go`)
 
 ## M3 — profit sharing + reconciliation + rebate ledger (direct mode)
 

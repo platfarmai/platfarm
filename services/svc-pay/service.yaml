@@ -1,8 +1,9 @@
 # svc-pay — 微信/支付宝支付服务商系统（specs/030）。
 # M1：商户/应用/服务商配置 + 微信普通服务商（直清）JSAPI/Native 支付、退款、下游通知。
+# M2：子商户进件（归一资料 + 图片经 svc-file）+ 审核流（reviewer 角色来自 svc-grants）+ 微信 applyment4sub。
 manifest: v1
 id: svc-pay
-version: 0.1.0
+version: 0.2.0
 lang: go
 
 mount:
@@ -54,6 +55,9 @@ runtime:
     - PF_REDIS_URL
     - PAY_CLIENT_ID
     - PAY_CLIENT_SECRET
+    - AUTH_URL   # 默认 http://auth:8080（服务 token）
+    - GRANTS_URL # 默认 http://svc-grants:8080（operator/reviewer 角色查询）
+    - FILE_URL   # 默认 http://svc-file:8080（进件图片预签名上传/拉取）
 
 data:
   database: pf_svc_pay

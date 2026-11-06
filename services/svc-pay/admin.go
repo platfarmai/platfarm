@@ -1,4 +1,4 @@
-// 管理接口：平台 admin 或持有 operator 角色的用户。M1 只做配置与只读查询。
+// 管理接口：平台 admin 或持有 operator 角色的用户（角色来自 svc-grants，见 roles.go）。
 package main
 
 import (
@@ -10,15 +10,53 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"platfarm/svc-pay/channel"
+	"platfarm/svc-pay/channel/wxpay"
 )
 
-func requireOperator(c *gin.Context) (*Claims, bool) {
-	claims := claimsOf(c)
-	if claims.Role == "admin" {
-		return claims, true
+func requireOperator(c *gin.Context) (*Claims, bool) { return requireRole(c, roleOperator) }
+
+// handleSyncPlatformCert POST /admin/channel-config/wxpay/platform-cert {ownerType, ownerId}：
+// 用已配置的服务商参数拉取微信平台证书，解密后把公钥与序列号并入渠道参数
+// （wx_platform_cert / wx_platform_cert_serial）。证书模式商户的回调验签与进件敏感字段加密依赖它。
+func handleSyncPlatformCert(c *gin.Context) {
+	if _, ok := requireOperator(c); !ok {
+		return
 	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "需要平台管理员"})
-	return nil, false
+	var in struct {
+		OwnerType string `json:"ownerType"`
+		OwnerID   string `json:"ownerId"`
+	}
+	if c.ShouldBindJSON(&in) != nil || in.OwnerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ownerId 必填"})
+		return
+	}
+	if in.OwnerType == "" {
+		in.OwnerType = "isv"
+	}
+	ctx := c.Request.Context()
+	params, err := loadChannelParams(ctx, in.OwnerType, in.OwnerID, "wxpay_partner")
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "wxpay_partner 渠道参数未配置"})
+		return
+	}
+	cert, err := wxpay.FetchPlatformCert(ctx, params)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	params["wx_platform_cert"] = cert.PublicKeyPEM
+	params["wx_platform_cert_serial"] = cert.Serial
+	sealed, err := mustSealParams(params)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "加密失败"})
+		return
+	}
+	if _, err := db.Exec(ctx, `UPDATE pay_channel_config SET if_params=$4, updated_at=now()
+		WHERE owner_type=$1 AND owner_id=$2 AND if_code=$3`, in.OwnerType, in.OwnerID, "wxpay_partner", sealed); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"serial": cert.Serial, "notAfter": cert.NotAfter})
 }
 
 // ── 服务商 ──────────────────────────────────────────────────

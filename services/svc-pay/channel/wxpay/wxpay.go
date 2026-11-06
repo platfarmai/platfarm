@@ -214,26 +214,36 @@ func (p *partner) ParseNotify(r *http.Request, provider map[string]string) (chan
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 func doSigned(ctx context.Context, method, path string, body []byte, prov map[string]string) (*http.Response, []byte, error) {
+	return doRequest(ctx, method, path, body, bytes.NewReader(body), "application/json", nil, prov)
+}
+
+// doRequest 发一个带微信 v3 签名的请求。signBody 是参与签名的正文（multipart 上传时是 meta JSON，
+// 与实际发送的 body 不同）；extra 为附加头（如敏感字段加密所需的 Wechatpay-Serial）。
+func doRequest(ctx context.Context, method, path string, signBody []byte, body io.Reader, contentType string,
+	extra map[string]string, prov map[string]string) (*http.Response, []byte, error) {
 	ts := fmt.Sprintf("%d", time.Now().Unix())
 	nonce, err := randNonce()
 	if err != nil {
 		return nil, nil, err
 	}
-	msg := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n", method, path, ts, nonce, string(body))
+	msg := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n", method, path, ts, nonce, string(signBody))
 	sig, err := sign(prov["private_key"], msg)
 	if err != nil {
 		return nil, nil, err
 	}
 	auth := fmt.Sprintf(`WECHATPAY2-SHA256-RSA2048 mchid="%s",nonce_str="%s",signature="%s",timestamp="%s",serial_no="%s"`,
 		prov["sp_mchid"], nonce, sig, ts, prov["mch_serial_no"])
-	req, err := http.NewRequestWithContext(ctx, method, apiBase()+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, apiBase()+path, body)
 	if err != nil {
 		return nil, nil, err
 	}
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "svc-pay/0.1")
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("User-Agent", "svc-pay/0.2")
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, nil, err

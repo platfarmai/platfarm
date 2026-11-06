@@ -1,7 +1,16 @@
+import { writeFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
 const BASE = "/api/pay/console/";
+
+// go:embed all:web/dist 要求目录至少有一个文件；dist/.gitkeep 入库，emptyOutDir 清空后再补回。
+const keepGitkeep = () => ({
+  name: "keep-gitkeep",
+  closeBundle() {
+    writeFileSync("dist/.gitkeep", "");
+  },
+});
 
 export default defineConfig({
   base: BASE,
@@ -13,6 +22,7 @@ export default defineConfig({
         },
       },
     }),
+    keepGitkeep(),
   ],
   build: { outDir: "dist", emptyOutDir: true },
   server: {
