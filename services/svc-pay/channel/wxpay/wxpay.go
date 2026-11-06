@@ -303,14 +303,52 @@ func verifyNotify(r *http.Request, body []byte, prov map[string]string) error {
 	if ts == "" || nonce == "" || sig == "" {
 		return fmt.Errorf("missing wechatpay signature headers")
 	}
-	if prov["wx_public_key_id"] != "" && serial != prov["wx_public_key_id"] {
-		return fmt.Errorf("unexpected wechatpay serial %s", serial)
-	}
 	when, err := parseUnix(ts)
 	if err != nil || time.Since(when) > 5*time.Minute || time.Until(when) > time.Minute {
 		return fmt.Errorf("wechatpay timestamp out of window")
 	}
-	block, _ := pem.Decode([]byte(prov["wx_public_key"]))
+	pubPEM, err := verifyKeyFor(prov, serial)
+	if err != nil {
+		return err
+	}
+	return verifySignature(pubPEM, ts, nonce, body, sig)
+}
+
+// verifyKeyFor 按 Wechatpay-Serial 选验签公钥。微信同时存在两种签名体系：
+//   - 微信支付公钥：serial 形如 PUB_KEY_ID_*，公钥配在 wx_public_key（可选 wx_public_key_id）
+//   - 平台证书：serial 为证书序列号，公钥配在 wx_platform_cert + wx_platform_cert_serial
+//     （GET /v3/certificates 用 APIv3 密钥解出，见 live_test）
+//
+// 同一商户可能收到任一种签名的回调，因此两把钥匙都可配置，由 serial 决定用哪把。
+func verifyKeyFor(prov map[string]string, serial string) (string, error) {
+	switch {
+	case serial != "" && serial == prov["wx_public_key_id"]:
+		return prov["wx_public_key"], nil
+	case serial != "" && serial == prov["wx_platform_cert_serial"]:
+		return prov["wx_platform_cert"], nil
+	case strings.HasPrefix(serial, "PUB_KEY_ID_"):
+		if prov["wx_public_key_id"] != "" {
+			return "", fmt.Errorf("unexpected wechatpay serial %s", serial)
+		}
+		if prov["wx_public_key"] == "" {
+			return "", fmt.Errorf("wx_public_key 未配置，无法验证 %s", serial)
+		}
+		return prov["wx_public_key"], nil
+	case prov["wx_platform_cert"] != "":
+		if prov["wx_platform_cert_serial"] != "" && serial != "" {
+			return "", fmt.Errorf("unexpected wechatpay serial %s", serial)
+		}
+		return prov["wx_platform_cert"], nil
+	case prov["wx_public_key"] != "":
+		return prov["wx_public_key"], nil
+	}
+	return "", fmt.Errorf("no wechatpay verify key configured")
+}
+
+// verifySignature 微信支付公钥验签：SHA256withRSA over "ts\nnonce\nbody\n"。
+// 回调与 API 响应共用（响应头 Wechatpay-Timestamp/Nonce/Signature 同一规则）。
+func verifySignature(pubPEM, ts, nonce string, body []byte, sig string) error {
+	block, _ := pem.Decode([]byte(pubPEM))
 	if block == nil {
 		return fmt.Errorf("wx public key pem 无法解析")
 	}
@@ -331,6 +369,16 @@ func verifyNotify(r *http.Request, body []byte, prov map[string]string) error {
 		return fmt.Errorf("signature mismatch")
 	}
 	return nil
+}
+
+// verifyResponse 校验 API 响应签名，钥匙选择规则与回调一致（verifyKeyFor）。
+func verifyResponse(resp *http.Response, body []byte, prov map[string]string) error {
+	pubPEM, err := verifyKeyFor(prov, resp.Header.Get("Wechatpay-Serial"))
+	if err != nil {
+		return err
+	}
+	return verifySignature(pubPEM, resp.Header.Get("Wechatpay-Timestamp"),
+		resp.Header.Get("Wechatpay-Nonce"), body, resp.Header.Get("Wechatpay-Signature"))
 }
 
 func decryptAESGCM(apiV3Key, aad, nonce, ciphertext string) ([]byte, error) {

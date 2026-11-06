@@ -31,6 +31,12 @@ tmp/
 .keys/
 .env.plugins/
 
+# 支付渠道商户证书/私钥/APIv3 密钥（specs/030）：只在本机，绝不入库
+deploy/keys/
+*.p12
+apiclient_key.pem
+apiclient_cert.pem
+
 # \u672c\u5730\u5de5\u5177\u76ee\u5f55
 .codegraph/
 .omo/

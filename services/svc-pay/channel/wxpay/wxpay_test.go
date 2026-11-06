@@ -59,6 +59,41 @@ func TestRefundState(t *testing.T) {
 	}
 }
 
+func TestVerifyKeyFor_SerialSelectsKey(t *testing.T) {
+	both := map[string]string{
+		"wx_public_key": "PUB", "wx_public_key_id": "PUB_KEY_ID_1",
+		"wx_platform_cert": "CERT", "wx_platform_cert_serial": "ABC123",
+	}
+	cases := []struct {
+		name   string
+		prov   map[string]string
+		serial string
+		want   string
+		fail   bool
+	}{
+		{"pubkey id match", both, "PUB_KEY_ID_1", "PUB", false},
+		{"platform cert serial match", both, "ABC123", "CERT", false},
+		{"pubkey id mismatch", both, "PUB_KEY_ID_9", "", true},
+		{"cert serial mismatch", both, "DEADBEEF", "", true},
+		{"pubkey without id configured", map[string]string{"wx_public_key": "PUB"}, "PUB_KEY_ID_X", "PUB", false},
+		{"only cert, no serial configured", map[string]string{"wx_platform_cert": "CERT"}, "DEADBEEF", "CERT", false},
+		{"m1 legacy: only pubkey, cert serial header", map[string]string{"wx_public_key": "PUB"}, "DEADBEEF", "PUB", false},
+		{"nothing configured", map[string]string{}, "X", "", true},
+	}
+	for _, tc := range cases {
+		got, err := verifyKeyFor(tc.prov, tc.serial)
+		if tc.fail {
+			if err == nil {
+				t.Errorf("%s: expected error, got %q", tc.name, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %q err=%v, want %q", tc.name, got, err, tc.want)
+		}
+	}
+}
+
 func TestFailFromBody(t *testing.T) {
 	res := failFromBody([]byte(`{"code":"PARAM_ERROR","message":"缺参数"}`))
 	if res.State != "FAIL" || res.ErrCode != "PARAM_ERROR" || res.ErrMsg != "缺参数" {
