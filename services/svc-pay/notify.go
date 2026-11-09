@@ -154,16 +154,7 @@ const expireGrace = 10 * time.Minute
 
 // reconcileWorker 补单：回调丢失时，对未终态订单主动查渠道；过期的单先在渠道关单再本地关闭。
 func reconcileWorker(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(30 * time.Second):
-		}
-		if err := sweepOrders(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("reconcile: %v", err)
-		}
-	}
+	everyLeased(ctx, "orders", 30*time.Second, sweepOrders)
 }
 
 func sweepOrders(ctx context.Context) error {

@@ -47,6 +47,7 @@ func main() {
 	wctx, wcancel := context.WithCancel(ctx)
 	go notifyWorker(wctx)
 	go reconcileWorker(wctx)
+	go refundWorker(wctx)
 	go applymentWorker(wctx)
 	go divisionWorker(wctx)
 	go withdrawalWorker(wctx)

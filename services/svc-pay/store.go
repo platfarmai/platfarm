@@ -30,6 +30,20 @@ func qOf(tx pgx.Tx) querier {
 	return tx
 }
 
+// inTx 在一个事务里执行 fn：fn 返回 false（CAS 没抢到）或出错时回滚，否则提交。
+func inTx(ctx context.Context, fn func(pgx.Tx) (bool, error)) (bool, error) {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	ok, err := fn(tx)
+	if err != nil || !ok {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}
+
 // 订单状态。
 const (
 	orderCreated = "created"

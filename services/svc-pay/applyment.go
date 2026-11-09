@@ -385,16 +385,7 @@ func onApplymentFinished(ctx context.Context, a ApplymentRow, subMchID string) e
 
 // applymentWorker 每分钟轮询渠道未出终态的申请单（渠道不一定推送）。
 func applymentWorker(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(60 * time.Second):
-		}
-		if err := pollApplyments(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("applyment poll: %v", err)
-		}
-	}
+	everyLeased(ctx, "applyments", 60*time.Second, pollApplyments)
 }
 
 func pollApplyments(ctx context.Context) error {

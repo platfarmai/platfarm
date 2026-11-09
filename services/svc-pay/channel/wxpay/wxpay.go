@@ -180,6 +180,41 @@ func (p *partner) Refund(ctx context.Context, in channel.RefundIn) (channel.Resu
 	return channel.Result{State: refundState(out.Status), ChannelOrderNo: out.RefundID, Raw: string(raw)}, nil
 }
 
+var _ channel.RefundQuerier = (*partner)(nil)
+
+// QueryRefund GET /v3/refund/domestic/refunds/{out_refund_no}?sub_mchid=。
+func (p *partner) QueryRefund(ctx context.Context, ref channel.RefundRef) (channel.Result, error) {
+	q := url.Values{"sub_mchid": {ref.Sub["sub_mchid"]}}
+	return queryRefund(ctx, "/v3/refund/domestic/refunds/"+url.PathEscape(ref.RefundOrderID)+"?"+q.Encode(), ref.Provider)
+}
+
+// queryRefund 退款查询（普通服务商与收付通应答同形）。查询失败或查不到都是 UNKNOWN。
+func queryRefund(ctx context.Context, path string, prov map[string]string) (channel.Result, error) {
+	resp, raw, err := doSigned(ctx, http.MethodGet, path, nil, prov)
+	if err != nil {
+		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
+	}
+	if resp.StatusCode/100 != 2 {
+		return unknownFromBody(raw), nil
+	}
+	var out struct {
+		RefundID string `json:"refund_id"`
+		Status   string `json:"status"`
+		Amount   struct {
+			Refund int64 `json:"refund"`
+		} `json:"amount"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	res := channel.Result{State: refundState(out.Status), ChannelOrderNo: out.RefundID, Amount: out.Amount.Refund, Raw: string(raw)}
+	switch out.Status {
+	case "":
+		res.State = channel.StateUnknown
+	case "ABNORMAL":
+		res.ErrCode, res.ErrMsg = "ABNORMAL", "退款异常，需在商户平台处理"
+	}
+	return res, nil
+}
+
 // ParseNotify 验签并解密回调。验签失败返回 error（调用方回 400）；
 // 解密成功但交易未终态时 Result.State 为 WAITING。
 func (p *partner) ParseNotify(r *http.Request, provider map[string]string) (channel.Notify, error) {

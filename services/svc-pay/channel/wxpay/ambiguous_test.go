@@ -159,6 +159,35 @@ func TestMoneyMovements_ClassifyErrors(t *testing.T) {
 	}
 }
 
+func TestQueryRefund_FoldsStatus(t *testing.T) {
+	s, prov := newReplyStub(t)
+	sub := map[string]string{"sub_mchid": "1900001"}
+	cases := []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{200, `{"refund_id":"RF1","status":"SUCCESS","amount":{"refund":500}}`, channel.StateSuccess},
+		{200, `{"refund_id":"RF1","status":"PROCESSING","amount":{"refund":500}}`, channel.StateWaiting},
+		{200, `{"refund_id":"RF1","status":"ABNORMAL","amount":{"refund":500}}`, channel.StateWaiting},
+		{200, `{"refund_id":"RF1","status":"CLOSED","amount":{"refund":500}}`, channel.StateFail},
+		{404, `{"code":"RESOURCE_NOT_EXISTS","message":"退款单不存在"}`, channel.StateUnknown},
+		{500, `{"code":"SYSTEM_ERROR","message":"系统繁忙"}`, channel.StateUnknown},
+	}
+	for _, tc := range cases {
+		s.set(tc.status, tc.body)
+		for _, q := range []channel.RefundQuerier{&partner{}, &ecommerce{}} {
+			res, err := q.QueryRefund(context.Background(), channel.RefundRef{RefundOrderID: "R1", Provider: prov, Sub: sub})
+			if err != nil || res.State != tc.want {
+				t.Errorf("%T %s: %+v %v", q, tc.body, res, err)
+			}
+			if tc.want == channel.StateSuccess && res.Amount != 500 {
+				t.Errorf("amount = %d", res.Amount)
+			}
+		}
+	}
+}
+
 func TestParseNotify_ReportsAmountAndKeepsAbnormalRefundOpen(t *testing.T) {
 	_, wxPub, wxPriv := testKeys(t)
 	apiV3 := "0123456789abcdef0123456789abcdef"

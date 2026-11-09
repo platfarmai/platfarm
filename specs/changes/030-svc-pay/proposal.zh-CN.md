@@ -155,6 +155,7 @@ type OnboardingChannel interface {
 
 - 订单超时：下单时把失效时间传给渠道（`time_expire`）。超过 `expired_at` 后先查渠道（可能刚付成功）；仍可支付 → 先关上游单，再置 `closed`；渠道查无此单或不可达 → 宽限 10 分钟后本地置 `closed`。
 - 补单：没有收到终态回调的 `paying` 订单按退避节奏轮询 `Query`——回调可能丢，而查询不会重复扣款，因为有 CAS。
+- 结果未知的恢复：提交结果未知的退款、分账停在 `created`/`pending`，用**原单号**重提（两家渠道都按单号去重；换新单号可能付两次）；处理中的退款靠查询推进。每类扫描持有行租约（`pay_worker_lease`），多副本只跑一份。
 - 进件轮询：`submitted|channel_auditing|need_sign|need_verify` 轮询到终态（渠道不保证推送）。
 - 对账：每日定时拉取渠道账单（微信 `/v3/bill/tradebill`、支付宝 `bill.downloadurl.query`），与本地终态订单比对，差异写入 `pay_recon_diff`（本地缺失、上游缺失、金额不符）。
 

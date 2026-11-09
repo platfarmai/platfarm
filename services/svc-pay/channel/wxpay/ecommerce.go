@@ -281,7 +281,15 @@ func (e *ecommerce) Refund(ctx context.Context, in channel.RefundIn) (channel.Re
 	return channel.Result{State: refundState(out.Status), ChannelOrderNo: out.RefundID, Raw: string(raw)}, nil
 }
 
-// ParseNotify 与普通服务商同一套验签解密；收付通退款事件以 ECOMMERCE.REFUND 开头。
+var _ channel.RefundQuerier = (*ecommerce)(nil)
+
+// QueryRefund GET /v3/ecommerce/refunds/out-refund-no/{out_refund_no}?sub_mchid=。
+func (e *ecommerce) QueryRefund(ctx context.Context, ref channel.RefundRef) (channel.Result, error) {
+	q := url.Values{"sub_mchid": {ref.Sub["sub_mchid"]}}
+	return queryRefund(ctx, "/v3/ecommerce/refunds/out-refund-no/"+url.PathEscape(ref.RefundOrderID)+"?"+q.Encode(), ref.Provider)
+}
+
+// ParseNotify 与普通服务商同一套验签解密；退款事件同为 REFUND.SUCCESS / ABNORMAL / CLOSED。
 func (e *ecommerce) ParseNotify(r *http.Request, provider map[string]string) (channel.Notify, error) {
 	return (&partner{}).ParseNotify(r, provider)
 }

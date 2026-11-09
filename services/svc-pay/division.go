@@ -198,8 +198,9 @@ func createDivision(ctx context.Context, app App, mch Merchant, order Order, req
 	if order.State != orderSuccess {
 		return Division{}, false, fmt.Errorf("订单状态 %s 不可分账", order.State)
 	}
-	if order.RefundState != refundNone {
-		return Division{}, false, fmt.Errorf("已退款订单不可分账")
+	// refund_amount 含处理中的退款占用的额度：退款在途时分账会和退款抢同一笔冻结资金。
+	if order.RefundState != refundNone || order.RefundAmount > 0 {
+		return Division{}, false, fmt.Errorf("已退款或退款处理中的订单不可分账")
 	}
 	if existing, err := findActiveDivisionByOrder(ctx, order.PayOrderID); err == nil {
 		return existing, true, nil
@@ -251,13 +252,15 @@ func createDivision(ctx context.Context, app App, mch Merchant, order Order, req
 		Receivers: plan, UnfreezeUnsplit: unfreeze, Provider: provider, Sub: sub,
 	})
 	if err != nil {
-		return d, false, err
+		// 适配器在发出请求前就拒绝了：渠道侧没有这笔分账，确定失败并释放订单。
+		res = channel.DivisionResult{State: channel.StateFail, ErrCode: "SYS", ErrMsg: err.Error()}
 	}
 	saved, aerr := applyDivisionResult(ctx, d, res)
 	return saved, false, aerr
 }
 
-// applyDivisionResult 把渠道四态落到分账单：SUCCESS 记台账 + 订单 done；FAIL 释放订单；WAITING → accepted。
+// applyDivisionResult 把渠道四态落到分账单：SUCCESS 记台账 + 订单 done；FAIL 释放订单；WAITING → accepted；
+// UNKNOWN 不动（pending 由 worker 用原分账单号重提）。终态推进与台账、订单状态同事务。
 func applyDivisionResult(ctx context.Context, d Division, res channel.DivisionResult) (Division, error) {
 	from := d.State
 	receivers := d.Receivers
@@ -267,38 +270,50 @@ func applyDivisionResult(ctx context.Context, d Division, res channel.DivisionRe
 	snapshot, _ := json.Marshal(receivers)
 	switch res.State {
 	case channel.StateSuccess:
-		tag, err := db.Exec(ctx, `UPDATE pay_division SET state='success', channel_order_no=COALESCE(NULLIF($3,''), channel_order_no),
-			receivers=$4, err_code='', err_msg='', updated_at=now() WHERE division_no=$1 AND state=$2`,
-			d.DivisionNo, from, res.ChannelOrderNo, snapshot)
+		var entries []LedgerEntry
+		for _, r := range receivers {
+			if r.Result != "" && r.Result != "SUCCESS" {
+				continue // 渠道逐个失败的接收方不记账
+			}
+			entries = append(entries, LedgerEntry{MchNo: d.MchNo, IsvNo: d.IsvNo, IfCode: d.IfCode, Kind: ledgerSharing,
+				RefType: "division", RefID: d.DivisionNo, RefSub: r.Account, Amount: -r.Amount,
+				Memo: "分账给 " + r.Account, TenantID: d.TenantID})
+		}
+		advanced, err := inTx(ctx, func(tx pgx.Tx) (bool, error) {
+			tag, err := tx.Exec(ctx, `UPDATE pay_division SET state='success', channel_order_no=COALESCE(NULLIF($3,''), channel_order_no),
+				receivers=$4, err_code='', err_msg='', updated_at=now() WHERE division_no=$1 AND state=$2`,
+				d.DivisionNo, from, res.ChannelOrderNo, snapshot)
+			if err != nil || tag.RowsAffected() == 0 {
+				return false, err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE pay_order SET division_state='done', updated_at=now() WHERE pay_order_id=$1`, d.PayOrderID); err != nil {
+				return false, err
+			}
+			_, err = postLedger(ctx, tx, entries)
+			return err == nil, err
+		})
 		if err != nil {
 			return d, err
 		}
-		if tag.RowsAffected() == 1 {
+		if advanced {
 			logTransitionDivision(d.DivisionNo, from, divisionSuccess, res.ChannelOrderNo)
-			_, _ = db.Exec(ctx, `UPDATE pay_order SET division_state='done', updated_at=now() WHERE pay_order_id=$1`, d.PayOrderID)
-			var entries []LedgerEntry
-			for _, r := range receivers {
-				if r.Result != "" && r.Result != "SUCCESS" {
-					continue // 渠道逐个失败的接收方不记账
-				}
-				entries = append(entries, LedgerEntry{MchNo: d.MchNo, IsvNo: d.IsvNo, IfCode: d.IfCode, Kind: ledgerSharing,
-					RefType: "division", RefID: d.DivisionNo, RefSub: r.Account, Amount: -r.Amount,
-					Memo: "分账给 " + r.Account, TenantID: d.TenantID})
-			}
-			if _, err := postLedger(ctx, nil, entries); err != nil {
-				log.Printf("ledger division %s: %v", d.DivisionNo, err)
-			}
 		}
 	case channel.StateFail:
-		tag, err := db.Exec(ctx, `UPDATE pay_division SET state='failed', receivers=$3, err_code=$4, err_msg=$5, updated_at=now()
-			WHERE division_no=$1 AND state=$2`, d.DivisionNo, from, snapshot, res.ErrCode, trunc(res.ErrMsg, 500))
+		advanced, err := inTx(ctx, func(tx pgx.Tx) (bool, error) {
+			tag, err := tx.Exec(ctx, `UPDATE pay_division SET state='failed', receivers=$3, err_code=$4, err_msg=$5, updated_at=now()
+				WHERE division_no=$1 AND state=$2`, d.DivisionNo, from, snapshot, res.ErrCode, trunc(res.ErrMsg, 500))
+			if err != nil || tag.RowsAffected() == 0 {
+				return false, err
+			}
+			_, err = tx.Exec(ctx, `UPDATE pay_order SET division_state='none', updated_at=now()
+				WHERE pay_order_id=$1 AND division_state='pending'`, d.PayOrderID)
+			return err == nil, err
+		})
 		if err != nil {
 			return d, err
 		}
-		if tag.RowsAffected() == 1 {
+		if advanced {
 			logTransitionDivision(d.DivisionNo, from, divisionFailed, res.ErrCode)
-			_, _ = db.Exec(ctx, `UPDATE pay_order SET division_state='none', updated_at=now()
-				WHERE pay_order_id=$1 AND division_state='pending'`, d.PayOrderID)
 		}
 	case channel.StateWaiting:
 		if from == divisionPending {
@@ -362,35 +377,69 @@ func syncDivision(ctx context.Context, d Division) (Division, error) {
 	return applyDivisionResult(ctx, d, res)
 }
 
-// divisionWorker 每分钟补查 accepted 分账单。
+// divisionWorker 每分钟：accepted 的查询推进；pending（提交结果未知）的用原分账单号重提——
+// 微信同一 out_order_no 多次请求等同一次，支付宝 ACQ.SYSTEM_ERROR 要求原请求号重试。
 func divisionWorker(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(60 * time.Second):
-		}
-		rows, err := db.Query(ctx, `SELECT `+divisionCols+` FROM pay_division
-			WHERE state='accepted' AND updated_at < now() - interval '30 seconds' ORDER BY updated_at LIMIT 50`)
-		if err != nil {
-			if ctx.Err() == nil {
-				log.Printf("division worker: %v", err)
-			}
-			continue
-		}
-		var batch []Division
-		for rows.Next() {
-			if d, serr := scanDivision(rows); serr == nil {
-				batch = append(batch, d)
-			}
-		}
-		rows.Close()
-		for _, d := range batch {
-			if _, err := syncDivision(ctx, d); err != nil {
-				log.Printf("division %s sync: %v", d.DivisionNo, err)
-			}
+	everyLeased(ctx, "divisions", 60*time.Second, sweepDivisions)
+}
+
+func sweepDivisions(ctx context.Context) error {
+	rows, err := db.Query(ctx, `SELECT `+divisionCols+` FROM pay_division
+		WHERE (state='accepted' AND updated_at < now() - interval '30 seconds')
+		   OR (state='pending' AND updated_at < now() - interval '1 minute')
+		ORDER BY updated_at LIMIT 50`)
+	if err != nil {
+		return err
+	}
+	var batch []Division
+	for rows.Next() {
+		if d, serr := scanDivision(rows); serr == nil {
+			batch = append(batch, d)
 		}
 	}
+	rows.Close()
+	for _, d := range batch {
+		var err error
+		if d.State == divisionPending {
+			_, err = resubmitDivision(ctx, d)
+		} else {
+			_, err = syncDivision(ctx, d)
+		}
+		if err != nil {
+			log.Printf("division %s recover: %v", d.DivisionNo, err)
+			_, _ = db.Exec(ctx, `UPDATE pay_division SET err_msg=$2, updated_at=now() WHERE division_no=$1 AND state IN ('pending','accepted')`,
+				d.DivisionNo, trunc(err.Error(), 500))
+		}
+	}
+	return nil
+}
+
+// resubmitDivision 用原分账单号与原接收方快照重提，按结果推进。
+func resubmitDivision(ctx context.Context, d Division) (Division, error) {
+	sh, err := channel.Sharing(d.IfCode)
+	if err != nil {
+		return d, err
+	}
+	mch, err := loadMerchant(ctx, d.MchNo)
+	if err != nil {
+		return d, err
+	}
+	provider, sub, err := resolveParams(ctx, mch, d.IfCode)
+	if err != nil {
+		return d, err
+	}
+	order, err := findOrder(ctx, d.PayOrderID)
+	if err != nil {
+		return d, err
+	}
+	res, err := sh.Share(ctx, channel.DivisionIn{
+		DivisionNo: d.DivisionNo, PayOrderID: d.PayOrderID, ChannelOrderNo: order.ChannelOrderNo,
+		Receivers: d.Receivers, UnfreezeUnsplit: d.UnfreezeUnsplit, Provider: provider, Sub: sub,
+	})
+	if err != nil {
+		return d, err
+	}
+	return applyDivisionResult(ctx, d, res)
 }
 
 // ── 开放 API ────────────────────────────────────────────────

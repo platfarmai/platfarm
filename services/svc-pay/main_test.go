@@ -145,6 +145,10 @@ type stubChannel struct {
 	lastProvider map[string]string
 	refundRes    *channel.Result // Refund 的返回；nil 表示成功
 	refundCalls  []string
+	// 恢复
+	shareNos      []string
+	queryRefund   channel.Result
+	refundQueries []string
 }
 
 func (s *stubChannel) AddReceiver(_ context.Context, in channel.ReceiverIn) error {
@@ -156,11 +160,18 @@ func (s *stubChannel) AddReceiver(_ context.Context, in channel.ReceiverIn) erro
 	s.receivers = append(s.receivers, in)
 	return nil
 }
-func (s *stubChannel) Share(_ context.Context, _ channel.DivisionIn) (channel.DivisionResult, error) {
+func (s *stubChannel) Share(_ context.Context, in channel.DivisionIn) (channel.DivisionResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.shareCalls++
+	s.shareNos = append(s.shareNos, in.DivisionNo)
 	return s.shareResult, nil
+}
+func (s *stubChannel) QueryRefund(_ context.Context, ref channel.RefundRef) (channel.Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refundQueries = append(s.refundQueries, ref.RefundOrderID)
+	return s.queryRefund, nil
 }
 func (s *stubChannel) QueryShare(_ context.Context, _ channel.DivisionRef) (channel.DivisionResult, error) {
 	s.mu.Lock()
@@ -179,6 +190,7 @@ func (s *stubChannel) TradeBill(_ context.Context, _, _ string, _, _ map[string]
 var (
 	_ channel.SharingChannel = (*stubChannel)(nil)
 	_ channel.BillChannel    = (*stubChannel)(nil)
+	_ channel.RefundQuerier  = (*stubChannel)(nil)
 )
 
 var stub = &stubChannel{}
@@ -284,6 +296,7 @@ func (s *stubChannel) resetLifecycle() {
 	defer s.mu.Unlock()
 	s.queryResult, s.payResult = channel.Result{}, channel.Result{}
 	s.closeErr, s.closeCalls, s.notify, s.lastProvider, s.refundRes, s.refundCalls = nil, 0, nil, nil, nil, nil
+	s.shareNos, s.queryRefund, s.refundQueries = nil, channel.Result{}, nil
 }
 func (s *stubChannel) UploadMedia(_ context.Context, filename string, _ []byte, _ map[string]string) (string, error) {
 	s.mu.Lock()

@@ -441,6 +441,32 @@ func (z *zft) Refund(ctx context.Context, in channel.RefundIn) (channel.Result, 
 	return channel.Result{State: state, ChannelOrderNo: out.TradeNo, Raw: string(node)}, nil
 }
 
+var _ channel.RefundQuerier = (*zft)(nil)
+
+// QueryRefund alipay.trade.fastpay.refund.query：只有 refund_status=REFUND_SUCCESS 是成功；
+// 没有该字段表示退款尚未成功（或未受理），按处理中对待，不据此判失败。
+func (z *zft) QueryRefund(ctx context.Context, ref channel.RefundRef) (channel.Result, error) {
+	node, err := call(ctx, "alipay.trade.fastpay.refund.query", map[string]any{
+		"out_trade_no": ref.PayOrderID, "out_request_no": ref.RefundOrderID,
+	}, ref.Provider, ref.Sub, "")
+	if err != nil {
+		res := resultOf(err, node)
+		res.State = channel.StateUnknown
+		return res, nil
+	}
+	var out struct {
+		Status  string `json:"refund_status"`
+		Amount  string `json:"refund_amount"`
+		TradeNo string `json:"trade_no"`
+	}
+	_ = json.Unmarshal(node, &out)
+	res := channel.Result{State: channel.StateWaiting, ChannelOrderNo: out.TradeNo, Raw: string(node)}
+	if out.Status == "REFUND_SUCCESS" {
+		res.State, res.Amount = channel.StateSuccess, fenOf(out.Amount)
+	}
+	return res, nil
+}
+
 // ParseNotify 验签 form 回调。trade_status TRADE_SUCCESS/FINISHED → SUCCESS。
 func (z *zft) ParseNotify(r *http.Request, provider map[string]string) (channel.Notify, error) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))

@@ -156,6 +156,7 @@ Registered by `if_code` at startup (`wxpay_partner`, `wxpay_ecommerce`, `alipay_
 
 - Order expiry: the expiry is passed to the channel at pay time (`time_expire`). Past `expired_at`: query first (it may have just been paid); still payable → close upstream, then `closed`; channel has no such trade or is unreachable → `closed` locally after a 10-minute grace.
 - Reissue: `paying` orders with no terminal notify get polled (`Query`) on a backoff — the callback can be lost, the query cannot double-charge because of CAS.
+- Unknown-result recovery: refunds and divisions whose submission result is unknown stay `created`/`pending` and are resubmitted with the **same** number (both channels deduplicate on it; a new number could pay twice); processing refunds are queried. Each sweep holds a row lease (`pay_worker_lease`), so one replica runs it.
 - Applyment polling: states `submitted|channel_auditing|need_sign|need_verify` polled until terminal (channels don't always push).
 - Reconciliation: daily cron pulls the channel bill (WeChat `/v3/bill/tradebill`, Alipay `bill.downloadurl.query`), diffs against local terminal orders, writes `pay_recon_diff` (missing locally, missing upstream, amount mismatch).
 

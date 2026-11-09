@@ -143,6 +143,31 @@ func TestZFT_PayAndMoneyMovementsClassifyErrors(t *testing.T) {
 	}
 }
 
+func TestZFT_QueryRefund(t *testing.T) {
+	g, prov, sub := newGatewayStub(t)
+	z, ctx := &zft{}, context.Background()
+	ref := channel.RefundRef{RefundOrderID: "R1", PayOrderID: "P1", Provider: prov, Sub: sub}
+	g.reply(map[string]string{"code": "10000", "msg": "Success", "refund_status": "REFUND_SUCCESS", "refund_amount": "5.00", "trade_no": "T1"})
+	if res, _ := z.QueryRefund(ctx, ref); res.State != channel.StateSuccess || res.Amount != 500 {
+		t.Fatalf("refund success: %+v", res)
+	}
+	g.mu.Lock()
+	reqNo := g.biz["out_request_no"]
+	g.mu.Unlock()
+	if reqNo != "R1" {
+		t.Fatalf("out_request_no = %v", reqNo)
+	}
+	// 没有 refund_status：退款还没成功，不能判失败。
+	g.reply(map[string]string{"code": "10000", "msg": "Success", "trade_no": "T1"})
+	if res, _ := z.QueryRefund(ctx, ref); res.State != channel.StateWaiting {
+		t.Fatalf("no status: %+v", res)
+	}
+	g.reply(fail("40004", "ACQ.SYSTEM_ERROR"))
+	if res, _ := z.QueryRefund(ctx, ref); res.State != channel.StateUnknown {
+		t.Fatalf("query error: %+v", res)
+	}
+}
+
 func TestZFT_NotifyRefundStatusAndAmount(t *testing.T) {
 	privPEM, pubPEM, _ := testKeyPair(t)
 	prov := map[string]string{"alipay_public_key": pubPEM}

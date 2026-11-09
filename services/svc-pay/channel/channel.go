@@ -75,6 +75,20 @@ type RefundIn struct {
 	Sub           map[string]string
 }
 
+// RefundRef 查询退款定位。
+type RefundRef struct {
+	RefundOrderID  string // 我们的退款单号（微信 out_refund_no / 支付宝 out_request_no）
+	PayOrderID     string
+	ChannelOrderNo string // 渠道退款单号，可空
+	Provider       map[string]string
+	Sub            map[string]string
+}
+
+// RefundQuerier 能查询退款结果的渠道（可选能力）：处理中的退款靠它推进，而不是只等回调。
+type RefundQuerier interface {
+	QueryRefund(ctx context.Context, ref RefundRef) (Result, error)
+}
+
 // Notify 渠道回调验签解密后的结果。
 type Notify struct {
 	OrderID   string
