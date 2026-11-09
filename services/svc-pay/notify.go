@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"platfarm/svc-pay/channel"
@@ -23,7 +24,70 @@ var retryLadder = []time.Duration{
 	10 * time.Minute, 30 * time.Minute, time.Hour,
 }
 
-var notifyClient = &http.Client{Timeout: 10 * time.Second}
+// notifyClient 投递下游通知。notify_url 来自商户输入：连接时按解析后的真实 IP 拒绝内网与保留地址
+// （只看 URL 里的字面 IP 挡不住解析到内网的域名），且不跟随重定向（3xx 记为投递失败）。
+var notifyClient = newNotifyClient(publicIP)
+
+func newNotifyClient(allow func(net.IP) bool) *http.Client {
+	dialer := &net.Dialer{Timeout: 5 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return err
+		}
+		if ip := net.ParseIP(host); ip == nil || !allow(ip) {
+			return fmt.Errorf("notify_url 解析到非公网地址 %s，已拒绝", host)
+		}
+		return nil
+	}}
+	return &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Transport: &http.Transport{
+			Proxy:               nil, // 直连：经代理时拨号检查看到的只是代理地址
+			DialContext:         dialer.DialContext,
+			TLSHandshakeTimeout: 5 * time.Second,
+			MaxIdleConns:        32,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+}
+
+var reservedNets = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, cidr := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15",
+		"198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4", "64:ff9b::/96", "2001:db8::/32"} {
+		_, n, _ := net.ParseCIDR(cidr)
+		out = append(out, n)
+	}
+	return out
+}()
+
+// publicIP 只放行公网单播地址：回环、私网、链路本地、组播、未指定、CGNAT 与文档/保留段都拒绝。
+func publicIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsMulticast() {
+		return false
+	}
+	for _, n := range reservedNets {
+		if n.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// validNotifyURL 收下商户 notify_url 时的静态检查：https、有主机、不带账号口令、字面 IP 须是公网。
+// 域名解析到哪里在投递时由 notifyClient 再查。
+func validNotifyURL(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+		return false
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil && !publicIP(ip) {
+		return false
+	}
+	return !strings.EqualFold(u.Hostname(), "localhost")
+}
 
 // enqueueNotify 按单号重读后入通知队列（终态动作之外的补发入口）。
 func enqueueNotify(ctx context.Context, orderType, orderID string) error {
@@ -205,13 +269,21 @@ func deliverDue(ctx context.Context) error {
 		return err
 	}
 	var batch []dueNotify
+	var ids []int64
 	for rows.Next() {
 		var d dueNotify
 		if rows.Scan(&d.id, &d.url, &d.payload, &d.count, &d.limit) == nil {
 			batch = append(batch, d)
+			ids = append(ids, d.id)
 		}
 	}
 	rows.Close()
+	// 提交前先占租约：行锁随事务释放，没有租约的话其他副本会立刻再取到同一批，重复投递。
+	if len(ids) > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE pay_notify SET next_retry_at=now()+interval '5 minutes' WHERE id = ANY($1)`, ids); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -239,14 +311,10 @@ func deliverDue(ctx context.Context) error {
 	return nil
 }
 
-// postNotify 把 payload POST 给商户。仅 https，且拒绝内网地址——notify_url 来自外部输入。
+// postNotify 把 payload POST 给商户。仅 https；内网目标在连接时拒绝；重定向不跟随。
 func postNotify(ctx context.Context, target, payload string) (string, bool) {
-	u, err := url.Parse(target)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
-		return "notify_url 必须是 https", false
-	}
-	if hostIsPrivate(u.Hostname()) {
-		return "notify_url 指向内网地址，已拒绝", false
+	if !validNotifyURL(target) {
+		return "notify_url 必须是公网 https 地址", false
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(payload))
 	if err != nil {
@@ -258,16 +326,12 @@ func postNotify(ctx context.Context, target, payload string) (string, bool) {
 		return err.Error(), false
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode/100 == 3 {
+		return fmt.Sprintf("HTTP %d 重定向，已拒绝跟随", resp.StatusCode), false
+	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	text := strings.TrimSpace(string(body))
 	return text, resp.StatusCode/100 == 2 && strings.EqualFold(text, "SUCCESS")
-}
-
-func hostIsPrivate(host string) bool {
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
-	}
-	return false
 }
 
 func trunc(s string, n int) string {

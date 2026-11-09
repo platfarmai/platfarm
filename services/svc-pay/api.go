@@ -110,8 +110,8 @@ func handleCreateOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "mchOrderNo、wayCode、subject、amount 必填且金额为正"})
 		return
 	}
-	if in.NotifyURL != "" && !httpsURL(in.NotifyURL) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "notifyUrl 必须是 https"})
+	if in.NotifyURL != "" && !validNotifyURL(in.NotifyURL) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "notifyUrl 必须是公网 https 地址"})
 		return
 	}
 	ctx := c.Request.Context()
@@ -391,8 +391,8 @@ func handleCreateRefund(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "mchOrderNo、mchRefundNo、refundAmount 必填"})
 		return
 	}
-	if in.NotifyURL != "" && !httpsURL(in.NotifyURL) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "notifyUrl 必须是 https"})
+	if in.NotifyURL != "" && !validNotifyURL(in.NotifyURL) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "notifyUrl 必须是公网 https 地址"})
 		return
 	}
 	ctx := c.Request.Context()
@@ -500,8 +500,6 @@ func resolveParams(ctx context.Context, mch Merchant, ifCode string) (map[string
 	}
 	return provider, sub, nil
 }
-
-func httpsURL(s string) bool { return len(s) > 8 && s[:8] == "https://" }
 
 func or(v, def string) string {
 	if v == "" {

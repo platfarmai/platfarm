@@ -26,7 +26,7 @@ Design references (studied, not vendored): [jeepay](https://github.com/jeequan/j
 | Operator console SSO shell | `admin_ui` (specs/006) |
 | Partner API identity + quota | app tokens (specs/009) — see signing note below |
 
-A merchant belongs to a **tenant**: one tenant is one platform customer and may own many merchants. All rows carry `tenant_id`; queries filter by `claims.tenantId` (0 = platform admin, sees all).
+A merchant belongs to a **tenant**: one tenant is one platform customer and may own many merchants. All rows carry `tenant_id`; every admin read and write is scoped to `claims.tenantId`. Only the platform admin (`role=admin`) crosses tenants; tenant 0 is the platform's own tenant (auth's "unassigned"), not a see-all scope. A merchant may hang under an ISV of its own tenant or a platform ISV (tenant 0); ISV credentials and reconciliation batches belong to the ISV's tenant.
 
 ### Fund model is a property of the channel account, not of the platform
 
@@ -150,7 +150,7 @@ Registered by `if_code` at startup (`wxpay_partner`, `wxpay_ecommerce`, `alipay_
 
 1. **Merchant API** — `open_api` routes gated by app-token scope. Money endpoints additionally require a **request signature**: HMAC-SHA256 over `app_id + timestamp + nonce + body` with `app_secret`, ±5 min window, nonce cached in Redis for replay rejection. The app token answers "who / quota"; the signature answers "untampered, not replayed".
 2. **Channel notify** — `public_routes: POST /notify/{ifCode}/{orderId}`. Signature verification inside the adapter; failure returns 400. State advance is CAS, so N deliveries change state once. On reaching a terminal state, write `pay_notify` and hand delivery to svc-jobs.
-3. **Downstream notify** — `pay_notify` row is the outbox (unique per order, so at most one stream). Delivery POSTs signed form/json to the merchant's `notify_url`; merchant replies `SUCCESS`. Retry delays 0, 30s, 60s, 150s, 10m, 30m, 1h, then `failed`. Schedule is driven by svc-jobs webhooks back into svc-pay, so no second worker framework exists.
+3. **Downstream notify** — `pay_notify` row is the outbox (unique per order, so at most one stream). Delivery POSTs signed form/json to the merchant's `notify_url`; merchant replies `SUCCESS`. `notify_url` is untrusted input: public https only, the resolved IP is checked at connect time (loopback/private/link-local/reserved refused) and redirects are not followed. Retry delays 0, 30s, 60s, 150s, 10m, 30m, 1h, then `failed`. Schedule is driven by svc-jobs webhooks back into svc-pay, so no second worker framework exists.
 
 ### Background work
 

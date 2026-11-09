@@ -136,17 +136,18 @@ type ReconBatch struct {
 	LocalAmount   int64  `json:"localAmount"`
 	DiffCount     int    `json:"diffCount"`
 	ErrMsg        string `json:"errMsg"`
+	TenantID      int    `json:"tenantId"`
 	CreatedAt     string `json:"createdAt"`
 	UpdatedAt     string `json:"updatedAt"`
 }
 
 const batchCols = `id, if_code, isv_no, bill_date::text, bill_type, state, channel_count, channel_amount, local_count,
-	local_amount, diff_count, err_msg, created_at::text, updated_at::text`
+	local_amount, diff_count, err_msg, tenant_id, created_at::text, updated_at::text`
 
 func scanBatch(row interface{ Scan(...any) error }) (ReconBatch, error) {
 	var b ReconBatch
 	err := row.Scan(&b.ID, &b.IfCode, &b.IsvNo, &b.BillDate, &b.BillType, &b.State, &b.ChannelCount, &b.ChannelAmount,
-		&b.LocalCount, &b.LocalAmount, &b.DiffCount, &b.ErrMsg, &b.CreatedAt, &b.UpdatedAt)
+		&b.LocalCount, &b.LocalAmount, &b.DiffCount, &b.ErrMsg, &b.TenantID, &b.CreatedAt, &b.UpdatedAt)
 	return b, err
 }
 
@@ -157,8 +158,10 @@ func runRecon(ctx context.Context, ifCode, isvNo string, billDate time.Time, bil
 	}
 	date := billDate.In(cst).Format("2006-01-02")
 	var id int64
-	err := db.QueryRow(ctx, `INSERT INTO pay_recon_batch (if_code, isv_no, bill_date, bill_type)
-		VALUES ($1,$2,$3,$4) ON CONFLICT (if_code, isv_no, bill_date, bill_type) DO UPDATE SET updated_at=now()
+	// 批次归属服务商所在租户：账单覆盖该服务商下所有商户。
+	err := db.QueryRow(ctx, `INSERT INTO pay_recon_batch (if_code, isv_no, bill_date, bill_type, tenant_id)
+		VALUES ($1,$2,$3,$4,COALESCE((SELECT tenant_id FROM pay_isv WHERE isv_no=$2), 0))
+		ON CONFLICT (if_code, isv_no, bill_date, bill_type) DO UPDATE SET updated_at=now()
 		RETURNING id`, ifCode, isvNo, date, billType).Scan(&id)
 	if err != nil {
 		return ReconBatch{}, err
@@ -269,7 +272,8 @@ func runDailyRecon(ctx context.Context, day time.Time) ([]ReconBatch, []string) 
 
 // handleRunRecon POST /admin/recon/run {ifCode, isvNo, billDate, billType, force}
 func handleRunRecon(c *gin.Context) {
-	if _, ok := requireRole(c, roleOperator); !ok {
+	claims, ok := requireRole(c, roleOperator)
+	if !ok {
 		return
 	}
 	var in struct {
@@ -288,6 +292,19 @@ func handleRunRecon(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "billDate 格式 YYYY-MM-DD"})
 		return
 	}
+	isvTenant, err := ownerTenant(c.Request.Context(), "isv", in.IsvNo)
+	if notFound(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "服务商不存在"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	// 服务商账单包含其下所有租户的交易：只有服务商所在租户能对账（平台服务商归平台）。
+	if denyOtherTenant(c, claims, isvTenant, "服务商") {
+		return
+	}
 	b, err := runRecon(c.Request.Context(), in.IfCode, in.IsvNo, day, in.BillType, in.Force)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -298,10 +315,13 @@ func handleRunRecon(c *gin.Context) {
 
 // handleListReconBatches GET /admin/recon/batches
 func handleListReconBatches(c *gin.Context) {
-	if _, ok := requireRole(c, roleOperator); !ok {
+	claims, ok := requireRole(c, roleOperator)
+	if !ok {
 		return
 	}
-	rows, err := db.Query(c.Request.Context(), `SELECT `+batchCols+` FROM pay_recon_batch ORDER BY bill_date DESC, id DESC LIMIT 200`)
+	scope, args := tenantScope(claims)
+	rows, err := db.Query(c.Request.Context(), `SELECT `+batchCols+` FROM pay_recon_batch WHERE `+scope+`
+		ORDER BY bill_date DESC, id DESC LIMIT 200`, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
@@ -318,7 +338,17 @@ func handleListReconBatches(c *gin.Context) {
 
 // handleListReconDiffs GET /admin/recon/batches/:id/diffs
 func handleListReconDiffs(c *gin.Context) {
-	if _, ok := requireRole(c, roleOperator); !ok {
+	claims, ok := requireRole(c, roleOperator)
+	if !ok {
+		return
+	}
+	var tenant int
+	err := db.QueryRow(c.Request.Context(), `SELECT tenant_id FROM pay_recon_batch WHERE id=$1`, c.Param("id")).Scan(&tenant)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "对账批次不存在"})
+		return
+	}
+	if denyOtherTenant(c, claims, tenant, "对账批次") {
 		return
 	}
 	rows, err := db.Query(c.Request.Context(), `SELECT id, diff_type, kind, local_id, channel_order_no, sub_mchid, local_amount,
@@ -355,6 +385,15 @@ func handleResolveReconDiff(c *gin.Context) {
 		Note string `json:"note"`
 	}
 	_ = c.ShouldBindJSON(&in)
+	var tenant int
+	if err := db.QueryRow(c.Request.Context(), `SELECT b.tenant_id FROM pay_recon_diff d
+		JOIN pay_recon_batch b ON b.id=d.batch_id WHERE d.id=$1`, c.Param("id")).Scan(&tenant); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "差异不存在"})
+		return
+	}
+	if denyOtherTenant(c, claims, tenant, "对账差异") {
+		return
+	}
 	tag, err := db.Exec(c.Request.Context(), `UPDATE pay_recon_diff SET resolved=true, note=$2 WHERE id=$1`,
 		c.Param("id"), trunc(claims.Username+": "+in.Note, 500))
 	if err != nil || tag.RowsAffected() == 0 {
@@ -404,7 +443,13 @@ func handleDailyRecon(c *gin.Context) {
 // handleEnsureReconSchedule POST /admin/recon/schedule {cron}：用调用者（须 admin）的 token 在 svc-jobs 建每日计划。
 // svc-jobs 的计划接口只认 admin 用户，所以这里不能用服务 token，必须转发操作者的身份。
 func handleEnsureReconSchedule(c *gin.Context) {
-	if _, ok := requireRole(c, roleOperator); !ok {
+	claims, ok := requireRole(c, roleOperator)
+	if !ok {
+		return
+	}
+	// 每日对账覆盖所有服务商，是平台级计划。
+	if !isPlatformAdmin(claims) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有平台管理员可以设置对账计划"})
 		return
 	}
 	var in struct {

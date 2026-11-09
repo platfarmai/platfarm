@@ -26,7 +26,7 @@
 | 运营后台 SSO 壳 | `admin_ui`（specs/006） |
 | 合作方 API 身份 + 配额 | app token（specs/009），签名约定见下 |
 
-商户归属于**租户**：一个租户是一个平台客户，其下可有多个商户。所有行带 `tenant_id`，查询按 `claims.tenantId` 过滤（0 = 平台管理员，可见全部）。
+商户归属于**租户**：一个租户是一个平台客户，其下可有多个商户。所有行带 `tenant_id`，管理端的每个读写都限定在 `claims.tenantId` 内。只有平台管理员（`role=admin`）跨租户；租户 0 是平台自己的租户（即 auth 的“未分配”），不是“看全部”。商户可以挂在本租户或平台（租户 0）的服务商下；服务商凭据与对账批次归服务商所在租户。
 
 ### 资金模式是渠道账户的属性，不是平台的属性
 
@@ -149,7 +149,7 @@ type OnboardingChannel interface {
 
 1. **商户 API** — `open_api` 路由由 app token 的 scope 把关。资金类接口额外要求**请求签名**：用 `app_secret` 对 `app_id + 时间戳 + 随机串 + body` 做 HMAC-SHA256，±5 分钟窗口，随机串进 Redis 防重放。app token 回答"你是谁、配额多少"，签名回答"没被篡改、不是重放"。
 2. **渠道回调** — `public_routes: POST /notify/{ifCode}/{orderId}`。验签在适配器内，失败返回 400。状态推进是 CAS，所以同一回调来 N 次只改变一次状态。到达终态后写 `pay_notify`，投递交给 svc-jobs。
-3. **下游通知** — `pay_notify` 行就是 outbox（每单一行，因此至多一条通知流）。投递时把签名后的内容 POST 到商户的 `notify_url`，商户回复 `SUCCESS`。重试间隔 0、30 秒、60 秒、150 秒、10 分、30 分、1 小时，之后记 `failed`。调度由 svc-jobs 回调 svc-pay 驱动，不再造第二套 worker 框架。
+3. **下游通知** — `pay_notify` 行就是 outbox（每单一行，因此至多一条通知流）。投递时把签名后的内容 POST 到商户的 `notify_url`，商户回复 `SUCCESS`。`notify_url` 是不可信输入：只接受公网 https，连接时按解析出的真实 IP 拒绝回环/私网/链路本地/保留地址，且不跟随重定向。重试间隔 0、30 秒、60 秒、150 秒、10 分、30 分、1 小时，之后记 `failed`。调度由 svc-jobs 回调 svc-pay 驱动，不再造第二套 worker 框架。
 
 ### 后台任务
 

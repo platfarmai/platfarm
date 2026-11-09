@@ -456,8 +456,7 @@ func handleCreateApplyment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "商户未挂服务商（isvNo 为空），无法进件"})
 		return
 	}
-	if claims.TenantId != 0 && mch.TenantID != claims.TenantId {
-		c.JSON(http.StatusForbidden, gin.H{"error": "商户不属于当前租户"})
+	if denyOtherTenant(c, claims, mch.TenantID, "商户") {
 		return
 	}
 	if problems := in.Payload.Problems(); len(problems) > 0 {
@@ -696,8 +695,8 @@ func handleListApplyments(c *gin.Context) {
 	if !ok {
 		return
 	}
-	sql := `SELECT ` + applymentCols + ` FROM pay_applyment WHERE (tenant_id=$1 OR $1=0)`
-	args := []any{claims.TenantId}
+	scope, args := tenantScope(claims)
+	sql := `SELECT ` + applymentCols + ` FROM pay_applyment WHERE ` + scope
 	if s := c.Query("state"); s != "" {
 		args = append(args, s)
 		sql += fmt.Sprintf(` AND state=$%d`, len(args))
@@ -750,8 +749,7 @@ func loadApplymentFor(c *gin.Context, claims *Claims) (ApplymentRow, bool) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return a, false
 	}
-	if claims.TenantId != 0 && a.TenantID != claims.TenantId {
-		c.JSON(http.StatusForbidden, gin.H{"error": "申请单不属于当前租户"})
+	if denyOtherTenant(c, claims, a.TenantID, "申请单") {
 		return a, false
 	}
 	return a, true

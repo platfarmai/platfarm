@@ -24,6 +24,40 @@ const (
 // roleChecker 可被测试替换。
 var roleChecker = grantsHasRole
 
+// 租户隔离：只有平台管理员（role=admin）跨租户；其他用户只能触达本租户的数据。
+// 租户 0 是平台自己的租户（auth 里也是“未分配”），不是“看全部”。
+func isPlatformAdmin(c *Claims) bool { return c.Role == "admin" }
+
+func inTenant(c *Claims, tenantID int) bool { return isPlatformAdmin(c) || c.TenantId == tenantID }
+
+// denyOtherTenant 对象不属于调用者租户时写 403 并返回 true。
+func denyOtherTenant(c *gin.Context, claims *Claims, tenantID int, what string) bool {
+	if inTenant(claims, tenantID) {
+		return false
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": what + "不属于当前租户"})
+	return true
+}
+
+// tenantScope 列表查询的租户条件，占用 $1、$2；后续参数从 $3 起编号。
+func tenantScope(c *Claims) (string, []any) {
+	return `($2::bool OR tenant_id=$1)`, []any{c.TenantId, isPlatformAdmin(c)}
+}
+
+// isvUsable 商户可以挂在本租户或平台（租户 0）的服务商下：平台作为服务商为各租户进件、收款。
+func isvUsable(isvTenant, mchTenant int) bool { return isvTenant == mchTenant || isvTenant == 0 }
+
+// ownerTenant 渠道参数归属（服务商或商户）的租户。
+func ownerTenant(ctx context.Context, ownerType, ownerID string) (int, error) {
+	if ownerType == "merchant" {
+		m, err := loadMerchant(ctx, ownerID)
+		return m.TenantID, err
+	}
+	var t int
+	err := db.QueryRow(ctx, `SELECT tenant_id FROM pay_isv WHERE isv_no=$1`, ownerID).Scan(&t)
+	return t, err
+}
+
 type roleCacheEntry struct {
 	ok  bool
 	exp time.Time

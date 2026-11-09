@@ -540,7 +540,8 @@ func handleBalance(c *gin.Context) {
 
 // handleAdminBalance GET /admin/balance?mchNo=&ifCode=
 func handleAdminBalance(c *gin.Context) {
-	if _, ok := requireRole(c, roleOperator); !ok {
+	claims, ok := requireRole(c, roleOperator)
+	if !ok {
 		return
 	}
 	mchNo, ifCode := c.Query("mchNo"), c.Query("ifCode")
@@ -551,6 +552,13 @@ func handleAdminBalance(c *gin.Context) {
 	mch, err := loadMerchant(c.Request.Context(), mchNo)
 	if notFound(err) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "商户不存在"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	if denyOtherTenant(c, claims, mch.TenantID, "商户") {
 		return
 	}
 	v, err := merchantBalance(c.Request.Context(), mch, ifCode)
@@ -567,8 +575,8 @@ func handleListWithdrawals(c *gin.Context) {
 	if !ok {
 		return
 	}
-	sql := `SELECT ` + withdrawCols + ` FROM pay_withdrawal WHERE (tenant_id=$1 OR $1=0)`
-	args := []any{claims.TenantId}
+	scope, args := tenantScope(claims)
+	sql := `SELECT ` + withdrawCols + ` FROM pay_withdrawal WHERE ` + scope
 	if m := c.Query("mchNo"); m != "" {
 		args = append(args, m)
 		sql += fmt.Sprintf(` AND mch_no=$%d`, len(args))
@@ -595,12 +603,20 @@ func handleListWithdrawals(c *gin.Context) {
 
 // handleSyncWithdrawal POST /admin/withdrawals/:no/sync
 func handleSyncWithdrawal(c *gin.Context) {
-	if _, ok := requireRole(c, roleOperator); !ok {
+	claims, ok := requireRole(c, roleOperator)
+	if !ok {
 		return
 	}
 	w, err := findWithdraw(c.Request.Context(), c.Param("no"))
 	if notFound(err) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "提现单不存在"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	if denyOtherTenant(c, claims, w.TenantID, "提现单") {
 		return
 	}
 	if w.State == withdrawSuccess || w.State == withdrawFailed {

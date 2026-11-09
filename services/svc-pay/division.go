@@ -513,8 +513,11 @@ func handleAddReceiver(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "商户不存在"})
 		return
 	}
-	if claims.TenantId != 0 && mch.TenantID != claims.TenantId {
-		c.JSON(http.StatusForbidden, gin.H{"error": "商户不属于当前租户"})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	if denyOtherTenant(c, claims, mch.TenantID, "商户") {
 		return
 	}
 	sh, err := channel.Sharing(in.IfCode)
@@ -557,12 +560,25 @@ func handleAddReceiver(c *gin.Context) {
 
 // handleListReceivers GET /admin/division/receivers?mchNo=
 func handleListReceivers(c *gin.Context) {
-	if _, ok := requireRole(c, roleOperator); !ok {
+	claims, ok := requireRole(c, roleOperator)
+	if !ok {
 		return
 	}
 	mchNo := c.Query("mchNo")
 	if mchNo == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "mchNo 必填"})
+		return
+	}
+	mch, err := loadMerchant(c.Request.Context(), mchNo)
+	if notFound(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "商户不存在"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	if denyOtherTenant(c, claims, mch.TenantID, "商户") {
 		return
 	}
 	items, err := loadReceivers(c.Request.Context(), mchNo, c.Query("ifCode"))
@@ -582,8 +598,8 @@ func handleListDivisions(c *gin.Context) {
 	if !ok {
 		return
 	}
-	sql := `SELECT ` + divisionCols + ` FROM pay_division WHERE (tenant_id=$1 OR $1=0)`
-	args := []any{claims.TenantId}
+	scope, args := tenantScope(claims)
+	sql := `SELECT ` + divisionCols + ` FROM pay_division WHERE ` + scope
 	if m := c.Query("mchNo"); m != "" {
 		args = append(args, m)
 		sql += fmt.Sprintf(` AND mch_no=$%d`, len(args))
@@ -610,12 +626,20 @@ func handleListDivisions(c *gin.Context) {
 
 // handleSyncDivision POST /admin/divisions/:no/sync
 func handleSyncDivision(c *gin.Context) {
-	if _, ok := requireRole(c, roleOperator); !ok {
+	claims, ok := requireRole(c, roleOperator)
+	if !ok {
 		return
 	}
 	d, err := findDivision(c.Request.Context(), c.Param("no"))
 	if notFound(err) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "分账单不存在"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	if denyOtherTenant(c, claims, d.TenantID, "分账单") {
 		return
 	}
 	if d.State != divisionAccepted && d.State != divisionPending {
@@ -636,9 +660,9 @@ func handleLedger(c *gin.Context) {
 	if !ok {
 		return
 	}
+	scope, args := tenantScope(claims)
 	sql := `SELECT id, mch_no, isv_no, if_code, kind, ref_type, ref_id, ref_sub, amount, memo, tenant_id, created_at::text
-		FROM pay_ledger WHERE (tenant_id=$1 OR $1=0)`
-	args := []any{claims.TenantId}
+		FROM pay_ledger WHERE ` + scope
 	if m := c.Query("mchNo"); m != "" {
 		args = append(args, m)
 		sql += fmt.Sprintf(` AND mch_no=$%d`, len(args))
