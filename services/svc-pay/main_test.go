@@ -149,6 +149,7 @@ type stubChannel struct {
 	shareNos      []string
 	queryRefund   channel.Result
 	refundQueries []string
+	uploadData    map[string]string // 文件名 → 渠道收到的字节
 }
 
 func (s *stubChannel) AddReceiver(_ context.Context, in channel.ReceiverIn) error {
@@ -330,10 +331,14 @@ func (s *stubChannel) resetLifecycle() {
 	s.closeErr, s.closeCalls, s.notify, s.lastProvider, s.refundRes, s.refundCalls = nil, 0, nil, nil, nil, nil
 	s.shareNos, s.queryRefund, s.refundQueries = nil, channel.Result{}, nil
 }
-func (s *stubChannel) UploadMedia(_ context.Context, filename string, _ []byte, _ map[string]string) (string, error) {
+func (s *stubChannel) UploadMedia(_ context.Context, filename string, data []byte, _ map[string]string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.uploads = append(s.uploads, filename)
+	if s.uploadData == nil {
+		s.uploadData = map[string]string{}
+	}
+	s.uploadData[filename] = string(data)
 	return "MEDIA-" + filename, nil
 }
 func (s *stubChannel) SubmitApplyment(_ context.Context, in channel.ApplymentIn) (channel.ApplymentResult, error) {

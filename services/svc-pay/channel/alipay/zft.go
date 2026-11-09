@@ -610,8 +610,14 @@ func (z *zft) UploadMedia(ctx context.Context, filename string, data []byte, pro
 }
 
 // SubmitApplyment ant.merchant.expand.indirect.zft.create。
+// 签约 / 结算支付宝账号必须显式给出（extra.alipay_logon_id）：联系人手机号不一定是二级商户本人的支付宝账号，
+// 用它兜底可能把签约和结算绑到别人的账户上。
 func (z *zft) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (channel.ApplymentResult, error) {
 	a := in.Payload
+	logonID := a.Extra["alipay_logon_id"]
+	if logonID == "" {
+		return channel.ApplymentResult{}, fmt.Errorf("直付通进件需要 extra.alipay_logon_id（二级商户签约与结算用的支付宝账号）")
+	}
 	biz := map[string]any{
 		"external_id": in.BusinessCode, "name": a.Subject.Name, "alias_name": a.Subject.ShortName,
 		"merchant_type": zftMerchantType(a.Subject.Type), "mcc": a.Subject.MCC,
@@ -629,8 +635,8 @@ func (z *zft) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (chan
 			"district_code": a.Business.Address.District, "address": a.Business.Address.Detail,
 		},
 		"service":                 zftServices(a.Business.Scene.Types),
-		"alipay_logon_id":         orDefault(a.Extra["alipay_logon_id"], a.Contact.Phone),
-		"binding_alipay_logon_id": orDefault(a.Extra["alipay_logon_id"], a.Contact.Phone),
+		"alipay_logon_id":         logonID,
+		"binding_alipay_logon_id": logonID,
 	}
 	if in.Media["license"] != "" {
 		biz["cert_image"] = in.Media["license"]
@@ -930,20 +936,33 @@ func parseAlipayBill(csv string) ([]channel.BillRow, error) {
 			continue
 		}
 		f := splitCSV(line)
+		// 业务明细只列已完成的资金动作：「业务类型」是交易/退款，不是交易状态。
+		// 退款行的「商户订单号」是原支付单号，退款单号在「退款批次号/请求号」（= 我们的 out_request_no）。
 		row := channel.BillRow{
-			TradeTime: get(f, "完成时间"), ChannelOrderNo: get(f, "支付宝交易号"),
-			OutTradeNo: get(f, "商户订单号"), TradeState: get(f, "业务类型"),
-			Amount: fenOf(get(f, "订单金额（元）")), Fee: fenOf(get(f, "服务费（元）")),
+			TradeTime: get(f, "完成时间"), ChannelOrderNo: get(f, "支付宝交易号"), OutTradeNo: get(f, "商户订单号"),
+			Fee: fenOf(get(f, "服务费（元）")),
 		}
-		if strings.Contains(row.TradeState, "退款") {
-			row.OutRefundNo = get(f, "商户订单号")
-			row.RefundAmount = fenOf(get(f, "订单金额（元）"))
+		switch bizType := get(f, "业务类型"); {
+		case strings.Contains(bizType, "退款"):
+			row.OutRefundNo = get(f, "退款批次号/请求号")
+			row.RefundAmount = absFen(fenOf(get(f, "订单金额（元）")))
 			row.RefundState = "SUCCESS"
-			row.Amount = 0
+		case strings.Contains(bizType, "交易"):
+			row.TradeState = "SUCCESS"
+			row.Amount = fenOf(get(f, "订单金额（元）"))
+		default:
+			continue // 其他资金动作（如分账、结算）不在本地支付/退款对账范围内
 		}
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+func absFen(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func splitCSV(line string) []string {

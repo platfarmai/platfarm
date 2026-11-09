@@ -41,6 +41,7 @@ type ApplymentRow struct {
 	PollCount          int             `json:"pollCount"`
 	NextPollAt         *time.Time      `json:"nextPollAt"`
 	CreatedBy          string          `json:"createdBy"`
+	EditedBy           string          `json:"editedBy"`
 	TenantID           int             `json:"tenantId"`
 	CreatedAt          time.Time       `json:"createdAt"`
 	UpdatedAt          time.Time       `json:"updatedAt"`
@@ -48,13 +49,13 @@ type ApplymentRow struct {
 
 const applymentCols = `applyment_id, isv_no, mch_no, if_code, business_code, payload, state, reject_reason, reviewer,
 	reviewed_at, channel_applyment_id, channel_state, channel_msg, sign_url, sub_mchid, unexpressed, poll_count,
-	next_poll_at, created_by, tenant_id, created_at, updated_at`
+	next_poll_at, created_by, edited_by, tenant_id, created_at, updated_at`
 
 func scanApplyment(row pgx.Row) (ApplymentRow, error) {
 	var a ApplymentRow
 	err := row.Scan(&a.ApplymentID, &a.IsvNo, &a.MchNo, &a.IfCode, &a.BusinessCode, &a.Payload, &a.State,
 		&a.RejectReason, &a.Reviewer, &a.ReviewedAt, &a.ChannelApplymentID, &a.ChannelState, &a.ChannelMsg,
-		&a.SignURL, &a.SubMchID, &a.Unexpressed, &a.PollCount, &a.NextPollAt, &a.CreatedBy, &a.TenantID,
+		&a.SignURL, &a.SubMchID, &a.Unexpressed, &a.PollCount, &a.NextPollAt, &a.CreatedBy, &a.EditedBy, &a.TenantID,
 		&a.CreatedAt, &a.UpdatedAt)
 	return a, err
 }
@@ -162,12 +163,17 @@ func storeMedia(ctx context.Context, bearer, applymentID string, images map[stri
 		if err != nil {
 			return fmt.Errorf("images.%s: %w", kind, err)
 		}
+		// 身份证、营业执照等证件照片与证件号同等敏感：落库加密。
+		sealed, err := sealBytes(f.Content)
+		if err != nil {
+			return err
+		}
 		if _, err := db.Exec(ctx, `INSERT INTO pay_applyment_media
-			(applyment_id, kind, file_id, filename, mime, size, sha256, content)
-			VALUES ($1,$2,$3,$4,$5,$6,'',$7)
+			(applyment_id, kind, file_id, filename, mime, size, sha256, content, content_sealed)
+			VALUES ($1,$2,$3,$4,$5,$6,'',$7,true)
 			ON CONFLICT (applyment_id, kind) DO UPDATE SET file_id=$3, filename=$4, mime=$5, size=$6,
-				content=$7, media_id='', uploaded_at=NULL`,
-			applymentID, kind, fileID, f.Filename, f.Mime, f.Size, f.Content); err != nil {
+				content=$7, content_sealed=true, media_id='', uploaded_at=NULL`,
+			applymentID, kind, fileID, f.Filename, f.Mime, f.Size, sealed); err != nil {
 			return err
 		}
 	}
@@ -177,7 +183,7 @@ func storeMedia(ctx context.Context, bearer, applymentID string, images map[stri
 func listMedia(ctx context.Context, applymentID string, withContent bool) ([]mediaRow, error) {
 	cols := `kind, file_id, filename, mime, size, media_id`
 	if withContent {
-		cols += `, content`
+		cols += `, content, content_sealed`
 	}
 	rows, err := db.Query(ctx, `SELECT `+cols+` FROM pay_applyment_media WHERE applyment_id=$1 ORDER BY kind`, applymentID)
 	if err != nil {
@@ -189,7 +195,13 @@ func listMedia(ctx context.Context, applymentID string, withContent bool) ([]med
 		var m mediaRow
 		var serr error
 		if withContent {
-			serr = rows.Scan(&m.Kind, &m.FileID, &m.Filename, &m.Mime, &m.Size, &m.MediaID, &m.Content)
+			var sealed bool
+			serr = rows.Scan(&m.Kind, &m.FileID, &m.Filename, &m.Mime, &m.Size, &m.MediaID, &m.Content, &sealed)
+			if serr == nil && sealed {
+				if m.Content, serr = openBytes(m.Content); serr != nil {
+					return nil, fmt.Errorf("解密图片 %s: %w", m.Kind, serr)
+				}
+			}
 		} else {
 			serr = rows.Scan(&m.Kind, &m.FileID, &m.Filename, &m.Mime, &m.Size, &m.MediaID)
 		}
@@ -378,8 +390,9 @@ func onApplymentFinished(ctx context.Context, a ApplymentRow, subMchID string) e
 		a.MchNo, a.IfCode, sealed, a.TenantID); err != nil {
 		return err
 	}
+	// 只补服务商归属，不动商户状态：被停用的商户不会因为进件完成而重新启用。
 	_, err = db.Exec(ctx, `UPDATE pay_merchant SET isv_no=CASE WHEN isv_no='' THEN $2 ELSE isv_no END,
-		state='active', updated_at=now() WHERE mch_no=$1`, a.MchNo, a.IsvNo)
+		updated_at=now() WHERE mch_no=$1`, a.MchNo, a.IsvNo)
 	return err
 }
 
@@ -462,8 +475,8 @@ func handleCreateApplyment(c *gin.Context) {
 	raw, _ := json.Marshal(sealed)
 	id := newOrderID("AP")
 	if _, err := db.Exec(ctx, `INSERT INTO pay_applyment
-		(applyment_id, isv_no, mch_no, if_code, business_code, payload, created_by, tenant_id)
-		VALUES ($1,$2,$3,$4,$1,$5,$6,$7)`, id, mch.IsvNo, mch.MchNo, in.IfCode, raw, claims.Username, mch.TenantID); err != nil {
+		(applyment_id, isv_no, mch_no, if_code, business_code, payload, created_by, edited_by, tenant_id)
+		VALUES ($1,$2,$3,$4,$1,$5,$6,$6,$7)`, id, mch.IsvNo, mch.MchNo, in.IfCode, raw, claims.Username, mch.TenantID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
 	}
@@ -514,7 +527,7 @@ func handleUpdateApplyment(c *gin.Context) {
 		return
 	}
 	tag, err := db.Exec(ctx, `UPDATE pay_applyment SET payload=$3, state='draft', reject_reason='', channel_msg='',
-		updated_at=now() WHERE applyment_id=$1 AND state=$2`, a.ApplymentID, a.State, raw)
+		edited_by=$4, updated_at=now() WHERE applyment_id=$1 AND state=$2`, a.ApplymentID, a.State, raw, claims.Username)
 	if err != nil || tag.RowsAffected() == 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "状态已变化，请刷新"})
 		return
@@ -556,6 +569,11 @@ func handleApproveApplyment(c *gin.Context) {
 	}
 	a, ok := loadApplymentFor(c, claims)
 	if !ok {
+		return
+	}
+	// 双人复核：录入或改过资料的人不能自己审核通过（同时持有 operator 与 reviewer 也不行）。
+	if !isPlatformAdmin(claims) && (a.CreatedBy == claims.Username || a.EditedBy == claims.Username) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "不能审核自己录入或修改的进件资料"})
 		return
 	}
 	ctx := c.Request.Context()

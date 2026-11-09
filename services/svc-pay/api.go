@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -56,11 +58,18 @@ func signedApp(c *gin.Context, body []byte) (App, Merchant, bool) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取应用密钥失败"})
 		return App{}, Merchant{}, false
 	}
-	if signPayload(secret, appID, ts, nonce, string(body)) != sig {
+	want := signPayload(secret, appID, ts, nonce, c.Request.Method, c.Request.URL.RequestURI(), string(body))
+	if !hmac.Equal([]byte(want), []byte(sig)) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "签名不匹配"})
 		return App{}, Merchant{}, false
 	}
-	if !rememberNonce(c.Request.Context(), appID, nonce) {
+	fresh, err := rememberNonce(c.Request.Context(), appID, nonce)
+	if err != nil {
+		// 防重放存储不可用时拒绝，而不是放行。
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "防重放校验暂不可用，请稍后重试"})
+		return App{}, Merchant{}, false
+	}
+	if !fresh {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "重复请求"})
 		return App{}, Merchant{}, false
 	}
@@ -72,13 +81,38 @@ func signedApp(c *gin.Context, body []byte) (App, Merchant, bool) {
 	return app, mch, true
 }
 
-// rememberNonce 记录一次性随机串。无 Redis 时跳过（单副本 dev），返回 true。
-func rememberNonce(ctx context.Context, appID, nonce string) bool {
+// rememberNonce 记录一次性随机串，已见过返回 false。Redis 出错返回 error（调用方拒绝请求）；
+// 没配 Redis 时用进程内缓存——单副本有效，多副本必须配 Redis。
+func rememberNonce(ctx context.Context, appID, nonce string) (bool, error) {
 	if rdb == nil {
-		return true
+		return localNonces.remember(appID+":"+nonce, nonceTTL), nil
 	}
-	ok, err := rdb.SetNX(ctx, "pay:nonce:"+appID+":"+nonce, "1", nonceTTL).Result()
-	return err != nil || ok
+	return rdb.SetNX(ctx, "pay:nonce:"+appID+":"+nonce, "1", nonceTTL).Result()
+}
+
+type nonceCache struct {
+	mu   sync.Mutex
+	seen map[string]time.Time
+}
+
+var localNonces = &nonceCache{seen: map[string]time.Time{}}
+
+func (n *nonceCache) remember(key string, ttl time.Duration) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	now := time.Now()
+	if exp, ok := n.seen[key]; ok && now.Before(exp) {
+		return false
+	}
+	if len(n.seen) > 50000 {
+		for k, exp := range n.seen {
+			if now.After(exp) {
+				delete(n.seen, k)
+			}
+		}
+	}
+	n.seen[key] = now.Add(ttl)
+	return true
 }
 
 type createOrderIn struct {

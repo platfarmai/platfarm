@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -650,7 +651,19 @@ func handleListReceivers(c *gin.Context) {
 	if items == nil {
 		items = []Receiver{}
 	}
+	for i := range items {
+		items[i].Name = maskName(items[i].Name)
+	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// maskName 接收方姓名/名称对外脱敏：只留第一个字。
+func maskName(s string) string {
+	r := []rune(s)
+	if len(r) <= 1 {
+		return strings.Repeat("*", len(r))
+	}
+	return string(r[0]) + strings.Repeat("*", len(r)-1)
 }
 
 // handleListDivisions GET /admin/divisions?mchNo=&state=

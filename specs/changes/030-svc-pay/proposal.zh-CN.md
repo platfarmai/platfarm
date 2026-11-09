@@ -147,7 +147,7 @@ type OnboardingChannel interface {
 
 ### 三条入口
 
-1. **商户 API** — `open_api` 路由由 app token 的 scope 把关。资金类接口额外要求**请求签名**：用 `app_secret` 对 `app_id + 时间戳 + 随机串 + body` 做 HMAC-SHA256，±5 分钟窗口，随机串进 Redis 防重放。app token 回答"你是谁、配额多少"，签名回答"没被篡改、不是重放"。
+1. **商户 API** — `open_api` 路由由 app token 的 scope 把关。资金类接口额外要求**请求签名**：用 `app_secret` 对 `app_id \n 时间戳 \n 随机串 \n 请求方法 \n 请求 URI（路径 + 查询串）\n body` 做 HMAC-SHA256——方法与 URI 参与签名，截获的签名不能挪到别的接口或别的单号上——±5 分钟窗口，常量时间比较，随机串进 Redis 防重放（Redis 出错时拒绝请求；未配置 Redis 时用进程内缓存，仅对单副本有效）。app token 回答"你是谁、配额多少"，签名回答"没被篡改、不是重放"。
 2. **渠道回调** — `public_routes: POST /notify/{ifCode}/{orderId}`。验签在适配器内，失败返回 400。状态推进是 CAS，所以同一回调来 N 次只改变一次状态。到达终态后写 `pay_notify`，投递交给 svc-jobs。
 3. **下游通知** — `pay_notify` 行就是 outbox（每单一行，因此至多一条通知流）。投递时把签名后的内容 POST 到商户的 `notify_url`，商户回复 `SUCCESS`。`notify_url` 是不可信输入：只接受公网 https，连接时按解析出的真实 IP 拒绝回环/私网/链路本地/保留地址，且不跟随重定向。重试间隔 0、30 秒、60 秒、150 秒、10 分、30 分、1 小时，之后记 `failed`。调度由 svc-jobs 回调 svc-pay 驱动，不再造第二套 worker 框架。
 
@@ -161,7 +161,7 @@ type OnboardingChannel interface {
 
 ### 管理台
 
-`admin_ui` 的 Vue3 + pf-ui 页面：进件审核队列（通过/驳回并写理由）、商户 + 应用 + 通道路由配置、订单/退款检索、对账差异。审核动作要求 `role: reviewer`（清单词汇表，bootstrap `platform-admin=reviewer`）。
+`admin_ui` 的 Vue3 + pf-ui 页面：进件审核队列（通过/驳回并写理由）、商户 + 应用 + 通道路由配置、订单/退款检索、对账差异。审核动作要求 `role: reviewer`（清单词汇表，bootstrap `platform-admin=reviewer`），且审核员不能通过自己录入或最后修改过的申请（双人复核，平台管理员除外）。营业执照、身份证等图片与证件号一样落库加密。
 
 ### 安全约定（支付特有）
 

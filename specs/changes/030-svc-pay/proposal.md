@@ -148,7 +148,7 @@ Registered by `if_code` at startup (`wxpay_partner`, `wxpay_ecommerce`, `alipay_
 
 ### Three inbound paths
 
-1. **Merchant API** — `open_api` routes gated by app-token scope. Money endpoints additionally require a **request signature**: HMAC-SHA256 over `app_id + timestamp + nonce + body` with `app_secret`, ±5 min window, nonce cached in Redis for replay rejection. The app token answers "who / quota"; the signature answers "untampered, not replayed".
+1. **Merchant API** — `open_api` routes gated by app-token scope. Money endpoints additionally require a **request signature**: HMAC-SHA256 with `app_secret` over `app_id \n timestamp \n nonce \n METHOD \n request-URI (path + query) \n body` — method and URI are signed so a captured signature cannot be replayed against another endpoint or order number — ±5 min window, constant-time comparison, nonce cached in Redis for replay rejection (Redis errors reject the request; without Redis an in-process cache is used, single replica only). The app token answers "who / quota"; the signature answers "untampered, not replayed".
 2. **Channel notify** — `public_routes: POST /notify/{ifCode}/{orderId}`. Signature verification inside the adapter; failure returns 400. State advance is CAS, so N deliveries change state once. On reaching a terminal state, write `pay_notify` and hand delivery to svc-jobs.
 3. **Downstream notify** — `pay_notify` row is the outbox (unique per order, so at most one stream). Delivery POSTs signed form/json to the merchant's `notify_url`; merchant replies `SUCCESS`. `notify_url` is untrusted input: public https only, the resolved IP is checked at connect time (loopback/private/link-local/reserved refused) and redirects are not followed. Retry delays 0, 30s, 60s, 150s, 10m, 30m, 1h, then `failed`. Schedule is driven by svc-jobs webhooks back into svc-pay, so no second worker framework exists.
 
@@ -162,7 +162,7 @@ Registered by `if_code` at startup (`wxpay_partner`, `wxpay_ecommerce`, `alipay_
 
 ### Console
 
-`admin_ui` Vue3 + pf-ui page: applyment review queue (approve/reject with reason), merchant + app + passage config, order/refund search, reconciliation diffs. Review actions require `role: reviewer` (manifest vocabulary, bootstrap `platform-admin=reviewer`).
+`admin_ui` Vue3 + pf-ui page: applyment review queue (approve/reject with reason), merchant + app + passage config, order/refund search, reconciliation diffs. Review actions require `role: reviewer` (manifest vocabulary, bootstrap `platform-admin=reviewer`), and a reviewer cannot approve an application they created or last edited (two-person rule; platform admin exempt). License / ID images are sealed at rest like the ID numbers.
 
 ### Security notes (payment-specific)
 

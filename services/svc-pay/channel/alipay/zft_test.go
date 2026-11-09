@@ -252,21 +252,34 @@ func sampleApplyment() channel.Applyment {
 	a.SettlementAccount.AccountName = "某某公司"
 	a.SettlementAccount.AccountNo = "62220000"
 	a.SettlementAccount.Bank = "工商银行"
+	a.Extra = map[string]string{"alipay_logon_id": "merchant@example.com"}
 	return a
 }
 
+func TestZFT_ApplymentNeedsExplicitAlipayAccount(t *testing.T) {
+	a := sampleApplyment()
+	a.Extra = nil
+	// 不能拿联系人手机号冒充签约/结算支付宝账号。
+	if _, err := (&zft{}).SubmitApplyment(context.Background(), channel.ApplymentIn{BusinessCode: "B1", Payload: a}); err == nil ||
+		!strings.Contains(err.Error(), "alipay_logon_id") {
+		t.Fatalf("missing alipay account: %v", err)
+	}
+}
+
 func TestZFT_BillParseAndBadSign(t *testing.T) {
-	csv := "#支付宝业务明细查询\n支付宝交易号,商户订单号,业务类型,订单金额（元）,服务费（元）,完成时间\n" +
-		"2020110122001,P1,交易,100.00,0.60,2020-11-01 10:00:00\n" +
-		"2020110122001,R1,退款,10.00,0.06,2020-11-01 11:00:00\n#合计\n"
+	csv := "#支付宝业务明细查询\n支付宝交易号,商户订单号,业务类型,订单金额（元）,服务费（元）,退款批次号/请求号,完成时间\n" +
+		"2020110122001,P1,交易,100.00,0.60,,2020-11-01 10:00:00\n" +
+		"2020110122001,P1,退款,-10.00,-0.06,R1,2020-11-01 11:00:00\n" +
+		"2020110122001,P1,分账,-5.00,0.00,,2020-11-01 12:00:00\n#合计\n"
 	rows, err := parseAlipayBill(csv)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("rows=%+v %v", rows, err)
 	}
-	if rows[0].OutTradeNo != "P1" || rows[0].Amount != 10000 || rows[0].Fee != 60 {
+	// 支付行必须带对账认得的成功状态，否则对账会把它整行跳过、什么差异也报不出来。
+	if rows[0].OutTradeNo != "P1" || rows[0].TradeState != "SUCCESS" || rows[0].Amount != 10000 || rows[0].Fee != 60 || rows[0].IsRefund() {
 		t.Fatalf("pay row = %+v", rows[0])
 	}
-	if rows[1].OutRefundNo != "R1" || rows[1].RefundAmount != 1000 || rows[1].Amount != 0 {
+	if rows[1].OutRefundNo != "R1" || rows[1].OutTradeNo != "P1" || rows[1].RefundAmount != 1000 || rows[1].RefundState != "SUCCESS" || rows[1].Amount != 0 {
 		t.Fatalf("refund row = %+v", rows[1])
 	}
 	if err := verifyResponse([]byte(`{"x":1}`), "alipay.trade.query", "not a pem"); err == nil {

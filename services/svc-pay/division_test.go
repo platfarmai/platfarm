@@ -67,7 +67,8 @@ func TestDivision_FlowIdempotentAndLedger(t *testing.T) {
 		map[string]any{"mchNo": "M-DIV", "ifCode": "stub_channel", "type": "PERSONAL_OPENID", "account": "BAD", "maxRatioBps": 500}), 502)
 	res := call(t, r, "op", http.MethodGet, "/api/pay/admin/division/receivers?mchNo=M-DIV", nil)
 	mustCode(t, res, 200)
-	if items := res.Body["items"].([]any); len(items) != 2 || items[0].(map[string]any)["name"] != "供应商甲" {
+	// 名称密封存储、对外脱敏；渠道拿到的是明文。
+	if items := res.Body["items"].([]any); len(items) != 2 || items[0].(map[string]any)["name"] != "供***" {
 		t.Fatalf("receivers = %v", items)
 	}
 	stub.mu.Lock()

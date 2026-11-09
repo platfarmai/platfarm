@@ -25,10 +25,11 @@ func mustSealParams(v map[string]string) (string, error) {
 	return seal(string(raw))
 }
 
-// signPayload 商户请求签名：HMAC-SHA256(app_secret, app_id\ntimestamp\nnonce\nbody)。
-func signPayload(secret, appID, ts, nonce, body string) string {
+// signPayload 商户请求签名：HMAC-SHA256(app_secret, app_id\ntimestamp\nnonce\nMETHOD\nrequest_uri\nbody)。
+// 方法与请求 URI（路径 + 查询串）参与签名：截获的签名不能挪到别的接口、别的单号上用。
+func signPayload(secret, appID, ts, nonce, method, uri, body string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(mac, "%s\n%s\n%s\n%s", appID, ts, nonce, body)
+	fmt.Fprintf(mac, "%s\n%s\n%s\n%s\n%s\n%s", appID, ts, nonce, method, uri, body)
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

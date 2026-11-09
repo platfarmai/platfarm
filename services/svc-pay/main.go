@@ -139,11 +139,11 @@ func registerAdminRoutes(admin *gin.RouterGroup) {
 	registerControlledRoutes(admin)
 }
 
-// dialRedis 防重放随机串的存储。PF_REDIS_URL 为空时返回 nil，随机串校验降级为跳过。
+// dialRedis 防重放随机串的存储。PF_REDIS_URL 为空时返回 nil，随机串改用进程内缓存（只对单副本有效）。
 func dialRedis() *redis.Client {
 	addr := os.Getenv("PF_REDIS_URL")
 	if addr == "" {
-		log.Println("PF_REDIS_URL 未配置：请求随机串防重放已关闭（仅限单副本 dev）")
+		log.Println("PF_REDIS_URL 未配置：请求随机串防重放仅在本进程内生效（多副本部署必须配置 Redis）")
 		return nil
 	}
 	opt, err := redis.ParseURL(addr)

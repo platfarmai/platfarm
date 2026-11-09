@@ -55,19 +55,11 @@ func seal(plain string) (string, error) {
 	if plain == "" {
 		return "", nil
 	}
-	block, err := aes.NewCipher(secretKey)
+	raw, err := sealBytes([]byte(plain))
 	if err != nil {
 		return "", err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(gcm.Seal(nonce, nonce, []byte(plain), nil)), nil
+	return hex.EncodeToString(raw), nil
 }
 
 // open 解密。
@@ -79,22 +71,44 @@ func open(sealed string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	block, err := aes.NewCipher(secretKey)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	if len(raw) < gcm.NonceSize() {
-		return "", errShortCipher
-	}
-	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
+	plain, err := openBytes(raw)
 	if err != nil {
 		return "", err
 	}
 	return string(plain), nil
+}
+
+func newGCM() (cipher.AEAD, error) {
+	block, err := aes.NewCipher(secretKey)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+// sealBytes 加密二进制（nonce || 密文），用于进件图片等大字段。
+func sealBytes(plain []byte) ([]byte, error) {
+	gcm, err := newGCM()
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	return gcm.Seal(nonce, nonce, plain, nil), nil
+}
+
+// openBytes 解密 sealBytes 的输出。
+func openBytes(raw []byte) ([]byte, error) {
+	gcm, err := newGCM()
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) < gcm.NonceSize() {
+		return nil, errShortCipher
+	}
+	return gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
 }
 
 var errShortCipher = errStr("ciphertext too short")

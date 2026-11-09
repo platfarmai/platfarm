@@ -46,7 +46,7 @@ func callSigned(t *testing.T, r *gin.Engine, appID, secret, method, path string,
 	req.Header.Set("X-Pay-App-Id", appID)
 	req.Header.Set("X-Pay-Timestamp", ts)
 	req.Header.Set("X-Pay-Nonce", nonce)
-	req.Header.Set("X-Pay-Signature", signPayload(secret, appID, ts, nonce, raw))
+	req.Header.Set("X-Pay-Signature", signPayload(secret, appID, ts, nonce, method, req.URL.RequestURI(), raw))
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	out := resp{Code: w.Code, Body: map[string]any{}}
