@@ -93,11 +93,13 @@ func requireRole(c *gin.Context, role string) (*Claims, bool) {
 func grantsHasRole(ctx context.Context, bearer string, userID int, role string) (bool, error) {
 	key := fmt.Sprintf("%d:%s", userID, role)
 	roleMu.Lock()
-	if e, ok := roleCache[key]; ok && time.Now().Before(e.exp) {
-		roleMu.Unlock()
-		return e.ok, nil
-	}
+	e, cached := roleCache[key]
 	roleMu.Unlock()
+	// 只复用“没有该角色”的结果，挡住无权限请求打满 svc-grants。
+	// “有该角色”不缓存：授权和撤销都在下一次请求生效，不靠过期的肯定结果。
+	if cached && time.Now().Before(e.exp) && !e.ok {
+		return false, nil
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, envOr("GRANTS_URL", "http://svc-grants:8080")+"/api/grants/mine", nil)
 	if err != nil {
@@ -130,7 +132,11 @@ func grantsHasRole(ctx context.Context, bearer string, userID int, role string) 
 		}
 	}
 	roleMu.Lock()
-	roleCache[key] = roleCacheEntry{ok: has, exp: time.Now().Add(roleCacheTTL)}
+	if has {
+		delete(roleCache, key)
+	} else {
+		roleCache[key] = roleCacheEntry{ok: false, exp: time.Now().Add(roleCacheTTL)}
+	}
 	roleMu.Unlock()
 	return has, nil
 }
