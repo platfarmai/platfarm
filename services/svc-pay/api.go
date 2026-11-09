@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -157,35 +158,37 @@ func handleCreateOrder(c *gin.Context) {
 	}
 	if dup {
 		order = saved
+		if order.ExpiredAt != nil && order.ExpiredAt.Before(time.Now()) {
+			c.JSON(http.StatusConflict, gin.H{"error": "订单已过期，请换商户订单号重新下单", "order": saved})
+			return
+		}
+	}
+	var expireAt time.Time
+	if order.ExpiredAt != nil {
+		expireAt = *order.ExpiredAt
 	}
 
 	res, err := ch.Pay(ctx, channel.PayIn{
 		PayOrderID: order.PayOrderID, WayCode: order.WayCode, Amount: order.Amount,
 		Currency: order.Currency, Subject: order.Subject, Body: order.Body, ClientIP: order.ClientIP,
 		NotifyURL: publicNotifyURL(order.IfCode, order.PayOrderID), ChannelExtra: in.ChannelExtra,
-		Provider: provider, Sub: sub,
+		ExpireAt: expireAt, Provider: provider, Sub: sub,
 	})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	to := foldOrderState(res)
-	if to == "" {
+	// 同步即终态的渠道（如付款码）也在这里记台账 / 入通知，不能只靠回调。
+	saved, err = applyOrderResult(ctx, order, res)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新订单失败"})
+		return
+	}
+	if foldOrderState(res) == "" {
 		// UNKNOWN：渠道超时或状态不明，不动订单，交给补单查询。
-		saved, _ = findOrder(ctx, order.PayOrderID)
 		c.JSON(http.StatusOK, gin.H{"order": saved, "pending": true})
 		return
 	}
-	advanced, _ := casOrder(ctx, order.PayOrderID, orderCreated, to,
-		res.ChannelOrderNo, res.ChannelUser, res.ErrCode, res.ErrMsg)
-	if !advanced {
-		saved, _ = findOrder(ctx, order.PayOrderID)
-		c.JSON(http.StatusOK, gin.H{"order": saved, "idempotent": true})
-		return
-	}
-	// 同步即终态的渠道（如付款码）也要记台账 / 通知，不能只靠回调。
-	onOrderTerminal(ctx, order.PayOrderID, to)
-	saved, _ = findOrder(ctx, order.PayOrderID)
 	c.JSON(http.StatusOK, gin.H{"order": saved, "credential": res.Credential})
 }
 
@@ -232,10 +235,18 @@ func handleCloseOrder(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "渠道参数未配置"})
 		return
 	}
-	if err := ch.Close(ctx, channel.OrderRef{
+	ref := channel.OrderRef{
 		PayOrderID: order.PayOrderID, ChannelOrderNo: order.ChannelOrderNo, WayCode: order.WayCode,
 		Provider: provider, Sub: sub,
-	}); err != nil {
+	}
+	if err := ch.Close(ctx, ref); err != nil {
+		// 关单失败最常见的原因是已经付了：查一次，已支付就如实推进并告诉商户。
+		if res, qerr := ch.Query(ctx, ref); qerr == nil && res.State == channel.StateSuccess {
+			if paid, aerr := applyOrderResult(ctx, order, res); aerr == nil {
+				c.JSON(http.StatusConflict, gin.H{"error": "订单已支付，不能关闭", "order": paid})
+				return
+			}
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
@@ -247,7 +258,7 @@ func handleCloseOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"order": order})
 }
 
-// reconcileOrder 向渠道查一次未终态订单。成功或失败才推进并入通知队列。
+// reconcileOrder 向渠道查一次未终态订单，按确定结果推进（见 applyOrderResult）。
 func reconcileOrder(ctx context.Context, order Order) (Order, error) {
 	if order.State != orderCreated && order.State != orderPaying {
 		return order, nil
@@ -271,17 +282,72 @@ func reconcileOrder(ctx context.Context, order Order) (Order, error) {
 	if err != nil {
 		return order, err
 	}
+	return applyOrderResult(ctx, order, res)
+}
+
+var errAmountMismatch = errors.New("渠道金额与本地单据不一致")
+
+// applyOrderResult 按渠道结果推进支付单，只认确定结果：
+//   - UNKNOWN 不动；WAITING 只把 created 推到 paying；
+//   - SUCCESS / FAIL 把未终态的单推到终态（台账、下游通知同事务）；
+//   - 已关闭 / 已失败的单收到确定的 SUCCESS：钱已经收了，推进到 success 并标 LATE_PAYMENT，
+//     商户会收到成功通知（可再走退款），而不是被静默吞掉。
+//
+// 渠道报告的成功金额与订单不符时不推进，返回 errAmountMismatch。
+func applyOrderResult(ctx context.Context, o Order, res channel.Result) (Order, error) {
+	if res.State == channel.StateSuccess && res.Amount != 0 && res.Amount != o.Amount {
+		log.Printf(`{"event":"order_amount_mismatch","payOrderId":%q,"order":%d,"channel":%d}`, o.PayOrderID, o.Amount, res.Amount)
+		return o, errAmountMismatch
+	}
 	to := foldOrderState(res)
-	if to != orderSuccess && to != orderFailed {
-		return order, nil
+	var err error
+	switch {
+	case to == "":
+	case o.State == orderCreated || o.State == orderPaying:
+		if to != orderPaying {
+			_, err = finishOrder(ctx, o.PayOrderID, o.State, to, res.ChannelOrderNo, res.ChannelUser, res.ErrCode, res.ErrMsg)
+		} else if o.State == orderCreated {
+			_, err = casOrder(ctx, o.PayOrderID, orderCreated, orderPaying, res.ChannelOrderNo, res.ChannelUser, "", "")
+		}
+	case to == orderSuccess && (o.State == orderClosed || o.State == orderFailed):
+		var late bool
+		late, err = finishOrder(ctx, o.PayOrderID, o.State, orderSuccess, res.ChannelOrderNo, res.ChannelUser,
+			"LATE_PAYMENT", "订单已"+o.State+"后渠道确认已支付")
+		if late {
+			log.Printf(`{"event":"late_payment","payOrderId":%q,"from":%q,"amount":%d}`, o.PayOrderID, o.State, o.Amount)
+		}
 	}
-	advanced, err := casOrder(ctx, order.PayOrderID, order.State, to,
-		res.ChannelOrderNo, res.ChannelUser, res.ErrCode, res.ErrMsg)
-	if err != nil || !advanced {
-		return findOrder(ctx, order.PayOrderID)
+	if err != nil {
+		return o, err
 	}
-	onOrderTerminal(ctx, order.PayOrderID, to)
-	return findOrder(ctx, order.PayOrderID)
+	return findOrder(ctx, o.PayOrderID)
+}
+
+// applyRefundResult 按渠道结果推进退款单：UNKNOWN 保持原状态（created 由 worker 用原退款单号重提，
+// 渠道按单号幂等），只记下原因；WAITING 把 created 推到 processing；SUCCESS / FAIL 进终态。
+func applyRefundResult(ctx context.Context, r Refund, res channel.Result) (Refund, error) {
+	if res.State == channel.StateSuccess && res.Amount != 0 && res.Amount != r.RefundAmount {
+		log.Printf(`{"event":"refund_amount_mismatch","refundOrderId":%q,"refund":%d,"channel":%d}`, r.RefundOrderID, r.RefundAmount, res.Amount)
+		return r, errAmountMismatch
+	}
+	to := foldRefundState(res)
+	var err error
+	switch {
+	case r.State != refundCreated && r.State != refundProcessing:
+	case to == "":
+		_, err = db.Exec(ctx, `UPDATE pay_refund SET err_code=$2, err_msg=$3, updated_at=now()
+			WHERE refund_order_id=$1 AND state IN ('created','processing')`, r.RefundOrderID, res.ErrCode, trunc(res.ErrMsg, 500))
+	case to == refundProcessing:
+		if r.State == refundCreated {
+			_, err = casRefund(ctx, r.RefundOrderID, refundCreated, refundProcessing, res.ChannelOrderNo, res.ErrCode, trunc(res.ErrMsg, 500))
+		}
+	default:
+		_, err = finishRefund(ctx, r.RefundOrderID, r.State, to, res.ChannelOrderNo, res.ErrCode, trunc(res.ErrMsg, 500))
+	}
+	if err != nil {
+		return r, err
+	}
+	return findRefund(ctx, r.RefundOrderID)
 }
 
 func handleQueryOrder(c *gin.Context) {
@@ -323,6 +389,10 @@ func handleCreateRefund(c *gin.Context) {
 	var in createRefundIn
 	if json.Unmarshal(body, &in) != nil || in.MchOrderNo == "" || in.MchRefundNo == "" || in.RefundAmount <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "mchOrderNo、mchRefundNo、refundAmount 必填"})
+		return
+	}
+	if in.NotifyURL != "" && !httpsURL(in.NotifyURL) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "notifyUrl 必须是 https"})
 		return
 	}
 	ctx := c.Request.Context()
@@ -370,25 +440,20 @@ func handleCreateRefund(c *gin.Context) {
 		NotifyURL: publicNotifyURL(order.IfCode, saved.RefundOrderID), Provider: provider, Sub: sub,
 	})
 	if err != nil {
-		_, _ = casRefund(ctx, saved.RefundOrderID, refundCreated, refundFailed, "", "SYS", err.Error())
-		_ = rollupRefund(ctx, order.PayOrderID, saved.RefundAmount, false)
+		// 适配器在发出请求前就拒绝了（参数或能力问题）：渠道侧没有这笔退款，确定失败并退回额度。
+		_, _ = finishRefund(ctx, saved.RefundOrderID, refundCreated, refundFailed, "", "SYS", trunc(err.Error(), 500))
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	to := foldRefundState(res)
-	if to == "" {
-		saved, _ = findRefund(ctx, saved.RefundOrderID)
-		c.JSON(http.StatusOK, gin.H{"refund": saved, "pending": true})
-		return
-	}
-	if _, err := casRefund(ctx, saved.RefundOrderID, refundCreated, to, res.ChannelOrderNo, res.ErrCode, res.ErrMsg); err != nil {
+	saved, err = applyRefundResult(ctx, saved, res)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新退款单失败"})
 		return
 	}
-	if to == refundSuccess || to == refundFailed {
-		onRefundTerminal(ctx, saved, to)
+	if foldRefundState(res) == "" {
+		c.JSON(http.StatusOK, gin.H{"refund": saved, "pending": true})
+		return
 	}
-	saved, _ = findRefund(ctx, saved.RefundOrderID)
 	c.JSON(http.StatusOK, gin.H{"refund": saved})
 }
 

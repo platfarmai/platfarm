@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 )
 
-// 渠道返回四态。UNKNOWN（超时、验签失败）永远不推动订单状态。
+// 渠道返回四态。UNKNOWN（超时、验签失败、5xx、限频、系统繁忙、查无此单）永远不推动状态；
+// 只有渠道明确给出的终态才是 SUCCESS / FAIL。
 const (
 	StateSuccess = "SUCCESS"
 	StateFail    = "FAIL"
@@ -24,13 +26,14 @@ const (
 
 // Result 渠道调用的归一结果。
 type Result struct {
-	State            string // SUCCESS|FAIL|WAITING|UNKNOWN
-	ChannelOrderNo   string
-	ChannelUser      string
-	ErrCode          string
-	ErrMsg           string
-	Credential       any    // 返回给下游继续支付的数据（如 code_url、prepay_id）
-	Raw              string // 上游原文，仅排障，不回传下游
+	State          string // SUCCESS|FAIL|WAITING|UNKNOWN
+	ChannelOrderNo string
+	ChannelUser    string
+	Amount         int64 // 渠道报告的金额（分）：支付为订单金额，退款为本次退款金额；0 = 渠道未报告
+	ErrCode        string
+	ErrMsg         string
+	Credential     any    // 返回给下游继续支付的数据（如 code_url、prepay_id）
+	Raw            string // 上游原文，仅排障，不回传下游
 }
 
 // PayIn 下单输入。渠道参数由业务层解析好后传入，适配器不碰数据库。
@@ -44,6 +47,8 @@ type PayIn struct {
 	ClientIP     string
 	NotifyURL    string
 	ChannelExtra map[string]string
+	// ExpireAt 订单失效时间，传给渠道（微信 time_expire / 支付宝 time_expire），过期后渠道拒绝支付。
+	ExpireAt time.Time
 	// Provider 服务商参数，Sub 子商户参数，均为已解密的明文 map。
 	Provider map[string]string
 	Sub      map[string]string
@@ -72,11 +77,11 @@ type RefundIn struct {
 
 // Notify 渠道回调验签解密后的结果。
 type Notify struct {
-	OrderID        string
-	OrderType      string // pay|refund
-	Result         Result
-	Ack            int    // 回给渠道的 HTTP 状态
-	AckBody        string // 回给渠道的正文
+	OrderID   string
+	OrderType string // pay|refund
+	Result    Result
+	Ack       int    // 回给渠道的 HTTP 状态
+	AckBody   string // 回给渠道的正文
 }
 
 // PayChannel 一个渠道实现。实现必须并发安全。

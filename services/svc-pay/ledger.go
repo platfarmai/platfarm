@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/jackc/pgx/v5"
@@ -100,33 +101,69 @@ func proportional(total, part, whole int64) int64 {
 	return (num + whole/2) / whole
 }
 
-// onOrderTerminal 支付单到终态后的统一动作：成功记台账；成功/失败都入下游通知。
-func onOrderTerminal(ctx context.Context, payOrderID, to string) {
+// orderTerminalEffects 支付单进入终态后的统一动作：成功记手续费/返佣台账；成功或失败入下游通知。
+// tx 非空时与状态推进在同一事务里（见 finishOrder），任何一步失败整体回滚。
+func orderTerminalEffects(ctx context.Context, tx pgx.Tx, o Order, to string) error {
 	if to == orderSuccess {
-		if o, err := findOrder(ctx, payOrderID); err == nil {
-			if _, err := postLedger(ctx, nil, orderSettledEntries(o)); err != nil {
-				log.Printf("ledger order %s: %v", payOrderID, err)
-			}
+		if _, err := postLedger(ctx, tx, orderSettledEntries(o)); err != nil {
+			return fmt.Errorf("ledger order %s: %w", o.PayOrderID, err)
 		}
 	}
 	if to == orderSuccess || to == orderFailed {
-		_ = enqueueNotify(ctx, "pay", payOrderID)
+		if err := enqueueNotifyFields(ctx, qOf(tx), "pay", orderNotifyFields(o), o.TenantID); err != nil {
+			return fmt.Errorf("notify order %s: %w", o.PayOrderID, err)
+		}
+	}
+	return nil
+}
+
+// onOrderTerminal 对已在终态的支付单补做终态动作（幂等）。正常路径由 finishOrder 原子完成。
+func onOrderTerminal(ctx context.Context, payOrderID, to string) {
+	o, err := findOrder(ctx, payOrderID)
+	if err != nil {
+		log.Printf("order %s terminal effects: %v", payOrderID, err)
+		return
+	}
+	if err := orderTerminalEffects(ctx, nil, o, to); err != nil {
+		log.Printf("order %s terminal effects: %v", payOrderID, err)
 	}
 }
 
-// onRefundTerminal 退款单到终态：回写支付单 refund_state；成功记冲回台账；入通知。
-func onRefundTerminal(ctx context.Context, refund Refund, to string) {
+// refundTerminalEffects 退款单进入终态：回写支付单退款状态（失败退回额度）；成功记冲回台账；入下游通知。
+// tx 非空时与状态推进同事务（见 finishRefund）。
+func refundTerminalEffects(ctx context.Context, tx pgx.Tx, r Refund, to string) error {
+	q := qOf(tx)
 	success := to == refundSuccess
-	_ = rollupRefund(ctx, refund.PayOrderID, refund.RefundAmount, success)
+	if err := rollupRefund(ctx, q, r.PayOrderID, r.RefundAmount, success); err != nil {
+		return fmt.Errorf("rollup refund %s: %w", r.RefundOrderID, err)
+	}
 	if success {
-		if o, err := findOrder(ctx, refund.PayOrderID); err == nil {
-			if _, err := postLedger(ctx, nil, refundSettledEntries(o, refund)); err != nil {
-				log.Printf("ledger refund %s: %v", refund.RefundOrderID, err)
-			}
+		o, err := scanOrder(q.QueryRow(ctx, `SELECT `+orderCols+` FROM pay_order WHERE pay_order_id=$1`, r.PayOrderID))
+		if err != nil {
+			return err
+		}
+		if _, err := postLedger(ctx, tx, refundSettledEntries(o, r)); err != nil {
+			return fmt.Errorf("ledger refund %s: %w", r.RefundOrderID, err)
 		}
 	}
-	if refund.NotifyURL != "" {
-		_ = enqueueNotify(ctx, "refund", refund.RefundOrderID)
+	if r.NotifyURL != "" {
+		if err := enqueueNotifyFields(ctx, q, "refund", refundNotifyFields(r), r.TenantID); err != nil {
+			return fmt.Errorf("notify refund %s: %w", r.RefundOrderID, err)
+		}
+	}
+	return nil
+}
+
+// onRefundTerminal 对已在终态的退款单补做终态动作。失败分支会退回额度，只能在 CAS 成功后调用一次；
+// 正常路径由 finishRefund 原子完成。
+func onRefundTerminal(ctx context.Context, refund Refund, to string) {
+	r, err := findRefund(ctx, refund.RefundOrderID)
+	if err != nil {
+		log.Printf("refund %s terminal effects: %v", refund.RefundOrderID, err)
+		return
+	}
+	if err := refundTerminalEffects(ctx, nil, r, to); err != nil {
+		log.Printf("refund %s terminal effects: %v", refund.RefundOrderID, err)
 	}
 }
 

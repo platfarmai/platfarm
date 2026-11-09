@@ -1,11 +1,17 @@
 // 渠道回调入口。网关放行（public_routes），验签在渠道适配器内。
+// 回调地址形如 /notify/{ifCode}/{单号}：按单号找到商户，再取该商户在该渠道的服务商参数验签——
+// 每个服务商一套密钥，不能任取一个服务商去验。
 // 验签失败回 400；状态推进用 CAS，同一回调来多次只生效一次。
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -19,68 +25,74 @@ func handleChannelNotify(c *gin.Context) {
 		c.String(http.StatusNotFound, "unknown channel")
 		return
 	}
-	provider, err := providerForNotify(c, ifCode)
+	ctx := c.Request.Context()
+	pathID := strings.Trim(c.Param("orderId"), "/")
+	provider, err := providerForNotify(ctx, ifCode, pathID)
 	if err != nil {
-		log.Printf("notify %s: 找服务商参数失败: %v", ifCode, err)
-		c.String(http.StatusBadRequest, "unknown merchant")
+		log.Printf("notify %s/%s: %v", ifCode, pathID, err)
+		c.String(http.StatusBadRequest, "unknown order")
 		return
 	}
 	n, err := ch.ParseNotify(c.Request, provider)
 	if err != nil {
-		log.Printf("notify %s: 验签失败: %v", ifCode, err)
+		log.Printf("notify %s/%s: 验签失败: %v", ifCode, pathID, err)
 		c.String(http.StatusBadRequest, "signature rejected")
 		return
 	}
-	ctx := c.Request.Context()
 	if n.OrderType == "refund" {
-		applyRefundNotify(c, n)
+		applyRefundNotify(c, n, pathID)
 		return
 	}
-	order, ferr := findOrder(ctx, n.OrderID)
-	if notFound(ferr) {
-		// 不是我们的订单：回 204 让渠道停止重推，避免无意义重试。
-		c.Status(http.StatusNoContent)
+	if n.OrderID != pathID {
+		log.Printf("notify %s: 回调单号 %s 与回调地址单号 %s 不一致", ifCode, n.OrderID, pathID)
+		c.String(http.StatusBadRequest, "order mismatch")
 		return
 	}
-	if ferr != nil {
+	order, err := findOrder(ctx, n.OrderID)
+	if err != nil {
 		c.String(http.StatusInternalServerError, "query failed")
 		return
 	}
-	to := foldOrderState(n.Result)
-	if to != "" && (order.State == orderCreated || order.State == orderPaying) {
-		if advanced, _ := casOrder(ctx, order.PayOrderID, order.State, to,
-			n.Result.ChannelOrderNo, n.Result.ChannelUser, n.Result.ErrCode, n.Result.ErrMsg); advanced {
-			onOrderTerminal(ctx, order.PayOrderID, to)
-		}
+	if _, err := applyOrderResult(ctx, order, n.Result); err != nil {
+		notApplied(c, ifCode, order.PayOrderID, err)
+		return
 	}
 	ack(c, n)
 }
 
-func applyRefundNotify(c *gin.Context, n channel.Notify) {
+func applyRefundNotify(c *gin.Context, n channel.Notify, pathID string) {
 	ctx := c.Request.Context()
 	refund, err := findRefund(ctx, n.OrderID)
 	if notFound(err) {
-		c.Status(http.StatusNoContent)
+		// 不是我们发起的退款（或支付宝通知没带退款请求号）：确认收到，免得渠道无意义重推。
+		ack(c, n)
 		return
 	}
 	if err != nil {
 		c.String(http.StatusInternalServerError, "query failed")
 		return
 	}
-	to := foldRefundState(n.Result)
-	if to == refundProcessing {
-		// 渠道仍在处理：保持原状态，等下一次回调或补单。
-		ack(c, n)
+	// 微信退款回调打到退款单自己的地址；支付宝的退款状态通知打到原支付单地址。
+	if refund.RefundOrderID != pathID && refund.PayOrderID != pathID {
+		log.Printf("notify refund %s: 回调地址单号 %s 与退款单不符", refund.RefundOrderID, pathID)
+		c.String(http.StatusBadRequest, "refund mismatch")
 		return
 	}
-	if to != "" && (refund.State == refundCreated || refund.State == refundProcessing) {
-		if advanced, _ := casRefund(ctx, refund.RefundOrderID, refund.State, to,
-			n.Result.ChannelOrderNo, n.Result.ErrCode, n.Result.ErrMsg); advanced &&
-			(to == refundSuccess || to == refundFailed) {
-			onRefundTerminal(ctx, refund, to)
-		}
+	if _, err := applyRefundResult(ctx, refund, n.Result); err != nil {
+		notApplied(c, refund.IfCode, refund.RefundOrderID, err)
+		return
 	}
 	ack(c, n)
+}
+
+// notApplied 回调验签通过但没有落库：不确认，渠道会重推。金额不符的需人工核查。
+func notApplied(c *gin.Context, ifCode, id string, err error) {
+	log.Printf("notify %s/%s: 未生效: %v", ifCode, id, err)
+	if errors.Is(err, errAmountMismatch) {
+		c.String(http.StatusBadRequest, "amount mismatch")
+		return
+	}
+	c.String(http.StatusInternalServerError, "not applied")
 }
 
 func ack(c *gin.Context, n channel.Notify) {
@@ -91,16 +103,28 @@ func ack(c *gin.Context, n channel.Notify) {
 	c.Status(n.Ack)
 }
 
-// providerForNotify 回调只带渠道订单号，验签要用服务商参数。
-// M1 一个渠道对应一个服务商：取该 ifCode 下唯一的 isv 配置。
-func providerForNotify(c *gin.Context, ifCode string) (map[string]string, error) {
-	var ownerID string
-	err := db.QueryRow(c.Request.Context(), `SELECT owner_id FROM pay_channel_config
-		WHERE owner_type='isv' AND if_code=$1 AND state='active' LIMIT 1`, ifCode).Scan(&ownerID)
+// providerForNotify 回调地址里的单号（支付单或退款单）→ 商户 → 该商户在该渠道的服务商参数。
+func providerForNotify(ctx context.Context, ifCode, id string) (map[string]string, error) {
+	if id == "" {
+		return nil, errors.New("回调地址缺少单号")
+	}
+	var mchNo, orderIfCode string
+	if o, err := findOrder(ctx, id); err == nil {
+		mchNo, orderIfCode = o.MchNo, o.IfCode
+	} else if r, rerr := findRefund(ctx, id); rerr == nil {
+		mchNo, orderIfCode = r.MchNo, r.IfCode
+	} else {
+		return nil, fmt.Errorf("单号 %s 不存在", id)
+	}
+	if orderIfCode != ifCode {
+		return nil, fmt.Errorf("单号 %s 属于渠道 %s", id, orderIfCode)
+	}
+	mch, err := loadMerchant(ctx, mchNo)
 	if err != nil {
 		return nil, err
 	}
-	return loadChannelParams(c.Request.Context(), "isv", ownerID, ifCode)
+	provider, _, err := resolveParams(ctx, mch, ifCode)
+	return provider, err
 }
 
 // publicNotifyURL 渠道回调地址，必须公网可达。PAY_PUBLIC_BASE 未配置时退回占位，

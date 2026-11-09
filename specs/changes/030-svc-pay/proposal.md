@@ -100,6 +100,9 @@ Each channel adapter maps this payload onto the channel's request and reports ba
 
 ```
 pay_order     created → paying → success | failed | closed
+                                failed | closed → success  (late payment: channel confirms a payment
+                                                            after the order ended; err_code LATE_PAYMENT,
+                                                            merchant is re-notified)
                                 success: refund_state none → partial → full
 pay_refund    created → processing → success | failed | closed
 pay_applyment draft → reviewing → approved → submitted → channel_auditing
@@ -117,6 +120,8 @@ FAIL     explicit failure        → advance to failed
 WAITING  in progress upstream    → stay, wait for notify or reissue query
 UNKNOWN  timeout / bad signature → touch nothing, query later
 ```
+
+Only a definitive channel answer is `FAIL`. 5xx, rate limiting, `SYSTEM_ERROR`-class codes, "already paid / number already used" on resubmission, and every query error (including "trade does not exist" — Alipay creates the trade only when the payer opens the cashier) fold to `UNKNOWN`. A success whose channel-reported amount differs from the order is not applied.
 
 ### Channel adapters
 
@@ -149,7 +154,7 @@ Registered by `if_code` at startup (`wxpay_partner`, `wxpay_ecommerce`, `alipay_
 
 ### Background work
 
-- Order expiry: `paying` older than `expired_at` → close upstream, then `closed`.
+- Order expiry: the expiry is passed to the channel at pay time (`time_expire`). Past `expired_at`: query first (it may have just been paid); still payable → close upstream, then `closed`; channel has no such trade or is unreachable → `closed` locally after a 10-minute grace.
 - Reissue: `paying` orders with no terminal notify get polled (`Query`) on a backoff — the callback can be lost, the query cannot double-charge because of CAS.
 - Applyment polling: states `submitted|channel_auditing|need_sign|need_verify` polled until terminal (channels don't always push).
 - Reconciliation: daily cron pulls the channel bill (WeChat `/v3/bill/tradebill`, Alipay `bill.downloadurl.query`), diffs against local terminal orders, writes `pay_recon_diff` (missing locally, missing upstream, amount mismatch).

@@ -42,7 +42,7 @@ func (e *ecommerce) Pay(ctx context.Context, in channel.PayIn) (channel.Result, 
 	req := jsapiReq{
 		SpAppID: in.Provider["sp_appid"], SpMchID: in.Provider["sp_mchid"],
 		SubMchID: in.Sub["sub_mchid"], Description: in.Subject,
-		OutTradeNo: in.PayOrderID, NotifyURL: in.NotifyURL,
+		OutTradeNo: in.PayOrderID, NotifyURL: in.NotifyURL, TimeExpire: timeExpire(in.ExpireAt),
 		Amount:     map[string]any{"total": in.Amount, "currency": orDefault(in.Currency, "CNY")},
 		SettleInfo: map[string]any{"profit_sharing": true},
 	}
@@ -72,7 +72,7 @@ func (e *ecommerce) Pay(ctx context.Context, in channel.PayIn) (channel.Result, 
 		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		return failFromBody(raw), nil
+		return failOrUnknown(resp.StatusCode, raw, payAmbiguousCodes...), nil
 	}
 	var out struct {
 		PrepayID string `json:"prepay_id"`
@@ -143,7 +143,7 @@ func (e *ecommerce) combinePay(ctx context.Context, in channel.PayIn) (channel.R
 		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		return failFromBody(out), nil
+		return failOrUnknown(resp.StatusCode, out, payAmbiguousCodes...), nil
 	}
 	var parsed struct {
 		PrepayID string `json:"prepay_id"`
@@ -180,7 +180,7 @@ func (e *ecommerce) Query(ctx context.Context, ref channel.OrderRef) (channel.Re
 			return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 		}
 		if resp.StatusCode/100 != 2 {
-			return failFromBody(raw), nil
+			return unknownFromBody(raw), nil
 		}
 		return combineState(raw), nil
 	}
@@ -191,7 +191,7 @@ func (e *ecommerce) Query(ctx context.Context, ref channel.OrderRef) (channel.Re
 		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		return failFromBody(raw), nil
+		return unknownFromBody(raw), nil
 	}
 	return tradeState(raw), nil
 }
@@ -271,7 +271,7 @@ func (e *ecommerce) Refund(ctx context.Context, in channel.RefundIn) (channel.Re
 		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		return failFromBody(raw), nil
+		return failOrUnknown(resp.StatusCode, raw), nil
 	}
 	var out struct {
 		RefundID string `json:"refund_id"`
@@ -455,8 +455,7 @@ func (e *ecommerce) Share(ctx context.Context, in channel.DivisionIn) (channel.D
 		return channel.DivisionResult{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		f := failFromBody(raw)
-		return channel.DivisionResult{State: channel.StateFail, ErrCode: f.ErrCode, ErrMsg: f.ErrMsg, Raw: string(raw)}, nil
+		return divisionFailOrUnknown(resp.StatusCode, raw), nil
 	}
 	return parseEcommerceDivision(raw), nil
 }
@@ -486,8 +485,7 @@ func (e *ecommerce) FinishShare(ctx context.Context, ref channel.DivisionRef) (c
 		return channel.DivisionResult{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		f := failFromBody(raw)
-		return channel.DivisionResult{State: channel.StateFail, ErrCode: f.ErrCode, ErrMsg: f.ErrMsg, Raw: string(raw)}, nil
+		return divisionFailOrUnknown(resp.StatusCode, raw), nil
 	}
 	res := parseEcommerceDivision(raw)
 	if res.State == "" || res.State == channel.StateUnknown {
@@ -567,7 +565,7 @@ func (e *ecommerce) Withdraw(ctx context.Context, in channel.WithdrawIn) (channe
 		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		return failFromBody(raw), nil
+		return failOrUnknown(resp.StatusCode, raw), nil
 	}
 	var out struct {
 		WithdrawID string `json:"withdraw_id"`

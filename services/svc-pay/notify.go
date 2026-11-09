@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"platfarm/svc-pay/channel"
 )
 
 // 重试阶梯：立即、30 秒、60 秒、150 秒、10 分、30 分、1 小时，共 7 次。
@@ -23,12 +25,25 @@ var retryLadder = []time.Duration{
 
 var notifyClient = &http.Client{Timeout: 10 * time.Second}
 
-// enqueueNotify 终态订单入通知队列。已存在则直接返回（回调重放不产生第二条）。
+// enqueueNotify 按单号重读后入通知队列（终态动作之外的补发入口）。
 func enqueueNotify(ctx context.Context, orderType, orderID string) error {
-	fields, err := notifyFields(ctx, orderType, orderID)
+	if orderType == "refund" {
+		r, err := findRefund(ctx, orderID)
+		if err != nil {
+			return err
+		}
+		return enqueueNotifyFields(ctx, db, "refund", refundNotifyFields(r), r.TenantID)
+	}
+	o, err := findOrder(ctx, orderID)
 	if err != nil {
 		return err
 	}
+	return enqueueNotifyFields(ctx, db, "pay", orderNotifyFields(o), o.TenantID)
+}
+
+// enqueueNotifyFields 签名并写 outbox（每单一行）。同一单再次入队时：内容没变是空操作（回调重放）；
+// 内容变了（如关单后又确认支付成功）就换成新内容并重置投递，商户一定能收到最终状态。
+func enqueueNotifyFields(ctx context.Context, q querier, orderType string, fields map[string]string, tenantID int) error {
 	if fields["notifyUrl"] == "" {
 		return nil
 	}
@@ -42,53 +57,38 @@ func enqueueNotify(ctx context.Context, orderType, orderID string) error {
 	}
 	fields["sign"] = signFields(secret, fields)
 	payload, _ := json.Marshal(fields)
-	_, err = db.Exec(ctx, `INSERT INTO pay_notify
+	_, err = q.Exec(ctx, `INSERT INTO pay_notify
 		(order_id, order_type, mch_no, mch_order_no, app_id, notify_url, payload, tenant_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (order_id, order_type) DO NOTHING`,
-		orderID, orderType, fields["mchNo"], fields["mchOrderNo"], fields["appId"],
-		fields["notifyUrl"], string(payload), 0)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (order_id, order_type) DO UPDATE SET payload=EXCLUDED.payload, notify_url=EXCLUDED.notify_url,
+			state='notifying', notify_count=0, res_result='', next_retry_at=now(), updated_at=now()
+		WHERE pay_notify.payload IS DISTINCT FROM EXCLUDED.payload`,
+		fields["orderId"], orderType, fields["mchNo"], fields["mchOrderNo"], fields["appId"],
+		fields["notifyUrl"], string(payload), tenantID)
 	return err
 }
 
-func notifyFields(ctx context.Context, orderType, orderID string) (map[string]string, error) {
-	f := map[string]string{"orderType": orderType}
-	if orderType == "refund" {
-		r, err := findRefund(ctx, orderID)
-		if err != nil {
-			return nil, err
-		}
-		f["orderId"] = r.RefundOrderID
-		f["payOrderId"] = r.PayOrderID
-		f["mchNo"] = r.MchNo
-		f["mchOrderNo"] = r.MchRefundNo
-		f["appId"] = r.AppID
-		f["state"] = r.State
-		f["amount"] = fmt.Sprintf("%d", r.RefundAmount)
-		f["channelOrderNo"] = r.ChannelOrderNo
-		f["errCode"] = r.ErrCode
-		f["errMsg"] = r.ErrMsg
-		f["notifyUrl"] = r.NotifyURL
-		return f, nil
+func orderNotifyFields(o Order) map[string]string {
+	return map[string]string{
+		"orderType": "pay", "orderId": o.PayOrderID, "mchNo": o.MchNo, "mchOrderNo": o.MchOrderNo,
+		"appId": o.AppID, "state": o.State, "amount": fmt.Sprintf("%d", o.Amount),
+		"channelOrderNo": o.ChannelOrderNo, "errCode": o.ErrCode, "errMsg": o.ErrMsg, "notifyUrl": o.NotifyURL,
 	}
-	o, err := findOrder(ctx, orderID)
-	if err != nil {
-		return nil, err
-	}
-	f["orderId"] = o.PayOrderID
-	f["mchNo"] = o.MchNo
-	f["mchOrderNo"] = o.MchOrderNo
-	f["appId"] = o.AppID
-	f["state"] = o.State
-	f["amount"] = fmt.Sprintf("%d", o.Amount)
-	f["channelOrderNo"] = o.ChannelOrderNo
-	f["errCode"] = o.ErrCode
-	f["errMsg"] = o.ErrMsg
-	f["notifyUrl"] = o.NotifyURL
-	return f, nil
 }
 
-// reconcileWorker 补单：回调丢失时，对未终态订单主动查渠道。
-// 超过有效期仍未支付的，直接关单，不再打扰渠道。
+func refundNotifyFields(r Refund) map[string]string {
+	return map[string]string{
+		"orderType": "refund", "orderId": r.RefundOrderID, "payOrderId": r.PayOrderID, "mchNo": r.MchNo,
+		"mchOrderNo": r.MchRefundNo, "appId": r.AppID, "state": r.State, "amount": fmt.Sprintf("%d", r.RefundAmount),
+		"channelOrderNo": r.ChannelOrderNo, "errCode": r.ErrCode, "errMsg": r.ErrMsg, "notifyUrl": r.NotifyURL,
+	}
+}
+
+// expireGrace 过期后仍查不到渠道交易（或渠道不可达）时，再等多久本地关单。下单时已把失效时间传给渠道，
+// 过期后渠道拒绝支付；宽限只覆盖过期前一刻已经在付款中的单。
+const expireGrace = 10 * time.Minute
+
+// reconcileWorker 补单：回调丢失时，对未终态订单主动查渠道；过期的单先在渠道关单再本地关闭。
 func reconcileWorker(ctx context.Context) {
 	for {
 		select {
@@ -122,15 +122,52 @@ func sweepOrders(ctx context.Context) error {
 	}
 	now := time.Now()
 	for _, o := range batch {
+		var err error
 		if o.ExpiredAt != nil && o.ExpiredAt.Before(now) {
-			_, _ = casOrder(ctx, o.PayOrderID, o.State, orderClosed, "", "", "EXPIRED", "超时未支付")
-			continue
+			err = expireOrder(ctx, o)
+		} else {
+			_, err = reconcileOrder(ctx, o)
 		}
-		if _, err := reconcileOrder(ctx, o); err != nil {
+		if err != nil {
 			log.Printf("reconcile %s: %v", o.PayOrderID, err)
 		}
 	}
 	return nil
+}
+
+// expireOrder 过期未付的单：先查渠道（可能刚付成功）；渠道仍是待支付就在渠道关单，关成功才本地关闭；
+// 渠道查无此单或不可达时，过了宽限期再本地关闭。之后若仍收到支付成功，按迟到支付推进（applyOrderResult）。
+func expireOrder(ctx context.Context, o Order) error {
+	ch, err := channel.Get(o.IfCode)
+	if err != nil {
+		return err
+	}
+	ref := channel.OrderRef{PayOrderID: o.PayOrderID, ChannelOrderNo: o.ChannelOrderNo, WayCode: o.WayCode}
+	mch, err := loadMerchant(ctx, o.MchNo)
+	if err == nil {
+		ref.Provider, ref.Sub, err = resolveParams(ctx, mch, o.IfCode)
+	}
+	if err == nil {
+		res, qerr := ch.Query(ctx, ref)
+		switch {
+		case qerr != nil:
+		case res.State == channel.StateSuccess || res.State == channel.StateFail:
+			_, err := applyOrderResult(ctx, o, res)
+			return err
+		case res.State == channel.StateWaiting:
+			if cerr := ch.Close(ctx, ref); cerr != nil {
+				// 下一轮再试；若期间已付款，下一轮查询会拿到 SUCCESS。
+				return fmt.Errorf("渠道关单: %w", cerr)
+			}
+			_, err := casOrder(ctx, o.PayOrderID, o.State, orderClosed, "", "", "EXPIRED", "超时未支付，已在渠道关单")
+			return err
+		}
+	}
+	if o.ExpiredAt == nil || time.Since(*o.ExpiredAt) < expireGrace {
+		return nil
+	}
+	_, err = casOrder(ctx, o.PayOrderID, o.State, orderClosed, "", "", "EXPIRED", "超时未支付（渠道查无此单或不可达）")
+	return err
 }
 
 func notifyWorker(ctx context.Context) {

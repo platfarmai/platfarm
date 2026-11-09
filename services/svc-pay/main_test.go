@@ -138,6 +138,13 @@ type stubChannel struct {
 	shareCalls  int
 	billRows    []channel.BillRow
 	billErr     error
+	// 订单生命周期
+	closeErr     error
+	closeCalls   int
+	notify       *channel.Notify // ParseNotify 的返回；nil 表示验签失败
+	lastProvider map[string]string
+	refundRes    *channel.Result // Refund 的返回；nil 表示成功
+	refundCalls  []string
 }
 
 func (s *stubChannel) AddReceiver(_ context.Context, in channel.ReceiverIn) error {
@@ -246,12 +253,37 @@ func (s *stubChannel) Query(_ context.Context, _ channel.OrderRef) (channel.Resu
 	defer s.mu.Unlock()
 	return s.queryResult, nil
 }
-func (s *stubChannel) Close(context.Context, channel.OrderRef) error { return nil }
-func (s *stubChannel) Refund(context.Context, channel.RefundIn) (channel.Result, error) {
+func (s *stubChannel) Close(context.Context, channel.OrderRef) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeCalls++
+	return s.closeErr
+}
+func (s *stubChannel) Refund(_ context.Context, in channel.RefundIn) (channel.Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refundCalls = append(s.refundCalls, in.RefundOrderID)
+	if s.refundRes != nil {
+		return *s.refundRes, nil
+	}
 	return channel.Result{State: channel.StateSuccess, ChannelOrderNo: "RF1"}, nil
 }
-func (s *stubChannel) ParseNotify(*http.Request, map[string]string) (channel.Notify, error) {
-	return channel.Notify{}, fmt.Errorf("stub has no notify")
+func (s *stubChannel) ParseNotify(_ *http.Request, provider map[string]string) (channel.Notify, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastProvider = provider
+	if s.notify == nil {
+		return channel.Notify{}, fmt.Errorf("stub has no notify")
+	}
+	return *s.notify, nil
+}
+
+// reset 清掉生命周期相关的桩状态，用例之间互不影响。
+func (s *stubChannel) resetLifecycle() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queryResult, s.payResult = channel.Result{}, channel.Result{}
+	s.closeErr, s.closeCalls, s.notify, s.lastProvider, s.refundRes, s.refundCalls = nil, 0, nil, nil, nil, nil
 }
 func (s *stubChannel) UploadMedia(_ context.Context, filename string, _ []byte, _ map[string]string) (string, error) {
 	s.mu.Lock()

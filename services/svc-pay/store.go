@@ -8,12 +8,27 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// querier 连接池与事务共有的方法：要与状态推进同事务时传 tx，否则传 db。
+type querier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func qOf(tx pgx.Tx) querier {
+	if tx == nil {
+		return db
+	}
+	return tx
+}
 
 // 订单状态。
 const (
@@ -187,21 +202,61 @@ func insertOrder(ctx context.Context, o Order) (Order, bool, error) {
 	return saved, false, err
 }
 
-// casOrder 把订单从 from 推进到 to，并写渠道结果。返回 false 表示状态已被别人推进。
-func casOrder(ctx context.Context, payOrderID, from, to, channelOrderNo, channelUser, errCode, errMsg string) (bool, error) {
-	successAt := any(nil)
-	if to == orderSuccess {
-		successAt = time.Now()
-	}
-	tag, err := db.Exec(ctx, `UPDATE pay_order SET state=$3, channel_order_no=COALESCE(NULLIF($4,''), channel_order_no),
+const casOrderSQL = `UPDATE pay_order SET state=$3, channel_order_no=COALESCE(NULLIF($4,''), channel_order_no),
 		channel_user=COALESCE(NULLIF($5,''), channel_user), err_code=$6, err_msg=$7,
 		success_at=COALESCE($8, success_at), updated_at=now()
-		WHERE pay_order_id=$1 AND state=$2`,
-		payOrderID, from, to, channelOrderNo, channelUser, errCode, errMsg, successAt)
+		WHERE pay_order_id=$1 AND state=$2`
+
+// casOrder 把订单从 from 推进到 to，并写渠道结果，不做终态动作（终态用 finishOrder）。
+// 返回 false 表示状态已被别人推进。
+func casOrder(ctx context.Context, payOrderID, from, to, channelOrderNo, channelUser, errCode, errMsg string) (bool, error) {
+	tag, err := db.Exec(ctx, casOrderSQL, payOrderID, from, to, channelOrderNo, channelUser, errCode, errMsg, successAt(to))
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() == 1 {
+		logOrder(payOrderID, from, to, errCode)
+		return true, nil
+	}
+	return false, nil
+}
+
+func successAt(to string) any {
+	if to == orderSuccess {
+		return time.Now()
+	}
+	return nil
+}
+
+// finishOrder 把支付单从 from 推进到终态 to（CAS），并在同一事务里记台账、入下游通知：
+// 状态、台账、通知要么一起生效，要么都不生效——失败时状态不动，由渠道重推或补单重试。
+// 返回 false 表示状态已被别人推进，本次什么也没做。
+func finishOrder(ctx context.Context, payOrderID, from, to, channelOrderNo, channelUser, errCode, errMsg string) (bool, error) {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	o, err := scanOrder(tx.QueryRow(ctx, casOrderSQL+` RETURNING `+orderCols,
+		payOrderID, from, to, channelOrderNo, channelUser, errCode, errMsg, successAt(to)))
+	if notFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := orderTerminalEffects(ctx, tx, o, to); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	logOrder(payOrderID, from, to, errCode)
+	return true, nil
+}
+
+func logOrder(id, from, to, note string) {
+	log.Printf(`{"event":"order","payOrderId":%q,"from":%q,"to":%q,"note":%q}`, id, from, to, note)
 }
 
 const refundCols = `refund_order_id, pay_order_id, mch_no, isv_no, app_id, mch_refund_no, if_code, way_code,
@@ -274,33 +329,59 @@ func createRefund(ctx context.Context, r Refund) (Refund, error) {
 	return saved, tx.Commit(ctx)
 }
 
-// casRefund 推进退款单状态。
-func casRefund(ctx context.Context, refundOrderID, from, to, channelOrderNo, errCode, errMsg string) (bool, error) {
-	successAt := any(nil)
-	if to == refundSuccess {
-		successAt = time.Now()
-	}
-	tag, err := db.Exec(ctx, `UPDATE pay_refund SET state=$3,
+const casRefundSQL = `UPDATE pay_refund SET state=$3,
 		channel_order_no=COALESCE(NULLIF($4,''), channel_order_no), err_code=$5, err_msg=$6,
-		success_at=COALESCE($7, success_at), updated_at=now()
-		WHERE refund_order_id=$1 AND state=$2`,
-		refundOrderID, from, to, channelOrderNo, errCode, errMsg, successAt)
+		success_at=CASE WHEN $3='success' THEN now() ELSE success_at END, updated_at=now()
+		WHERE refund_order_id=$1 AND state=$2`
+
+// casRefund 推进退款单状态，不做终态动作（终态用 finishRefund）。
+func casRefund(ctx context.Context, refundOrderID, from, to, channelOrderNo, errCode, errMsg string) (bool, error) {
+	tag, err := db.Exec(ctx, casRefundSQL, refundOrderID, from, to, channelOrderNo, errCode, errMsg)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
 }
 
-// rollupRefund 按退款单终态回写支付单的 refund_state。失败则把占住的额度退回。
-func rollupRefund(ctx context.Context, payOrderID string, amount int64, success bool) error {
-	if !success {
-		_, err := db.Exec(ctx, `UPDATE pay_order SET refund_amount=refund_amount-$2, updated_at=now()
-			WHERE pay_order_id=$1`, payOrderID, amount)
-		return err
+// finishRefund 把退款单从 from 推进到终态 to（CAS），同一事务里回写支付单退款状态（失败退回额度）、
+// 记冲回台账、入下游通知。返回 false 表示状态已被别人推进。
+func finishRefund(ctx context.Context, refundOrderID, from, to, channelOrderNo, errCode, errMsg string) (bool, error) {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return false, err
 	}
-	_, err := db.Exec(ctx, `UPDATE pay_order SET refund_state = CASE
-		WHEN refund_amount >= amount THEN 'full' ELSE 'partial' END, updated_at=now()
-		WHERE pay_order_id=$1`, payOrderID)
+	defer func() { _ = tx.Rollback(ctx) }()
+	r, err := scanRefund(tx.QueryRow(ctx, casRefundSQL+` RETURNING `+refundCols,
+		refundOrderID, from, to, channelOrderNo, errCode, errMsg))
+	if notFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := refundTerminalEffects(ctx, tx, r, to); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	log.Printf(`{"event":"refund","refundOrderId":%q,"from":%q,"to":%q,"note":%q}`, refundOrderID, from, to, errCode)
+	return true, nil
+}
+
+// rollupRefund 按退款单终态回写支付单：失败把占住的额度退回；refund_state 只按已成功的退款计算
+// （处理中的退款占着额度但还没退出去）。
+func rollupRefund(ctx context.Context, q querier, payOrderID string, amount int64, success bool) error {
+	if !success {
+		if _, err := q.Exec(ctx, `UPDATE pay_order SET refund_amount=GREATEST(refund_amount-$2, 0), updated_at=now()
+			WHERE pay_order_id=$1`, payOrderID, amount); err != nil {
+			return err
+		}
+	}
+	_, err := q.Exec(ctx, `UPDATE pay_order o SET refund_state = CASE
+		WHEN s.done >= o.amount THEN 'full' WHEN s.done > 0 THEN 'partial' ELSE 'none' END, updated_at=now()
+		FROM (SELECT COALESCE(SUM(refund_amount),0) AS done FROM pay_refund WHERE pay_order_id=$1 AND state='success') s
+		WHERE o.pay_order_id=$1`, payOrderID)
 	return err
 }
 

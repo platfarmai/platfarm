@@ -67,10 +67,15 @@ func (p *partner) Share(ctx context.Context, in channel.DivisionIn) (channel.Div
 		return channel.DivisionResult{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		f := failFromBody(raw)
-		return channel.DivisionResult{State: channel.StateFail, ErrCode: f.ErrCode, ErrMsg: f.ErrMsg, Raw: string(raw)}, nil
+		return divisionFailOrUnknown(resp.StatusCode, raw), nil
 	}
 	return parseDivision(raw), nil
+}
+
+// divisionFailOrUnknown 分账类请求的非 2xx，规则同 failOrUnknown（同一 out_order_no 重试等同一次请求）。
+func divisionFailOrUnknown(status int, raw []byte) channel.DivisionResult {
+	r := failOrUnknown(status, raw)
+	return channel.DivisionResult{State: r.State, ErrCode: r.ErrCode, ErrMsg: r.ErrMsg, Raw: r.Raw}
 }
 
 // QueryShare GET /v3/profitsharing/orders/{out_order_no}?sub_mchid=&transaction_id=
@@ -98,8 +103,7 @@ func (p *partner) FinishShare(ctx context.Context, ref channel.DivisionRef) (cha
 		return channel.DivisionResult{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		f := failFromBody(raw)
-		return channel.DivisionResult{State: channel.StateFail, ErrCode: f.ErrCode, ErrMsg: f.ErrMsg, Raw: string(raw)}, nil
+		return divisionFailOrUnknown(resp.StatusCode, raw), nil
 	}
 	return parseDivision(raw), nil
 }

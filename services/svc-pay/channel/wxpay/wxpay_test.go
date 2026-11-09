@@ -38,10 +38,10 @@ func TestSignRoundTrip(t *testing.T) {
 func TestTradeStateFold(t *testing.T) {
 	cases := map[string]string{
 		`{"trade_state":"SUCCESS","transaction_id":"T1"}`:  "SUCCESS",
-		`{"trade_state":"NOTPAY"}`:                          "WAITING",
-		`{"trade_state":"USERPAYING"}`:                      "WAITING",
+		`{"trade_state":"NOTPAY"}`:                         "WAITING",
+		`{"trade_state":"USERPAYING"}`:                     "WAITING",
 		`{"trade_state":"CLOSED","trade_state_desc":"已关"}`: "FAIL",
-		`{"trade_state":"PAYERROR"}`:                        "FAIL",
+		`{"trade_state":"PAYERROR"}`:                       "FAIL",
 	}
 	for raw, want := range cases {
 		if got := tradeState([]byte(raw)).State; got != want {
@@ -54,7 +54,9 @@ func TestTradeStateFold(t *testing.T) {
 }
 
 func TestRefundState(t *testing.T) {
-	if refundState("PROCESSING") != "WAITING" || refundState("SUCCESS") != "SUCCESS" || refundState("ABNORMAL") != "FAIL" {
+	// ABNORMAL 需要在商户平台人工处理，资金可能改退到余额：不是失败，不能释放可退额度。
+	if refundState("PROCESSING") != "WAITING" || refundState("SUCCESS") != "SUCCESS" ||
+		refundState("ABNORMAL") != "WAITING" || refundState("CLOSED") != "FAIL" {
 		t.Fatal("refund state fold mismatch")
 	}
 }

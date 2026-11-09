@@ -21,11 +21,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"platfarm/svc-pay/channel"
 )
+
+// cst 微信接口的时间按东八区 RFC3339 传（time_expire 等）。
+var cst = time.FixedZone("CST", 8*3600)
 
 func init() { channel.Register(&partner{}) }
 
@@ -53,6 +57,7 @@ type jsapiReq struct {
 	SubAppID    string         `json:"sub_appid,omitempty"`
 	Description string         `json:"description"`
 	OutTradeNo  string         `json:"out_trade_no"`
+	TimeExpire  string         `json:"time_expire,omitempty"`
 	NotifyURL   string         `json:"notify_url"`
 	Amount      map[string]any `json:"amount"`
 	Payer       map[string]any `json:"payer,omitempty"`
@@ -65,7 +70,7 @@ func (p *partner) Pay(ctx context.Context, in channel.PayIn) (channel.Result, er
 	req := jsapiReq{
 		SpAppID: in.Provider["sp_appid"], SpMchID: in.Provider["sp_mchid"],
 		SubMchID: in.Sub["sub_mchid"], Description: in.Subject,
-		OutTradeNo: in.PayOrderID, NotifyURL: in.NotifyURL,
+		OutTradeNo: in.PayOrderID, NotifyURL: in.NotifyURL, TimeExpire: timeExpire(in.ExpireAt),
 		Amount: map[string]any{"total": in.Amount, "currency": orDefault(in.Currency, "CNY")},
 	}
 	// 分账订单必须在下单时声明，微信才会冻结待分资金（specs/030 M3）。
@@ -98,7 +103,7 @@ func (p *partner) Pay(ctx context.Context, in channel.PayIn) (channel.Result, er
 		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		return failFromBody(raw), nil
+		return failOrUnknown(resp.StatusCode, raw, payAmbiguousCodes...), nil
 	}
 	var out struct {
 		PrepayID string `json:"prepay_id"`
@@ -116,6 +121,17 @@ func (p *partner) Pay(ctx context.Context, in channel.PayIn) (channel.Result, er
 	return res, nil
 }
 
+// payAmbiguousCodes 下单时这些错误说明同号订单已在微信侧存在（可能已支付），不能据此判失败。
+var payAmbiguousCodes = []string{"ORDERPAID", "OUT_TRADE_NO_USED"}
+
+// timeExpire 订单失效时间（东八区 RFC3339）；零值不传，由微信默认。
+func timeExpire(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.In(cst).Format(time.RFC3339)
+}
+
 func (p *partner) Query(ctx context.Context, ref channel.OrderRef) (channel.Result, error) {
 	path := fmt.Sprintf("/v3/pay/partner/transactions/out-trade-no/%s?sp_mchid=%s&sub_mchid=%s",
 		ref.PayOrderID, ref.Provider["sp_mchid"], ref.Sub["sub_mchid"])
@@ -124,7 +140,7 @@ func (p *partner) Query(ctx context.Context, ref channel.OrderRef) (channel.Resu
 		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		return failFromBody(raw), nil
+		return unknownFromBody(raw), nil
 	}
 	return tradeState(raw), nil
 }
@@ -154,7 +170,7 @@ func (p *partner) Refund(ctx context.Context, in channel.RefundIn) (channel.Resu
 		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
 	}
 	if resp.StatusCode/100 != 2 {
-		return failFromBody(raw), nil
+		return failOrUnknown(resp.StatusCode, raw), nil
 	}
 	var out struct {
 		RefundID string `json:"refund_id"`
@@ -196,17 +212,20 @@ func (p *partner) ParseNotify(r *http.Request, provider map[string]string) (chan
 			OutRefundNo string `json:"out_refund_no"`
 			RefundID    string `json:"refund_id"`
 			Status      string `json:"refund_status"`
+			Amount      struct {
+				Refund int64 `json:"refund"`
+			} `json:"amount"`
 		}
 		_ = json.Unmarshal(plain, &d)
 		n.OrderID = d.OutRefundNo
-		n.Result = channel.Result{State: refundState(d.Status), ChannelOrderNo: d.RefundID, Raw: string(plain)}
+		n.Result = channel.Result{State: refundState(d.Status), ChannelOrderNo: d.RefundID, Amount: d.Amount.Refund, Raw: string(plain)}
+		if d.Status == "ABNORMAL" {
+			n.Result.ErrCode, n.Result.ErrMsg = "ABNORMAL", "退款异常，需在商户平台处理"
+		}
 		return n, nil
 	}
 	var d struct {
-		OutTradeNo    string `json:"out_trade_no"`
-		TransactionID string `json:"transaction_id"`
-		TradeState    string `json:"trade_state"`
-		PayerOpenID   string `json:"-"`
+		OutTradeNo string `json:"out_trade_no"`
 	}
 	_ = json.Unmarshal(plain, &d)
 	res := tradeState(plain)
@@ -430,16 +449,19 @@ func decryptAESGCM(apiV3Key, aad, nonce, ciphertext string) ([]byte, error) {
 
 func tradeState(raw []byte) channel.Result {
 	var d struct {
-		TradeState    string `json:"trade_state"`
+		TradeState     string `json:"trade_state"`
 		TradeStateDesc string `json:"trade_state_desc"`
-		TransactionID string `json:"transaction_id"`
-		Payer         struct {
+		TransactionID  string `json:"transaction_id"`
+		Amount         struct {
+			Total int64 `json:"total"`
+		} `json:"amount"`
+		Payer struct {
 			SpOpenID  string `json:"sp_openid"`
 			SubOpenID string `json:"sub_openid"`
 		} `json:"payer"`
 	}
 	_ = json.Unmarshal(raw, &d)
-	res := channel.Result{ChannelOrderNo: d.TransactionID, Raw: string(raw)}
+	res := channel.Result{ChannelOrderNo: d.TransactionID, Amount: d.Amount.Total, Raw: string(raw)}
 	if d.Payer.SpOpenID != "" {
 		res.ChannelUser = d.Payer.SpOpenID
 	} else {
@@ -457,13 +479,15 @@ func tradeState(raw []byte) channel.Result {
 	return res
 }
 
+// refundState 退款状态。ABNORMAL（退到卡失败，需在商户平台人工处理）不是终态：
+// 资金仍可能被人工改退到余额，按处理中保留，额度不释放。
 func refundState(status string) string {
 	switch status {
 	case "SUCCESS":
 		return channel.StateSuccess
-	case "CLOSED", "ABNORMAL":
+	case "CLOSED":
 		return channel.StateFail
-	default: // PROCESSING
+	default: // PROCESSING ABNORMAL
 		return channel.StateWaiting
 	}
 }
@@ -475,6 +499,27 @@ func failFromBody(raw []byte) channel.Result {
 	}
 	_ = json.Unmarshal(raw, &d)
 	return channel.Result{State: channel.StateFail, ErrCode: d.Code, ErrMsg: d.Message, Raw: string(raw)}
+}
+
+// ambiguousCodes 微信返回这些错误码时请求可能已被执行，或文档要求用原单号重试。
+var ambiguousCodes = []string{"SYSTEM_ERROR", "FREQUENCY_LIMITED", "BANK_ERROR"}
+
+// failOrUnknown 非 2xx 应答的四态：5xx、429 与系统类错误码是 UNKNOWN（原单号重试或查询确认），
+// extra 为该接口特有的“同号请求已存在”类错误码，同样是 UNKNOWN；其余 4xx 是确定失败。
+func failOrUnknown(status int, raw []byte, extra ...string) channel.Result {
+	res := failFromBody(raw)
+	if status >= 500 || status == http.StatusTooManyRequests ||
+		slices.Contains(ambiguousCodes, res.ErrCode) || slices.Contains(extra, res.ErrCode) {
+		res.State = channel.StateUnknown
+	}
+	return res
+}
+
+// unknownFromBody 查询类接口的非 2xx：查不到或查询失败都不是交易结论。
+func unknownFromBody(raw []byte) channel.Result {
+	res := failFromBody(raw)
+	res.State = channel.StateUnknown
+	return res
 }
 
 func orDefault(v, def string) string {

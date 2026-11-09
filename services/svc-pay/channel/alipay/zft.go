@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,9 @@ import (
 
 	"platfarm/svc-pay/channel"
 )
+
+// cst 支付宝网关时间（timestamp、time_expire）一律东八区。
+var cst = time.FixedZone("CST", 8*3600)
 
 func init() { channel.Register(&zft{}) }
 
@@ -69,7 +73,7 @@ func call(ctx context.Context, method string, biz map[string]any, prov, sub map[
 	}
 	params := map[string]string{
 		"app_id": prov["app_id"], "method": method, "format": "JSON", "charset": "utf-8",
-		"sign_type": "RSA2", "timestamp": time.Now().Format("2006-01-02 15:04:05"), "version": "1.0",
+		"sign_type": "RSA2", "timestamp": time.Now().In(cst).Format("2006-01-02 15:04:05"), "version": "1.0",
 		"biz_content": string(bizJSON),
 	}
 	if notifyURL != "" {
@@ -129,7 +133,7 @@ func pagePay(method string, biz map[string]any, prov, sub map[string]string, not
 	bizJSON, _ := json.Marshal(biz)
 	params := map[string]string{
 		"app_id": prov["app_id"], "method": method, "format": "JSON", "charset": "utf-8",
-		"sign_type": "RSA2", "timestamp": time.Now().Format("2006-01-02 15:04:05"), "version": "1.0",
+		"sign_type": "RSA2", "timestamp": time.Now().In(cst).Format("2006-01-02 15:04:05"), "version": "1.0",
 		"biz_content": string(bizJSON), "notify_url": notifyURL,
 	}
 	if returnURL != "" {
@@ -269,9 +273,30 @@ func responseNode(raw []byte, method string) (json.RawMessage, error) {
 
 func yuan(fen int64) string { return strconv.FormatFloat(float64(fen)/100, 'f', 2, 64) }
 
+// fenOf "12.34" → 1234，按十进制精确换算（不走浮点，负数同样正确）；非法返回 0。
 func fenOf(yuanStr string) int64 {
-	f, _ := strconv.ParseFloat(strings.TrimSpace(yuanStr), 64)
-	return int64(f*100 + 0.5)
+	s := strings.TrimSpace(yuanStr)
+	neg := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "-"), "+")
+	whole, frac, _ := strings.Cut(s, ".")
+	if whole == "" {
+		whole = "0"
+	}
+	if len(frac) > 2 {
+		frac = frac[:2]
+	}
+	for len(frac) < 2 {
+		frac += "0"
+	}
+	w, err1 := strconv.ParseInt(whole, 10, 64)
+	f, err2 := strconv.ParseInt(frac, 10, 64)
+	if err1 != nil || err2 != nil || f < 0 {
+		return 0
+	}
+	if neg {
+		return -(w*100 + f)
+	}
+	return w*100 + f
 }
 
 func trunc(s string, n int) string {
@@ -293,6 +318,10 @@ func (z *zft) Pay(ctx context.Context, in channel.PayIn) (channel.Result, error)
 	if in.Body != "" {
 		biz["body"] = in.Body
 	}
+	if !in.ExpireAt.IsZero() {
+		// 过期后支付宝拒绝支付：本地超时关单之后不会再冒出一笔成功交易。
+		biz["time_expire"] = in.ExpireAt.In(cst).Format("2006-01-02 15:04:05")
+	}
 	extend := map[string]string{"royalty_freeze": "true"}
 	if in.ChannelExtra["sys_service_provider_id"] != "" {
 		extend["sys_service_provider_id"] = in.ChannelExtra["sys_service_provider_id"]
@@ -303,7 +332,7 @@ func (z *zft) Pay(ctx context.Context, in channel.PayIn) (channel.Result, error)
 	case "ALI_QR":
 		node, err := call(ctx, "alipay.trade.precreate", biz, in.Provider, in.Sub, in.NotifyURL)
 		if err != nil {
-			return failOf(err, node), nil
+			return resultOf(err, node, payAmbiguousCodes...), nil
 		}
 		var out struct {
 			QRCode string `json:"qr_code"`
@@ -321,7 +350,7 @@ func (z *zft) Pay(ctx context.Context, in channel.PayIn) (channel.Result, error)
 		}
 		node, err := call(ctx, "alipay.trade.create", biz, in.Provider, in.Sub, in.NotifyURL)
 		if err != nil {
-			return failOf(err, node), nil
+			return resultOf(err, node, payAmbiguousCodes...), nil
 		}
 		var out struct {
 			TradeNo string `json:"trade_no"`
@@ -360,6 +389,11 @@ func productCode(way string) string {
 	}
 }
 
+// payAmbiguousCodes 下单时这些子码说明同号交易已在支付宝侧存在且可能已支付，不能据此判失败。
+var payAmbiguousCodes = []string{"ACQ.TRADE_HAS_SUCCESS"}
+
+// Query 查询失败一律是 UNKNOWN：ACQ.TRADE_NOT_EXIST 常见于用户还没扫码/进收银台（交易尚未创建），
+// 不是“支付失败”。
 func (z *zft) Query(ctx context.Context, ref channel.OrderRef) (channel.Result, error) {
 	biz := map[string]any{"out_trade_no": ref.PayOrderID}
 	if ref.ChannelOrderNo != "" {
@@ -367,16 +401,22 @@ func (z *zft) Query(ctx context.Context, ref channel.OrderRef) (channel.Result, 
 	}
 	node, err := call(ctx, "alipay.trade.query", biz, ref.Provider, ref.Sub, "")
 	if err != nil {
-		if node != nil {
-			return failOf(err, node), nil
-		}
-		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
+		res := resultOf(err, node)
+		res.State = channel.StateUnknown
+		return res, nil
 	}
 	return tradeState(node), nil
 }
 
+// Close 交易尚未创建（ACQ.TRADE_NOT_EXIST）时没有可关的东西，视为关闭成功；
+// 下单时已传 time_expire，过期后也无法再付。
 func (z *zft) Close(ctx context.Context, ref channel.OrderRef) error {
-	_, err := call(ctx, "alipay.trade.close", map[string]any{"out_trade_no": ref.PayOrderID}, ref.Provider, ref.Sub, "")
+	node, err := call(ctx, "alipay.trade.close", map[string]any{"out_trade_no": ref.PayOrderID}, ref.Provider, ref.Sub, "")
+	if err != nil {
+		if _, sub, _ := headOf(node); sub == "ACQ.TRADE_NOT_EXIST" {
+			return nil
+		}
+	}
 	return err
 }
 
@@ -387,10 +427,7 @@ func (z *zft) Refund(ctx context.Context, in channel.RefundIn) (channel.Result, 
 	}
 	node, err := call(ctx, "alipay.trade.refund", biz, in.Provider, in.Sub, "")
 	if err != nil {
-		if node != nil {
-			return failOf(err, node), nil
-		}
-		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
+		return resultOf(err, node), nil
 	}
 	var out struct {
 		TradeNo string `json:"trade_no"`
@@ -437,14 +474,19 @@ func (z *zft) ParseNotify(r *http.Request, provider map[string]string) (channel.
 	}
 	n := channel.Notify{Ack: http.StatusOK, AckBody: "success", OrderType: "pay", OrderID: params["out_trade_no"]}
 	res := channel.Result{ChannelOrderNo: params["trade_no"], ChannelUser: params["buyer_id"], Raw: string(body)}
+	// 退款引起的交易状态通知：部分退款 trade_status 仍是 TRADE_SUCCESS，全额退款变成 TRADE_CLOSED；
+	// 两者都带 gmt_refund 与 out_biz_no（退款请求号 = 我们的退款单号），含义都是“这笔退款已成功”。
+	if params["gmt_refund"] != "" {
+		n.OrderType, n.OrderID = "refund", params["out_biz_no"]
+		res.State = channel.StateSuccess
+		n.Result = res
+		return n, nil
+	}
+	res.Amount = fenOf(params["total_amount"])
 	switch params["trade_status"] {
 	case "TRADE_SUCCESS", "TRADE_FINISHED":
 		res.State = channel.StateSuccess
 	case "TRADE_CLOSED":
-		if params["refund_fee"] != "" || params["gmt_refund"] != "" {
-			n.OrderType = "refund"
-			n.OrderID = orDefault(params["out_biz_no"], params["out_trade_no"])
-		}
 		res.State = channel.StateFail
 		res.ErrCode = "TRADE_CLOSED"
 	default:
@@ -459,9 +501,10 @@ func tradeState(node json.RawMessage) channel.Result {
 		TradeStatus string `json:"trade_status"`
 		TradeNo     string `json:"trade_no"`
 		BuyerID     string `json:"buyer_user_id"`
+		TotalAmount string `json:"total_amount"`
 	}
 	_ = json.Unmarshal(node, &d)
-	res := channel.Result{ChannelOrderNo: d.TradeNo, ChannelUser: d.BuyerID, Raw: string(node)}
+	res := channel.Result{ChannelOrderNo: d.TradeNo, ChannelUser: d.BuyerID, Amount: fenOf(d.TotalAmount), Raw: string(node)}
 	switch d.TradeStatus {
 	case "TRADE_SUCCESS", "TRADE_FINISHED":
 		res.State = channel.StateSuccess
@@ -474,14 +517,40 @@ func tradeState(node json.RawMessage) channel.Result {
 	return res
 }
 
-func failOf(err error, node json.RawMessage) channel.Result {
-	res := channel.Result{State: channel.StateFail, ErrMsg: err.Error(), Raw: string(node)}
-	var head struct {
+// headOf 业务响应头 code / sub_code / sub_msg。
+func headOf(node json.RawMessage) (code, subCode, subMsg string) {
+	var h struct {
+		Code    string `json:"code"`
 		SubCode string `json:"sub_code"`
 		SubMsg  string `json:"sub_msg"`
 	}
-	if json.Unmarshal(node, &head) == nil && head.SubCode != "" {
-		res.ErrCode, res.ErrMsg = head.SubCode, head.SubMsg
+	if node != nil {
+		_ = json.Unmarshal(node, &h)
+	}
+	return h.Code, h.SubCode, h.SubMsg
+}
+
+// ambiguous 结果不确定的网关错误：20000 服务不可用、isp.* / aop.* 服务端异常、各类 SYSTEM_ERROR。
+// 支付宝要求用原请求号重试或先查询，不能当成业务失败。
+func ambiguous(code, subCode string) bool {
+	return code == "20000" || strings.HasPrefix(subCode, "isp.") || strings.HasPrefix(subCode, "aop.") ||
+		strings.Contains(subCode, "SYSTEM_ERROR")
+}
+
+// resultOf 把 call 的错误折叠成四态：拿不到验签通过的业务响应（网络、验签、网关 HTTP 错误）或模糊错误码是 UNKNOWN；
+// extra 是该接口特有的“同号请求可能已生效”子码，也是 UNKNOWN；其余明确的业务失败是 FAIL。
+func resultOf(err error, node json.RawMessage, extra ...string) channel.Result {
+	res := channel.Result{State: channel.StateUnknown, ErrMsg: err.Error(), Raw: string(node)}
+	if node == nil {
+		return res
+	}
+	code, sub, msg := headOf(node)
+	res.ErrCode = orDefault(sub, code)
+	if msg != "" {
+		res.ErrMsg = msg
+	}
+	if code != "" && !ambiguous(code, sub) && !slices.Contains(extra, sub) {
+		res.State = channel.StateFail
 	}
 	return res
 }
@@ -657,7 +726,9 @@ func (z *zft) Share(ctx context.Context, in channel.DivisionIn) (channel.Divisio
 		"royalty_parameters": params,
 	}, in.Provider, in.Sub, "")
 	if err != nil {
-		return channel.DivisionResult{State: channel.StateFail, ErrMsg: err.Error(), Raw: string(node)}, nil
+		// ACQ.SYSTEM_ERROR 等必须原参数、原请求号重试：UNKNOWN 让分账单留在 pending 由 worker 重提。
+		r := resultOf(err, node)
+		return channel.DivisionResult{State: r.State, ErrCode: r.ErrCode, ErrMsg: r.ErrMsg, Raw: r.Raw}, nil
 	}
 	var out struct {
 		TradeNo string `json:"trade_no"`
@@ -723,10 +794,7 @@ func (z *zft) SettleConfirm(ctx context.Context, in channel.SettleIn) (channel.R
 		}}},
 	}, in.Provider, in.Sub, "")
 	if err != nil {
-		if node != nil {
-			return failOf(err, node), nil
-		}
-		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
+		return resultOf(err, node), nil
 	}
 	var out struct {
 		TradeNo  string `json:"trade_no"`
@@ -757,10 +825,7 @@ func (z *zft) Withdraw(ctx context.Context, in channel.WithdrawIn) (channel.Resu
 		"remark": in.Remark,
 	}, in.Provider, in.Sub, "")
 	if err != nil {
-		if node != nil {
-			return failOf(err, node), nil
-		}
-		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
+		return resultOf(err, node), nil
 	}
 	var out struct {
 		OrderID string `json:"order_id"`

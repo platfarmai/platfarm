@@ -100,6 +100,8 @@ services/svc-pay/
 
 ```
 pay_order     created → paying → success | failed | closed
+                                failed | closed → success（迟到支付：订单结束后渠道确认已付款，
+                                                           err_code 记 LATE_PAYMENT，重新通知商户）
                                 success 后：refund_state none → partial → full
 pay_refund    created → processing → success | failed | closed
 pay_applyment draft → reviewing → approved → submitted → channel_auditing
@@ -117,6 +119,8 @@ FAIL     明确失败          → 推进到 failed
 WAITING  上游处理中        → 保持不动，等回调或补单查询
 UNKNOWN  超时 / 验签失败   → 什么都不改，稍后查询
 ```
+
+只有渠道明确的答复才是 `FAIL`。5xx、限频、`SYSTEM_ERROR` 类错误码、重提时的“已支付 / 单号已使用”，以及所有查询错误（包括“交易不存在”——支付宝要等付款人打开收银台才创建交易）都折叠成 `UNKNOWN`。渠道报的成功金额与订单不符时不推进。
 
 ### 渠道适配器
 
@@ -149,7 +153,7 @@ type OnboardingChannel interface {
 
 ### 后台任务
 
-- 订单超时：超过 `expired_at` 仍 `paying` → 先关上游单，再置 `closed`。
+- 订单超时：下单时把失效时间传给渠道（`time_expire`）。超过 `expired_at` 后先查渠道（可能刚付成功）；仍可支付 → 先关上游单，再置 `closed`；渠道查无此单或不可达 → 宽限 10 分钟后本地置 `closed`。
 - 补单：没有收到终态回调的 `paying` 订单按退避节奏轮询 `Query`——回调可能丢，而查询不会重复扣款，因为有 CAS。
 - 进件轮询：`submitted|channel_auditing|need_sign|need_verify` 轮询到终态（渠道不保证推送）。
 - 对账：每日定时拉取渠道账单（微信 `/v3/bill/tradebill`、支付宝 `bill.downloadurl.query`），与本地终态订单比对，差异写入 `pay_recon_diff`（本地缺失、上游缺失、金额不符）。
