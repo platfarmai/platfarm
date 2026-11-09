@@ -46,3 +46,11 @@ Phasing per proposal. A phase starts only when the previous one is green. Do not
 - [x] `wxpay_ecommerce` adapter: ecommerce applyments, combine/regular pay (profit_sharing frozen), profitsharing + finish-order, fund withdraw, balance
 - [x] withdrawal flow + balance invariant (ledger sum == reported balance) checked before any withdrawal; mismatch refuses without calling the channel
 - [x] QA (stub channel + real Postgres): settle-confirm → sharing → withdrawal balances to zero; direct-mode isv calling withdrawal/settle/balance → 400; idempotent withdrawal; over-balance and mismatch rejected; channel FAIL on a succeeded withdrawal posts `withdrawal_reversal`; adapter fake-server tests for both channels
+
+### M4 audit corrections (supersede the lines above where they differ)
+
+- [x] `alipay_zft` has no withdrawal and no platform balance: settle confirm pays the 二级商户's default settlement account. `uni.transfer` / `bill.balance.query` removed (they moved the platform's own money). Settle amount = trade amount − refunded (Alipay rule, not minus sharing); settle before royalty, `royalty_freeze` at settle time only when `holdForDivision`, last royalty carries `royalty_finish`; pay no longer freezes every order
+- [x] `wxpay_ecommerce`: sharing happens before settle (division never unfreezes; settle = finish-order releases the remainder, `NOT_ENOUGH` = already released); `WX_COMBINE` withdrawn until sub-orders are modelled (amount and receiving sub_mchid came from caller input)
+- [x] withdrawal rule replaces the exact-equality invariant: per merchant+channel advisory lock, debit posted at creation (hold), reversal on failure or bank return; allowed amount = min(ledger, channel available − unconfirmed submissions); ledger/channel difference shown as drift, not blocking. Migration `007_controlled_money.sql`
+- [x] settle and withdrawal results applied atomically with their ledger rows; unknown settle/withdrawal resubmitted with the same number; succeeded withdrawals re-queried for 10 days (bank return); settle refuses while a refund is in flight, refund refuses while a settle is pending; refunds after settle debit the withdrawable ledger
+- [ ] sandbox / real-channel verification of the corrected ZFT settle → royalty flow and the ecommerce finish-order / withdrawal flow

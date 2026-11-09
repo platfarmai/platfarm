@@ -213,22 +213,26 @@ type controlledStub struct {
 	queryRes      channel.Result
 	settleCalls   int
 	withdrawCalls int
+	settleNos     []string
+	withdrawNos   []string
 }
 
 func (c *controlledStub) IfCode() string   { return "stub_controlled" }
 func (c *controlledStub) FundMode() string { return channel.FundControlled }
 func (c *controlledStub) Ways() []string   { return []string{"STUB_PAY"} }
 
-func (c *controlledStub) SettleConfirm(_ context.Context, _ channel.SettleIn) (channel.Result, error) {
+func (c *controlledStub) SettleConfirm(_ context.Context, in channel.SettleIn) (channel.Result, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.settleCalls++
+	c.settleNos = append(c.settleNos, in.SettleNo)
 	return c.settleRes, nil
 }
-func (c *controlledStub) Withdraw(_ context.Context, _ channel.WithdrawIn) (channel.Result, error) {
+func (c *controlledStub) Withdraw(_ context.Context, in channel.WithdrawIn) (channel.Result, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.withdrawCalls++
+	c.withdrawNos = append(c.withdrawNos, in.WithdrawNo)
 	return c.withdrawRes, nil
 }
 func (c *controlledStub) QueryWithdraw(_ context.Context, _ channel.WithdrawRef) (channel.Result, error) {
@@ -244,13 +248,41 @@ func (c *controlledStub) Balance(context.Context, map[string]string, map[string]
 
 var ctrlStub = &controlledStub{}
 
+// settleOnlyStub 直付通形态的归集桩：能确认结算、能分账，没有提现（资金直接到二级商户结算账户）。
+type settleOnlyStub struct {
+	stubChannel
+	mu        sync.Mutex
+	settleRes channel.Result
+	holds     []bool
+	amounts   []int64
+}
+
+func (z *settleOnlyStub) IfCode() string   { return "stub_zft" }
+func (z *settleOnlyStub) FundMode() string { return channel.FundControlled }
+func (z *settleOnlyStub) Ways() []string   { return []string{"STUB_PAY"} }
+func (z *settleOnlyStub) SettleConfirm(_ context.Context, in channel.SettleIn) (channel.Result, error) {
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	z.holds = append(z.holds, in.HoldForDivision)
+	z.amounts = append(z.amounts, in.Amount)
+	return z.settleRes, nil
+}
+
+var zftStub = &settleOnlyStub{}
+
 var registerCtrlOnce sync.Once
 
 func registerControlledStub() {
-	registerCtrlOnce.Do(func() { channel.Register(ctrlStub) })
+	registerCtrlOnce.Do(func() {
+		channel.Register(ctrlStub)
+		channel.Register(zftStub)
+	})
 }
 
-var _ channel.ControlledChannel = (*controlledStub)(nil)
+var (
+	_ channel.SettleChannel   = (*controlledStub)(nil)
+	_ channel.WithdrawChannel = (*controlledStub)(nil)
+)
 
 func (s *stubChannel) IfCode() string   { return "stub_channel" }
 func (s *stubChannel) FundMode() string { return channel.FundDirect }

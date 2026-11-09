@@ -1,6 +1,8 @@
 // alipay_zft 支付宝直付通（归集模式）。
 // 网关 RSA2：请求参数按 key 排序后 SHA256withRSA，响应与回调用支付宝公钥验签。
-// 资金先冻结在平台，settle.confirm 确认结算后才能分账，提现走单笔转账。
+// 资金流：支付 → 待结算（可退款，不可分账）→ settle.confirm 结算到二级商户进件时的默认结算账户
+// （需要分账时带 royalty_freeze 冻结）→ order.settle 分账，最后一笔带 royalty_finish 解冻剩余。
+// 平台侧没有二级商户余额，没有“提现”：不实现 WithdrawChannel。
 package alipay
 
 import (
@@ -46,7 +48,7 @@ var (
 	_ channel.OnboardingChannel = (*zft)(nil)
 	_ channel.SharingChannel    = (*zft)(nil)
 	_ channel.BillChannel       = (*zft)(nil)
-	_ channel.ControlledChannel = (*zft)(nil)
+	_ channel.SettleChannel     = (*zft)(nil)
 )
 
 // gateway 生产网关。联调可设 ALIPAY_GATEWAY 指向沙箱或桩。
@@ -322,11 +324,10 @@ func (z *zft) Pay(ctx context.Context, in channel.PayIn) (channel.Result, error)
 		// 过期后支付宝拒绝支付：本地超时关单之后不会再冒出一笔成功交易。
 		biz["time_expire"] = in.ExpireAt.In(cst).Format("2006-01-02 15:04:05")
 	}
-	extend := map[string]string{"royalty_freeze": "true"}
-	if in.ChannelExtra["sys_service_provider_id"] != "" {
-		extend["sys_service_provider_id"] = in.ChannelExtra["sys_service_provider_id"]
+	// 分账冻结在确认结算时按需声明（royalty_freeze），下单时不冻结：不分账的订单结算后直接可用。
+	if id := in.ChannelExtra["sys_service_provider_id"]; id != "" {
+		biz["extend_params"] = map[string]string{"sys_service_provider_id": id}
 	}
-	biz["extend_params"] = extend
 
 	switch in.WayCode {
 	case "ALI_QR":
@@ -738,7 +739,8 @@ func (z *zft) AddReceiver(ctx context.Context, in channel.ReceiverIn) error {
 	return err
 }
 
-// Share alipay.trade.order.settle（分账结算）。直付通必须先确认结算。
+// Share alipay.trade.order.settle（分账结算）。直付通必须先确认结算（结算时冻结）；
+// UnfreezeUnsplit 带 royalty_finish：本次分账后把剩余冻结资金解冻给二级商户。
 func (z *zft) Share(ctx context.Context, in channel.DivisionIn) (channel.DivisionResult, error) {
 	params := make([]map[string]any, 0, len(in.Receivers))
 	for _, r := range in.Receivers {
@@ -747,10 +749,14 @@ func (z *zft) Share(ctx context.Context, in channel.DivisionIn) (channel.Divisio
 			"amount": yuan(r.Amount), "desc": orDefault(r.Description, "分账"),
 		})
 	}
-	node, err := call(ctx, "alipay.trade.order.settle", map[string]any{
+	biz := map[string]any{
 		"out_request_no": in.DivisionNo, "trade_no": in.ChannelOrderNo,
 		"royalty_parameters": params,
-	}, in.Provider, in.Sub, "")
+	}
+	if in.UnfreezeUnsplit {
+		biz["extend_params"] = map[string]string{"royalty_finish": "true"}
+	}
+	node, err := call(ctx, "alipay.trade.order.settle", biz, in.Provider, in.Sub, "")
 	if err != nil {
 		// ACQ.SYSTEM_ERROR 等必须原参数、原请求号重试：UNKNOWN 让分账单留在 pending 由 worker 重提。
 		r := resultOf(err, node)
@@ -804,23 +810,48 @@ func (z *zft) QueryShare(ctx context.Context, ref channel.DivisionRef) (channel.
 	return res, nil
 }
 
-// FinishShare 直付通没有单独的完结接口：确认结算已把剩余资金释放给二级商户。
+// FinishShare 单独发起分账完结（不带分账条款，只带 royalty_finish）：解冻结算时冻结的剩余资金。
+// ACQ.ALREADY_FINISH_ALLOC 表示已无冻结资金可解冻，目的已达成。
 func (z *zft) FinishShare(ctx context.Context, ref channel.DivisionRef) (channel.DivisionResult, error) {
-	return channel.DivisionResult{State: channel.StateSuccess}, nil
+	node, err := call(ctx, "alipay.trade.order.settle", map[string]any{
+		"out_request_no": ref.DivisionNo, "trade_no": ref.ChannelOrderNo,
+		"extend_params": map[string]string{"royalty_finish": "true"},
+	}, ref.Provider, ref.Sub, "")
+	if err != nil {
+		r := resultOf(err, node)
+		if r.ErrCode == "ACQ.ALREADY_FINISH_ALLOC" {
+			return channel.DivisionResult{State: channel.StateSuccess, Raw: r.Raw}, nil
+		}
+		return channel.DivisionResult{State: r.State, ErrCode: r.ErrCode, ErrMsg: r.ErrMsg, Raw: r.Raw}, nil
+	}
+	return channel.DivisionResult{State: channel.StateSuccess, Raw: string(node)}, nil
 }
 
-// ── 结算确认 / 提现 / 余额 ──────────────────────────────────
+// ── 确认结算 ────────────────────────────────────────────────
 
-// SettleConfirm alipay.trade.settle.confirm：把冻结资金结算给二级商户。
+// settleAmbiguousCodes 文档要求“请求信息保持一致”重试的结算错误：结果未知。
+var settleAmbiguousCodes = []string{"ACQ.TRADE_SETTLE_ERROR"}
+
+// SettleConfirm alipay.trade.settle.confirm：把待结算资金结算到二级商户进件时的默认结算账户。
+// amount 必须等于交易金额减去结算前累计已退款金额；HoldForDivision 时带 royalty_freeze，
+// 资金到账后冻结供之后分账。幂等号用结算单号；ACQ.ALREADY_CONFIRM_SETTLE 说明已结算过，按成功处理。
 func (z *zft) SettleConfirm(ctx context.Context, in channel.SettleIn) (channel.Result, error) {
-	node, err := call(ctx, "alipay.trade.settle.confirm", map[string]any{
-		"out_request_no": in.PayOrderID + "S", "trade_no": in.ChannelOrderNo,
+	biz := map[string]any{
+		"out_request_no": in.SettleNo, "trade_no": in.ChannelOrderNo,
 		"settle_info": map[string]any{"settle_detail_infos": []map[string]any{{
 			"trans_in_type": "defaultSettle", "amount": yuan(in.Amount),
 		}}},
-	}, in.Provider, in.Sub, "")
+	}
+	if in.HoldForDivision {
+		biz["extend_params"] = map[string]string{"royalty_freeze": "true"}
+	}
+	node, err := call(ctx, "alipay.trade.settle.confirm", biz, in.Provider, in.Sub, "")
 	if err != nil {
-		return resultOf(err, node), nil
+		res := resultOf(err, node, settleAmbiguousCodes...)
+		if res.ErrCode == "ACQ.ALREADY_CONFIRM_SETTLE" {
+			res.State = channel.StateSuccess
+		}
+		return res, nil
 	}
 	var out struct {
 		TradeNo  string `json:"trade_no"`
@@ -828,93 +859,6 @@ func (z *zft) SettleConfirm(ctx context.Context, in channel.SettleIn) (channel.R
 	}
 	_ = json.Unmarshal(node, &out)
 	return channel.Result{State: channel.StateSuccess, ChannelOrderNo: orDefault(out.SettleNo, out.TradeNo), Raw: string(node)}, nil
-}
-
-// Withdraw alipay.fund.trans.uni.transfer：从平台账户单笔转到二级商户结算账户。
-// 收款方优先用 sub.payee_logon_id / payee_identity，缺省时用 smid。
-func (z *zft) Withdraw(ctx context.Context, in channel.WithdrawIn) (channel.Result, error) {
-	identity, idType := in.Sub["payee_identity"], in.Sub["payee_identity_type"]
-	if identity == "" {
-		identity, idType = in.Sub["smid"], "ALIPAY_USER_ID"
-	}
-	if idType == "" {
-		idType = "ALIPAY_LOGON_ID"
-	}
-	payee := map[string]any{"identity": identity, "identity_type": idType}
-	if name := in.Sub["payee_name"]; name != "" {
-		payee["name"] = name
-	}
-	node, err := call(ctx, "alipay.fund.trans.uni.transfer", map[string]any{
-		"out_biz_no": in.WithdrawNo, "trans_amount": yuan(in.Amount),
-		"product_code": "TRANS_ACCOUNT_NO_PWD", "biz_scene": "DIRECT_TRANSFER",
-		"order_title": orDefault(in.Remark, "提现"), "payee_info": payee,
-		"remark": in.Remark,
-	}, in.Provider, in.Sub, "")
-	if err != nil {
-		return resultOf(err, node), nil
-	}
-	var out struct {
-		OrderID string `json:"order_id"`
-		Status  string `json:"status"`
-		PayFund string `json:"pay_fund_order_id"`
-	}
-	_ = json.Unmarshal(node, &out)
-	return channel.Result{State: transferStatus(out.Status), ChannelOrderNo: orDefault(out.PayFund, out.OrderID), Raw: string(node)}, nil
-}
-
-// QueryWithdraw alipay.fund.trans.common.query。
-func (z *zft) QueryWithdraw(ctx context.Context, ref channel.WithdrawRef) (channel.Result, error) {
-	node, err := call(ctx, "alipay.fund.trans.common.query", map[string]any{
-		"out_biz_no": ref.WithdrawNo, "product_code": "TRANS_ACCOUNT_NO_PWD", "biz_scene": "DIRECT_TRANSFER",
-	}, ref.Provider, ref.Sub, "")
-	if err != nil {
-		if node != nil {
-			return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error(), Raw: string(node)}, nil
-		}
-		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
-	}
-	var out struct {
-		OrderID string `json:"order_id"`
-		Status  string `json:"status"`
-		ErrCode string `json:"error_code"`
-		Fail    string `json:"fail_reason"`
-	}
-	_ = json.Unmarshal(node, &out)
-	res := channel.Result{State: transferStatus(out.Status), ChannelOrderNo: out.OrderID, Raw: string(node)}
-	if res.State == channel.StateFail {
-		res.ErrCode, res.ErrMsg = out.ErrCode, out.Fail
-	}
-	return res, nil
-}
-
-// Balance 直付通没有按二级商户的余额查询接口：可用余额以台账为准，
-// 这里返回待确认的结算金额由业务层对照。渠道侧用 alipay.data.bill.balance.query 的可用余额
-// 作为平台账户余额，仅当 sub 未指定 smid 时有意义；指定 smid 时返回台账无法代替的错误，
-// 让业务层的不变量检查明确失败而不是假装一致。
-func (z *zft) Balance(ctx context.Context, prov, sub map[string]string) (channel.Balance, error) {
-	node, err := call(ctx, "alipay.data.bill.balance.query", map[string]any{}, prov, sub, "")
-	if err != nil {
-		return channel.Balance{}, err
-	}
-	var out struct {
-		Available string `json:"available_amount"`
-		Freeze    string `json:"freeze_amount"`
-	}
-	if json.Unmarshal(node, &out) != nil {
-		return channel.Balance{}, fmt.Errorf("balance: bad response")
-	}
-	return channel.Balance{Available: fenOf(out.Available), Pending: fenOf(out.Freeze)}, nil
-}
-
-func transferStatus(s string) string {
-	switch s {
-	case "SUCCESS":
-		return channel.StateSuccess
-	case "FAIL", "REFUND":
-		return channel.StateFail
-	default: // DEALING / 空
-		return channel.StateWaiting
-	}
 }
 
 // TradeBill alipay.data.dataservice.bill.downloadurl.query，下载后按 CSV 解析。

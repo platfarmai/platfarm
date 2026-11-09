@@ -1,6 +1,7 @@
 // 台账（specs/030 M3/M4）。pay_ledger 追加写，(kind, ref_type, ref_id, ref_sub) 唯一：
 // 同一事件重放不会记两次，所以可以在任何 CAS 成功路径上无脑调用。
-// 直清模式只记 fee / rebate 及其退款冲回；分账记 sharing；归集模式再加 settle / withdrawal。
+// 直清模式只记 fee / rebate 及其退款冲回；分账记 sharing；收付通再加可提现台账
+// settle / refund（结算后的退款）/ withdrawal（发起即预占）/ withdrawal_reversal。
 package main
 
 import (
@@ -9,6 +10,8 @@ import (
 	"log"
 
 	"github.com/jackc/pgx/v5"
+
+	"platfarm/svc-pay/channel"
 )
 
 const (
@@ -142,7 +145,13 @@ func refundTerminalEffects(ctx context.Context, tx pgx.Tx, r Refund, to string) 
 		if err != nil {
 			return err
 		}
-		if _, err := postLedger(ctx, tx, refundSettledEntries(o, r)); err != nil {
+		entries := refundSettledEntries(o, r)
+		// 收付通已确认结算的订单：退款从二级商户可用余额出，扣可提现台账（结算前的退款已在结算金额里扣除）。
+		if o.SettleState == orderSettleDone && channel.Withdrawable(o.IfCode) {
+			entries = append(entries, LedgerEntry{MchNo: o.MchNo, IsvNo: o.IsvNo, IfCode: o.IfCode, Kind: ledgerRefund,
+				RefType: "refund", RefID: r.RefundOrderID, Amount: -r.RefundAmount, Memo: "结算后退款", TenantID: o.TenantID})
+		}
+		if _, err := postLedger(ctx, tx, entries); err != nil {
 			return fmt.Errorf("ledger refund %s: %w", r.RefundOrderID, err)
 		}
 	}

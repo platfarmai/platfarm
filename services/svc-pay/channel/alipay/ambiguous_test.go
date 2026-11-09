@@ -143,6 +143,43 @@ func TestZFT_PayAndMoneyMovementsClassifyErrors(t *testing.T) {
 	}
 }
 
+func TestZFT_SettleConfirmAndFinishAnswers(t *testing.T) {
+	g, prov, sub := newGatewayStub(t)
+	z, ctx := &zft{}, context.Background()
+	in := channel.SettleIn{SettleNo: "S1", PayOrderID: "P1", ChannelOrderNo: "T1", Amount: 100, Provider: prov, Sub: sub}
+	cases := []struct {
+		node any
+		want string
+	}{
+		{fail("40004", "ACQ.ALREADY_CONFIRM_SETTLE"), channel.StateSuccess}, // 已结算过：重试命中原结果
+		{fail("40004", "ACQ.TRADE_SETTLE_ERROR"), channel.StateUnknown},     // 文档要求原参数重试
+		{fail("40004", "ACQ.CONFIRM_REFUSE_AFTER_REFUND"), channel.StateFail},
+	}
+	for _, tc := range cases {
+		g.reply(tc.node)
+		if res, _ := z.SettleConfirm(ctx, in); res.State != tc.want {
+			t.Errorf("settle %v: %s", tc.node, res.State)
+		}
+	}
+	// 不需要分账：结算不冻结。
+	g.reply(map[string]string{"code": "10000", "msg": "Success", "trade_no": "T1"})
+	if res, _ := z.SettleConfirm(ctx, in); res.State != channel.StateSuccess {
+		t.Fatalf("settle: %+v", res)
+	}
+	g.mu.Lock()
+	_, frozen := g.biz["extend_params"]
+	reqNo := g.biz["out_request_no"]
+	g.mu.Unlock()
+	if frozen || reqNo != "S1" {
+		t.Fatalf("settle without hold: extend_params present=%v out_request_no=%v", frozen, reqNo)
+	}
+	// 单独完结分账；已无冻结资金可解冻也算完成。
+	g.reply(fail("40004", "ACQ.ALREADY_FINISH_ALLOC"))
+	if res, _ := z.FinishShare(ctx, channel.DivisionRef{DivisionNo: "F1", ChannelOrderNo: "T1", Provider: prov, Sub: sub}); res.State != channel.StateSuccess {
+		t.Fatalf("finish: %+v", res)
+	}
+}
+
 func TestZFT_QueryRefund(t *testing.T) {
 	g, prov, sub := newGatewayStub(t)
 	z, ctx := &zft{}, context.Background()

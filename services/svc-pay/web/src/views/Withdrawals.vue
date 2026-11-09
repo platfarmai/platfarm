@@ -7,8 +7,9 @@ const err = ref("");
 const msg = ref("");
 const merchants = ref([]);
 const mchNo = ref("");
+// 只有收付通有平台侧可提现余额；直付通确认结算即到二级商户结算账户，没有提现。
 const ifCode = ref("wxpay_ecommerce");
-const channels = ["wxpay_ecommerce", "alipay_zft"];
+const channels = ["wxpay_ecommerce"];
 const balance = ref(null);
 const withdrawals = ref([]);
 
@@ -65,18 +66,22 @@ onMounted(load);
     </div>
 
     <div class="pf-card flex flex-col gap-2">
-      <h2 class="m-0 text-[16px] font-semibold">余额（归集模式）</h2>
-      <div v-if="balance" class="flex gap-6">
-        <div>台账 <span class="text-[20px] font-semibold">{{ yuan(balance.ledger) }}</span></div>
-        <div>渠道可用 <span class="text-[20px] font-semibold">{{ yuan(balance.available) }}</span></div>
-        <div>渠道冻结 <span class="text-[20px] font-semibold">{{ yuan(balance.pending) }}</span></div>
+      <h2 class="m-0 text-[16px] font-semibold">可提现余额（收付通）</h2>
+      <div v-if="balance" class="flex flex-col gap-2">
+        <div class="flex gap-6 flex-wrap">
+          <div>本次最多可提 <span class="text-[20px] font-semibold">{{ yuan(balance.withdrawable) }}</span></div>
+          <div>台账 <span class="text-[20px] font-semibold">{{ yuan(balance.ledger) }}</span></div>
+          <div>渠道可用 <span class="text-[20px] font-semibold">{{ yuan(balance.available) }}</span></div>
+          <div>渠道冻结 <span class="text-[20px] font-semibold">{{ yuan(balance.pending) }}</span></div>
+          <div>提交中 <span class="text-[20px] font-semibold">{{ yuan(balance.submitting) }}</span></div>
+        </div>
         <div>
-          <span class="pf-dot" :data-tone="balance.invariant ? 'ok' : 'danger'">
-            {{ balance.invariant ? "台账与渠道一致" : "台账与渠道不一致，提现已被拒绝" }}
+          <span class="pf-dot" :data-tone="balance.drift === 0 ? 'ok' : 'info'">
+            {{ balance.drift === 0 ? "台账与渠道一致" : `台账与渠道相差 ${yuan(balance.drift)}（需对账核查；提现按两者较小值放行）` }}
           </span>
         </div>
       </div>
-      <span v-else class="pf-muted">直清渠道没有平台余额；归集渠道需先配置渠道参数。</span>
+      <span v-else class="pf-muted">直清与直付通没有平台侧余额；收付通需先配置渠道参数。</span>
     </div>
 
     <div class="pf-card flex flex-col gap-3">

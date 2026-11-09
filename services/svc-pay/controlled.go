@@ -1,7 +1,14 @@
-// 归集模式（specs/030 M4）：确认结算 + 提现 + 余额。
-// 直清渠道没有这些动作：channel.Controlled() 对直清渠道返回错误，接口回 400。
-// 余额 = 台账合计（settle 贷方、withdrawal 借方、withdrawal_reversal 冲回）。
-// 提现前用渠道报的余额与台账核对：不一致拒绝，避免在账不平的时候把钱划走。
+// 归集模式（specs/030 M4）：确认结算、提现、余额。直清渠道没有这些动作，接口回 400。
+// 两个归集产品的资金去向不同（见 channel/controlled.go）：
+//   - 收付通：分账 → 确认结算（完结分账，剩余资金释放到二级商户可用余额）→ 平台代为提现。
+//     可提现台账 = settle 贷方（释放金额）+ refund 借方（结算后的退款）+ withdrawal 借方（发起即预占）
+//   - withdrawal_reversal（失败或银行退票冲回）。
+//     本次可提 = min(台账余额, 渠道可用余额 − 提交中的提现)：任何一边不够都不能提；
+//     两边的差额作为漂移展示，用于对账核查，不阻断提现。
+//   - 直付通：确认结算（需要分账时冻结）→ 分账（最后一笔解冻剩余）。资金直接到二级商户结算账户，
+//     平台侧没有余额，没有提现。
+//
+// 结算、提现的提交结果未知时保持 pending，由 worker 用原单号重提（渠道按单号幂等）。
 package main
 
 import (
@@ -12,7 +19,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,32 +42,60 @@ const (
 	orderSettleDone    = "done"
 )
 
-// Settle pay_settle 一行。
-type Settle struct {
-	SettleNo       string    `json:"settleNo"`
-	PayOrderID     string    `json:"payOrderId"`
-	MchNo          string    `json:"mchNo"`
-	IsvNo          string    `json:"isvNo"`
-	IfCode         string    `json:"ifCode"`
-	OrderAmount    int64     `json:"orderAmount"`
-	SharedAmount   int64     `json:"sharedAmount"`
-	Amount         int64     `json:"amount"`
-	State          string    `json:"state"`
-	ChannelOrderNo string    `json:"channelOrderNo"`
-	ErrCode        string    `json:"errCode"`
-	ErrMsg         string    `json:"errMsg"`
-	TenantID       int       `json:"tenantId"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+// withdrawableKinds 可提现余额台账的科目。
+var withdrawableKinds = []string{ledgerSettle, ledgerRefund, ledgerWithdrawal, ledgerWithdrawalReversal}
+
+// reqError 请求本身不成立（直清渠道、渠道没有该能力、参数非法）：接口回 400；其余业务拒绝回 409。
+type reqError struct{ msg string }
+
+func (e reqError) Error() string { return e.msg }
+
+func badRequest(format string, a ...any) error { return reqError{fmt.Sprintf(format, a...)} }
+
+var (
+	errOverBalance   = errors.New("超出可提现额度")
+	errNotConfigured = errors.New("渠道参数未配置")
+)
+
+// moneyStatus 结算/提现接口的错误码：请求不成立 400，其余（额度不足、状态不允许、参数未配置）409。
+func moneyStatus(err error) int {
+	var re reqError
+	if errors.As(err, &re) {
+		return http.StatusBadRequest
+	}
+	return http.StatusConflict
 }
 
-const settleCols = `settle_no, pay_order_id, mch_no, isv_no, if_code, order_amount, shared_amount, amount,
-	state, channel_order_no, err_code, err_msg, tenant_id, created_at, updated_at`
+// Settle pay_settle 一行。
+type Settle struct {
+	SettleNo        string    `json:"settleNo"`
+	PayOrderID      string    `json:"payOrderId"`
+	MchNo           string    `json:"mchNo"`
+	IsvNo           string    `json:"isvNo"`
+	IfCode          string    `json:"ifCode"`
+	OrderAmount     int64     `json:"orderAmount"`
+	RefundedAmount  int64     `json:"refundedAmount"`
+	SharedAmount    int64     `json:"sharedAmount"`
+	Amount          int64     `json:"amount"`       // 本次确认结算金额
+	CreditAmount    int64     `json:"creditAmount"` // 记入可提现台账的金额（直付通为 0）
+	HoldForDivision bool      `json:"holdForDivision"`
+	State           string    `json:"state"`
+	ChannelOrderNo  string    `json:"channelOrderNo"`
+	ErrCode         string    `json:"errCode"`
+	ErrMsg          string    `json:"errMsg"`
+	TenantID        int       `json:"tenantId"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+const settleCols = `settle_no, pay_order_id, mch_no, isv_no, if_code, order_amount, refunded_amount, shared_amount, amount,
+	credit_amount, hold_for_division, state, channel_order_no, err_code, err_msg, tenant_id, created_at, updated_at`
 
 func scanSettle(row pgx.Row) (Settle, error) {
 	var s Settle
-	err := row.Scan(&s.SettleNo, &s.PayOrderID, &s.MchNo, &s.IsvNo, &s.IfCode, &s.OrderAmount, &s.SharedAmount,
-		&s.Amount, &s.State, &s.ChannelOrderNo, &s.ErrCode, &s.ErrMsg, &s.TenantID, &s.CreatedAt, &s.UpdatedAt)
+	err := row.Scan(&s.SettleNo, &s.PayOrderID, &s.MchNo, &s.IsvNo, &s.IfCode, &s.OrderAmount, &s.RefundedAmount,
+		&s.SharedAmount, &s.Amount, &s.CreditAmount, &s.HoldForDivision, &s.State, &s.ChannelOrderNo, &s.ErrCode,
+		&s.ErrMsg, &s.TenantID, &s.CreatedAt, &s.UpdatedAt)
 	return s, err
 }
 
@@ -74,114 +108,198 @@ func findActiveSettle(ctx context.Context, payOrderID string) (Settle, error) {
 }
 
 // sharedAmount 订单上已成功分出的金额（台账 sharing 为负数，取绝对值）。
-func sharedAmount(ctx context.Context, payOrderID string) (int64, error) {
+func sharedAmount(ctx context.Context, q querier, payOrderID string) (int64, error) {
 	var sum int64
-	err := db.QueryRow(ctx, `SELECT COALESCE(SUM(-l.amount),0) FROM pay_ledger l
+	err := q.QueryRow(ctx, `SELECT COALESCE(SUM(-l.amount),0) FROM pay_ledger l
 		JOIN pay_division d ON d.division_no=l.ref_id
 		WHERE l.kind=$1 AND l.ref_type='division' AND d.pay_order_id=$2 AND d.state='success'`,
 		ledgerSharing, payOrderID).Scan(&sum)
 	return sum, err
 }
 
-// ── 结算确认 ────────────────────────────────────────────────
+// refundedAmount 订单上已成功的退款合计（不含处理中的）。
+func refundedAmount(ctx context.Context, q querier, payOrderID string) (int64, error) {
+	var sum int64
+	err := q.QueryRow(ctx, `SELECT COALESCE(SUM(refund_amount),0) FROM pay_refund
+		WHERE pay_order_id=$1 AND state='success'`, payOrderID).Scan(&sum)
+	return sum, err
+}
+
+// ── 确认结算 ────────────────────────────────────────────────
 
 // createSettle 确认结算。已有未失败确认单则原样返回（dup）。
-// 金额 = 订单金额 - 已分账金额；归集模式下分账是从这笔订单里划走的，剩下的才归子商户。
-func createSettle(ctx context.Context, mch Merchant, order Order) (Settle, bool, error) {
-	if !channel.IsControlled(order.IfCode) {
-		return Settle{}, false, fmt.Errorf("channel %s 是直清模式，没有结算确认", order.IfCode)
+// 金额：直付通 = 交易金额 − 已退款（支付宝的硬性规则）；收付通 = 交易金额 − 已退款 − 已分账（完结分账释放剩余）。
+// hold（只对直付通）：结算后冻结，之后才能分账。
+func createSettle(ctx context.Context, mch Merchant, order Order, hold bool) (Settle, bool, error) {
+	sc, err := channel.Settling(order.IfCode)
+	if err != nil {
+		return Settle{}, false, badRequest("%v", err)
 	}
-	if order.State != orderSuccess {
-		return Settle{}, false, fmt.Errorf("订单状态 %s 不可确认结算", order.State)
+	withdrawable := channel.Withdrawable(order.IfCode)
+	if hold && withdrawable {
+		return Settle{}, false, badRequest("收付通的分账须在确认结算前完成，不支持结算后冻结")
 	}
 	if existing, err := findActiveSettle(ctx, order.PayOrderID); err == nil {
 		return existing, true, nil
 	}
-	cc, err := channel.Controlled(order.IfCode)
-	if err != nil {
-		return Settle{}, false, err
-	}
 	provider, sub, err := resolveParams(ctx, mch, order.IfCode)
 	if err != nil {
-		return Settle{}, false, fmt.Errorf("渠道参数未配置")
-	}
-	shared, err := sharedAmount(ctx, order.PayOrderID)
-	if err != nil {
-		return Settle{}, false, err
-	}
-	amount := order.Amount - shared
-	if amount < 0 {
-		return Settle{}, false, fmt.Errorf("已分账 %d 超过订单金额 %d", shared, order.Amount)
+		return Settle{}, false, errNotConfigured
 	}
 	s := Settle{
 		SettleNo: newOrderID("S"), PayOrderID: order.PayOrderID, MchNo: mch.MchNo, IsvNo: mch.IsvNo,
-		IfCode: order.IfCode, OrderAmount: order.Amount, SharedAmount: shared, Amount: amount,
-		State: settlePending, TenantID: mch.TenantID,
+		IfCode: order.IfCode, HoldForDivision: hold, State: settlePending, TenantID: mch.TenantID,
 	}
-	_, err = db.Exec(ctx, `INSERT INTO pay_settle (settle_no, pay_order_id, mch_no, isv_no, if_code, order_amount,
-		shared_amount, amount, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		s.SettleNo, s.PayOrderID, s.MchNo, s.IsvNo, s.IfCode, s.OrderAmount, s.SharedAmount, s.Amount, s.TenantID)
-	if isUniqueViolation(err) {
+	dup := false
+	_, err = inTx(ctx, func(tx pgx.Tx) (bool, error) {
+		// 锁住支付单：与发起退款、分账互斥，金额按锁内的状态计算。
+		o, err := scanOrder(tx.QueryRow(ctx, `SELECT `+orderCols+` FROM pay_order WHERE pay_order_id=$1 FOR UPDATE`, order.PayOrderID))
+		if err != nil {
+			return false, err
+		}
+		if o.State != orderSuccess {
+			return false, fmt.Errorf("订单状态 %s 不可确认结算", o.State)
+		}
+		refunded, err := refundedAmount(ctx, tx, o.PayOrderID)
+		if err != nil {
+			return false, err
+		}
+		if o.RefundAmount > refunded {
+			return false, fmt.Errorf("订单有处理中的退款，退款完结后再确认结算")
+		}
+		var shared int64
+		if withdrawable {
+			if o.DivisionState == orderDivisionPending {
+				return false, fmt.Errorf("订单有处理中的分账，分账完结后再确认结算")
+			}
+			if shared, err = sharedAmount(ctx, tx, o.PayOrderID); err != nil {
+				return false, err
+			}
+		} else if o.DivisionState != orderDivisionNone {
+			return false, fmt.Errorf("直付通须先确认结算再分账")
+		}
+		s.OrderAmount, s.RefundedAmount, s.SharedAmount = o.Amount, refunded, shared
+		s.Amount = o.Amount - refunded - shared
+		if s.Amount <= 0 {
+			return false, fmt.Errorf("没有可确认结算的金额（订单 %d，已退款 %d，已分账 %d）", o.Amount, refunded, shared)
+		}
+		if withdrawable {
+			s.CreditAmount = s.Amount
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO pay_settle (settle_no, pay_order_id, mch_no, isv_no, if_code, order_amount,
+			refunded_amount, shared_amount, amount, credit_amount, hold_for_division, tenant_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			s.SettleNo, s.PayOrderID, s.MchNo, s.IsvNo, s.IfCode, s.OrderAmount, s.RefundedAmount, s.SharedAmount,
+			s.Amount, s.CreditAmount, s.HoldForDivision, s.TenantID)
+		if isUniqueViolation(err) {
+			dup = true
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		_, err = tx.Exec(ctx, `UPDATE pay_order SET settle_state='pending', updated_at=now() WHERE pay_order_id=$1`, o.PayOrderID)
+		return err == nil, err
+	})
+	if dup {
 		existing, ferr := findActiveSettle(ctx, order.PayOrderID)
 		return existing, true, ferr
 	}
 	if err != nil {
 		return Settle{}, false, err
 	}
-	_, _ = db.Exec(ctx, `UPDATE pay_order SET settle_state='pending', updated_at=now()
-		WHERE pay_order_id=$1 AND settle_state='none'`, order.PayOrderID)
 	logSettle(s.SettleNo, "", settlePending, order.PayOrderID)
-
-	res, err := cc.SettleConfirm(ctx, channel.SettleIn{
-		PayOrderID: order.PayOrderID, ChannelOrderNo: order.ChannelOrderNo, Amount: amount, Provider: provider, Sub: sub,
-	})
-	if err != nil {
-		return s, false, err
-	}
-	saved, aerr := applySettleResult(ctx, s, res)
-	return saved, false, aerr
+	saved, err := submitSettle(ctx, sc, s, order.ChannelOrderNo, provider, sub)
+	return saved, false, err
 }
 
-// applySettleResult SUCCESS 记 settle 台账（贷方，子商户可用余额增加）并把订单标 done；FAIL 释放订单。
+// submitSettle 用结算单号向渠道确认结算并落结果（首次提交与恢复重提共用）。
+func submitSettle(ctx context.Context, sc channel.SettleChannel, s Settle, channelOrderNo string, provider, sub map[string]string) (Settle, error) {
+	res, err := sc.SettleConfirm(ctx, channel.SettleIn{
+		SettleNo: s.SettleNo, PayOrderID: s.PayOrderID, ChannelOrderNo: channelOrderNo, Amount: s.Amount,
+		HoldForDivision: s.HoldForDivision, Provider: provider, Sub: sub,
+	})
+	if err != nil {
+		// 适配器在发出请求前就拒绝了：渠道侧没有这笔结算，确定失败。
+		res = channel.Result{State: channel.StateFail, ErrCode: "SYS", ErrMsg: err.Error()}
+	}
+	return applySettleResult(ctx, s, res)
+}
+
+// applySettleResult SUCCESS：结算单 success、订单 done、可提现台账贷方，同一事务；FAIL：释放订单；
+// WAITING / UNKNOWN：留在 pending，由 worker 用同一结算单号重提。
 func applySettleResult(ctx context.Context, s Settle, res channel.Result) (Settle, error) {
 	from := s.State
+	var err error
 	switch res.State {
 	case channel.StateSuccess:
-		tag, err := db.Exec(ctx, `UPDATE pay_settle SET state='success', channel_order_no=COALESCE(NULLIF($3,''), channel_order_no),
-			err_code='', err_msg='', updated_at=now() WHERE settle_no=$1 AND state=$2`, s.SettleNo, from, res.ChannelOrderNo)
-		if err != nil {
-			return s, err
-		}
-		if tag.RowsAffected() == 1 {
-			logSettle(s.SettleNo, from, settleSuccess, res.ChannelOrderNo)
-			_, _ = db.Exec(ctx, `UPDATE pay_order SET settle_state='done', updated_at=now() WHERE pay_order_id=$1`, s.PayOrderID)
-			if _, err := postLedger(ctx, nil, []LedgerEntry{{
-				MchNo: s.MchNo, IsvNo: s.IsvNo, IfCode: s.IfCode, Kind: ledgerSettle, RefType: "settle", RefID: s.SettleNo,
-				Amount: s.Amount, Memo: "确认结算 " + s.PayOrderID, TenantID: s.TenantID,
-			}}); err != nil {
-				log.Printf("ledger settle %s: %v", s.SettleNo, err)
+		var advanced bool
+		advanced, err = inTx(ctx, func(tx pgx.Tx) (bool, error) {
+			tag, err := tx.Exec(ctx, `UPDATE pay_settle SET state='success', channel_order_no=COALESCE(NULLIF($3,''), channel_order_no),
+				err_code='', err_msg=$4, updated_at=now() WHERE settle_no=$1 AND state=$2`, s.SettleNo, from, res.ChannelOrderNo, trunc(res.ErrMsg, 500))
+			if err != nil || tag.RowsAffected() == 0 {
+				return false, err
 			}
+			if _, err := tx.Exec(ctx, `UPDATE pay_order SET settle_state='done', updated_at=now() WHERE pay_order_id=$1`, s.PayOrderID); err != nil {
+				return false, err
+			}
+			_, err = postLedger(ctx, tx, []LedgerEntry{{
+				MchNo: s.MchNo, IsvNo: s.IsvNo, IfCode: s.IfCode, Kind: ledgerSettle, RefType: "settle", RefID: s.SettleNo,
+				Amount: s.CreditAmount, Memo: "确认结算 " + s.PayOrderID, TenantID: s.TenantID,
+			}})
+			return err == nil, err
+		})
+		if advanced {
+			logSettle(s.SettleNo, from, settleSuccess, res.ChannelOrderNo)
 		}
 	case channel.StateFail:
-		tag, err := db.Exec(ctx, `UPDATE pay_settle SET state='failed', err_code=$3, err_msg=$4, updated_at=now()
-			WHERE settle_no=$1 AND state=$2`, s.SettleNo, from, res.ErrCode, trunc(res.ErrMsg, 500))
-		if err != nil {
-			return s, err
-		}
-		if tag.RowsAffected() == 1 {
-			logSettle(s.SettleNo, from, settleFailed, res.ErrCode)
-			_, _ = db.Exec(ctx, `UPDATE pay_order SET settle_state='none', updated_at=now()
+		var advanced bool
+		advanced, err = inTx(ctx, func(tx pgx.Tx) (bool, error) {
+			tag, err := tx.Exec(ctx, `UPDATE pay_settle SET state='failed', err_code=$3, err_msg=$4, updated_at=now()
+				WHERE settle_no=$1 AND state=$2`, s.SettleNo, from, res.ErrCode, trunc(res.ErrMsg, 500))
+			if err != nil || tag.RowsAffected() == 0 {
+				return false, err
+			}
+			_, err = tx.Exec(ctx, `UPDATE pay_order SET settle_state='none', updated_at=now()
 				WHERE pay_order_id=$1 AND settle_state='pending'`, s.PayOrderID)
+			return err == nil, err
+		})
+		if advanced {
+			logSettle(s.SettleNo, from, settleFailed, res.ErrCode)
 		}
 	default:
-		_, _ = db.Exec(ctx, `UPDATE pay_settle SET err_code=$2, err_msg=$3, updated_at=now() WHERE settle_no=$1`,
+		_, err = db.Exec(ctx, `UPDATE pay_settle SET err_code=$2, err_msg=$3, updated_at=now() WHERE settle_no=$1 AND state='pending'`,
 			s.SettleNo, res.ErrCode, trunc(res.ErrMsg, 500))
+	}
+	if err != nil {
+		return s, err
 	}
 	return findSettle(ctx, s.SettleNo)
 }
 
 func logSettle(no, from, to, note string) {
 	log.Printf(`{"event":"settle","settleNo":%q,"from":%q,"to":%q,"note":%q}`, no, from, to, note)
+}
+
+// resubmitSettle 结果未知的结算用原结算单号重提。
+func resubmitSettle(ctx context.Context, s Settle) (Settle, error) {
+	sc, err := channel.Settling(s.IfCode)
+	if err != nil {
+		return s, err
+	}
+	mch, err := loadMerchant(ctx, s.MchNo)
+	if err != nil {
+		return s, err
+	}
+	provider, sub, err := resolveParams(ctx, mch, s.IfCode)
+	if err != nil {
+		return s, err
+	}
+	order, err := findOrder(ctx, s.PayOrderID)
+	if err != nil {
+		return s, err
+	}
+	return submitSettle(ctx, sc, s, order.ChannelOrderNo, provider, sub)
 }
 
 // ── 提现 ────────────────────────────────────────────────────
@@ -223,78 +341,112 @@ func findWithdrawByMch(ctx context.Context, mchNo, mchWithdrawNo string) (Withdr
 	return scanWithdraw(db.QueryRow(ctx, `SELECT `+withdrawCols+` FROM pay_withdrawal WHERE mch_no=$1 AND mch_withdraw_no=$2`, mchNo, mchWithdrawNo))
 }
 
-// BalanceView 台账余额与渠道余额的对照。Invariant 为真表示两边一致。
+// BalanceView 可提现余额：台账与渠道两边，以及本次最多可提的金额。
 type BalanceView struct {
-	MchNo     string `json:"mchNo"`
-	IfCode    string `json:"ifCode"`
-	Ledger    int64  `json:"ledger"`    // 台账合计（settle - withdrawal + reversal）
-	Available int64  `json:"available"` // 渠道报的可用余额
-	Pending   int64  `json:"pending"`
-	Invariant bool   `json:"invariant"`
+	MchNo        string `json:"mchNo"`
+	IfCode       string `json:"ifCode"`
+	Ledger       int64  `json:"ledger"`       // 台账可提现余额（发起的提现已预占）
+	Available    int64  `json:"available"`    // 渠道报的可用余额
+	Pending      int64  `json:"pending"`      // 渠道报的不可用（冻结）余额
+	Submitting   int64  `json:"submitting"`   // 已发起、渠道尚未确认受理的提现
+	Withdrawable int64  `json:"withdrawable"` // 本次最多可提 = min(ledger, available − submitting)
+	Drift        int64  `json:"drift"`        // available − submitting − ledger；非 0 需对账核查，不阻断提现
 }
 
-// merchantBalance 台账余额与渠道余额。渠道查不到时 ChannelErr 非空，Invariant 为假。
+// ledgerPosition 台账可提现余额与提交中（渠道尚未受理）的提现合计。
+func ledgerPosition(ctx context.Context, q querier, mchNo, ifCode string) (ledger, submitting int64, err error) {
+	err = q.QueryRow(ctx, `SELECT
+		(SELECT COALESCE(SUM(amount),0) FROM pay_ledger WHERE mch_no=$1 AND if_code=$2 AND kind = ANY($3)),
+		(SELECT COALESCE(SUM(amount),0) FROM pay_withdrawal WHERE mch_no=$1 AND if_code=$2 AND state='pending')`,
+		mchNo, ifCode, withdrawableKinds).Scan(&ledger, &submitting)
+	return ledger, submitting, err
+}
+
+func balanceView(mchNo, ifCode string, ledger, submitting int64, b channel.Balance) BalanceView {
+	v := BalanceView{MchNo: mchNo, IfCode: ifCode, Ledger: ledger, Available: b.Available, Pending: b.Pending, Submitting: submitting}
+	v.Withdrawable = max(min(ledger, b.Available-submitting), 0)
+	v.Drift = b.Available - submitting - ledger
+	return v
+}
+
+// merchantBalance 可提现余额。直清与直付通没有平台侧余额（400）。
 func merchantBalance(ctx context.Context, mch Merchant, ifCode string) (BalanceView, error) {
-	sum, err := ledgerSum(ctx, mch.MchNo, ifCode, []string{ledgerSettle, ledgerWithdrawal, ledgerWithdrawalReversal})
+	wc, err := channel.Withdrawing(ifCode)
 	if err != nil {
-		return BalanceView{}, err
-	}
-	v := BalanceView{MchNo: mch.MchNo, IfCode: ifCode, Ledger: sum}
-	cc, err := channel.Controlled(ifCode)
-	if err != nil {
-		return v, err
+		return BalanceView{}, badRequest("%v", err)
 	}
 	provider, sub, err := resolveParams(ctx, mch, ifCode)
 	if err != nil {
-		return v, fmt.Errorf("渠道参数未配置")
+		return BalanceView{}, errNotConfigured
 	}
-	b, err := cc.Balance(ctx, provider, sub)
+	b, err := wc.Balance(ctx, provider, sub)
 	if err != nil {
-		return v, err
+		return BalanceView{}, err
 	}
-	v.Available, v.Pending = b.Available, b.Pending
-	v.Invariant = v.Ledger == v.Available
-	return v, nil
+	ledger, submitting, err := ledgerPosition(ctx, db, mch.MchNo, ifCode)
+	if err != nil {
+		return BalanceView{}, err
+	}
+	return balanceView(mch.MchNo, ifCode, ledger, submitting, b), nil
 }
 
-var errBalanceMismatch = errors.New("balance mismatch")
-
 // createWithdrawal 提现。同一 (mch_no, mch_withdraw_no) 返回原单（dup）。
-// 提现前核对台账与渠道余额：不一致拒绝，不向渠道发请求。
+// 同一商户同一渠道的提现串行：锁内计算额度、落单并立即记借方（预占），并发请求不能用同一笔余额；
+// 失败（含银行退票）冲回。
 func createWithdrawal(ctx context.Context, mch Merchant, ifCode, mchWithdrawNo string, amount int64, remark, by string) (Withdrawal, bool, error) {
 	if amount <= 0 {
-		return Withdrawal{}, false, fmt.Errorf("amount 必须为正")
+		return Withdrawal{}, false, badRequest("amount 必须为正")
 	}
 	if existing, err := findWithdrawByMch(ctx, mch.MchNo, mchWithdrawNo); err == nil {
 		return existing, true, nil
 	}
-	cc, err := channel.Controlled(ifCode)
+	wc, err := channel.Withdrawing(ifCode)
 	if err != nil {
-		return Withdrawal{}, false, err
-	}
-	v, err := merchantBalance(ctx, mch, ifCode)
-	if err != nil {
-		return Withdrawal{}, false, fmt.Errorf("查询余额失败: %w", err)
-	}
-	if !v.Invariant {
-		return Withdrawal{}, false, fmt.Errorf("%w: 台账 %d 与渠道可用余额 %d 不一致，拒绝提现", errBalanceMismatch, v.Ledger, v.Available)
-	}
-	if amount > v.Available {
-		return Withdrawal{}, false, fmt.Errorf("提现金额 %d 超过可用余额 %d", amount, v.Available)
+		return Withdrawal{}, false, badRequest("%v", err)
 	}
 	provider, sub, err := resolveParams(ctx, mch, ifCode)
 	if err != nil {
-		return Withdrawal{}, false, fmt.Errorf("渠道参数未配置")
+		return Withdrawal{}, false, errNotConfigured
+	}
+	bal, err := wc.Balance(ctx, provider, sub)
+	if err != nil {
+		return Withdrawal{}, false, fmt.Errorf("查询渠道余额失败: %w", err)
 	}
 	w := Withdrawal{
 		WithdrawNo: newOrderID("W"), MchNo: mch.MchNo, IsvNo: mch.IsvNo, IfCode: ifCode,
 		MchWithdrawNo: mchWithdrawNo, Amount: amount, Remark: remark, State: withdrawPending,
 		CreatedBy: by, TenantID: mch.TenantID,
 	}
-	_, err = db.Exec(ctx, `INSERT INTO pay_withdrawal (withdraw_no, mch_no, isv_no, if_code, mch_withdraw_no, amount, remark, created_by, tenant_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		w.WithdrawNo, w.MchNo, w.IsvNo, w.IfCode, w.MchWithdrawNo, w.Amount, w.Remark, w.CreatedBy, w.TenantID)
-	if isUniqueViolation(err) {
+	dup := false
+	_, err = inTx(ctx, func(tx pgx.Tx) (bool, error) {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "svc-pay:withdraw:"+mch.MchNo+":"+ifCode); err != nil {
+			return false, err
+		}
+		ledger, submitting, err := ledgerPosition(ctx, tx, mch.MchNo, ifCode)
+		if err != nil {
+			return false, err
+		}
+		if v := balanceView(mch.MchNo, ifCode, ledger, submitting, bal); amount > v.Withdrawable {
+			return false, fmt.Errorf("%w：本次最多可提 %d（台账 %d，渠道可用 %d，提交中 %d）",
+				errOverBalance, v.Withdrawable, ledger, bal.Available, submitting)
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO pay_withdrawal (withdraw_no, mch_no, isv_no, if_code, mch_withdraw_no, amount, remark, created_by, tenant_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			w.WithdrawNo, w.MchNo, w.IsvNo, w.IfCode, w.MchWithdrawNo, w.Amount, w.Remark, w.CreatedBy, w.TenantID)
+		if isUniqueViolation(err) {
+			dup = true
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		_, err = postLedger(ctx, tx, []LedgerEntry{{
+			MchNo: w.MchNo, IsvNo: w.IsvNo, IfCode: w.IfCode, Kind: ledgerWithdrawal, RefType: "withdrawal", RefID: w.WithdrawNo,
+			Amount: -w.Amount, Memo: "提现 " + w.MchWithdrawNo, TenantID: w.TenantID,
+		}})
+		return err == nil, err
+	})
+	if dup {
 		existing, ferr := findWithdrawByMch(ctx, mch.MchNo, mchWithdrawNo)
 		return existing, true, ferr
 	}
@@ -302,64 +454,70 @@ func createWithdrawal(ctx context.Context, mch Merchant, ifCode, mchWithdrawNo s
 		return Withdrawal{}, false, err
 	}
 	logWithdraw(w.WithdrawNo, "", withdrawPending, mchWithdrawNo)
-
-	res, err := cc.Withdraw(ctx, channel.WithdrawIn{WithdrawNo: w.WithdrawNo, Amount: amount, Remark: remark, Provider: provider, Sub: sub})
-	if err != nil {
-		return w, false, err
-	}
-	saved, aerr := applyWithdrawResult(ctx, w, res)
-	return saved, false, aerr
+	saved, err := submitWithdraw(ctx, wc, w, provider, sub)
+	return saved, false, err
 }
 
-// applyWithdrawResult SUCCESS 记 withdrawal（借方）；FAIL 不记账；WAITING → accepted。
-// 渠道把一笔已成功的提现退回（FAIL 且当前是 success）记 withdrawal_reversal 冲回。
+// submitWithdraw 用提现单号向渠道发起提现并落结果（首次提交与恢复重提共用）。
+func submitWithdraw(ctx context.Context, wc channel.WithdrawChannel, w Withdrawal, provider, sub map[string]string) (Withdrawal, error) {
+	res, err := wc.Withdraw(ctx, channel.WithdrawIn{WithdrawNo: w.WithdrawNo, Amount: w.Amount, Remark: w.Remark, Provider: provider, Sub: sub})
+	if err != nil {
+		res = channel.Result{State: channel.StateFail, ErrCode: "SYS", ErrMsg: err.Error()}
+	}
+	return applyWithdrawResult(ctx, w, res)
+}
+
+// applyWithdrawResult 借方在发起时已记：SUCCESS 只推状态；FAIL（含成功后的银行退票）冲回借方，与状态同事务；
+// WAITING：pending → accepted；UNKNOWN：不动，只记原因（pending 由 worker 用原单号重提）。
 func applyWithdrawResult(ctx context.Context, w Withdrawal, res channel.Result) (Withdrawal, error) {
 	from := w.State
+	var err error
 	switch res.State {
 	case channel.StateSuccess:
-		tag, err := db.Exec(ctx, `UPDATE pay_withdrawal SET state='success', channel_order_no=COALESCE(NULLIF($3,''), channel_order_no),
+		var tag interface{ RowsAffected() int64 }
+		tag, err = db.Exec(ctx, `UPDATE pay_withdrawal SET state='success', channel_order_no=COALESCE(NULLIF($3,''), channel_order_no),
 			err_code='', err_msg='', updated_at=now() WHERE withdraw_no=$1 AND state=$2`, w.WithdrawNo, from, res.ChannelOrderNo)
-		if err != nil {
-			return w, err
-		}
-		if tag.RowsAffected() == 1 {
+		if err == nil && tag.RowsAffected() == 1 && from != withdrawSuccess {
 			logWithdraw(w.WithdrawNo, from, withdrawSuccess, res.ChannelOrderNo)
-			if _, err := postLedger(ctx, nil, []LedgerEntry{{
-				MchNo: w.MchNo, IsvNo: w.IsvNo, IfCode: w.IfCode, Kind: ledgerWithdrawal, RefType: "withdrawal", RefID: w.WithdrawNo,
-				Amount: -w.Amount, Memo: "提现 " + w.MchWithdrawNo, TenantID: w.TenantID,
-			}}); err != nil {
-				log.Printf("ledger withdrawal %s: %v", w.WithdrawNo, err)
-			}
 		}
 	case channel.StateFail:
-		tag, err := db.Exec(ctx, `UPDATE pay_withdrawal SET state='failed', err_code=$3, err_msg=$4, updated_at=now()
-			WHERE withdraw_no=$1 AND state=$2`, w.WithdrawNo, from, res.ErrCode, trunc(res.ErrMsg, 500))
-		if err != nil {
-			return w, err
-		}
-		if tag.RowsAffected() == 1 {
-			logWithdraw(w.WithdrawNo, from, withdrawFailed, res.ErrCode)
-			if from == withdrawSuccess {
-				if _, err := postLedger(ctx, nil, []LedgerEntry{{
-					MchNo: w.MchNo, IsvNo: w.IsvNo, IfCode: w.IfCode, Kind: ledgerWithdrawalReversal, RefType: "withdrawal", RefID: w.WithdrawNo,
-					Amount: w.Amount, Memo: "提现退回 " + w.MchWithdrawNo, TenantID: w.TenantID,
-				}}); err != nil {
-					log.Printf("ledger withdrawal reversal %s: %v", w.WithdrawNo, err)
-				}
+		var advanced bool
+		advanced, err = inTx(ctx, func(tx pgx.Tx) (bool, error) {
+			tag, err := tx.Exec(ctx, `UPDATE pay_withdrawal SET state='failed', err_code=$3, err_msg=$4, updated_at=now()
+				WHERE withdraw_no=$1 AND state=$2`, w.WithdrawNo, from, res.ErrCode, trunc(res.ErrMsg, 500))
+			if err != nil || tag.RowsAffected() == 0 {
+				return false, err
 			}
+			memo := "提现失败冲回 " + w.MchWithdrawNo
+			if from == withdrawSuccess {
+				memo = "提现退回（银行退票）" + w.MchWithdrawNo
+			}
+			_, err = postLedger(ctx, tx, []LedgerEntry{{
+				MchNo: w.MchNo, IsvNo: w.IsvNo, IfCode: w.IfCode, Kind: ledgerWithdrawalReversal, RefType: "withdrawal", RefID: w.WithdrawNo,
+				Amount: w.Amount, Memo: memo, TenantID: w.TenantID,
+			}})
+			return err == nil, err
+		})
+		if advanced {
+			logWithdraw(w.WithdrawNo, from, withdrawFailed, res.ErrCode)
 		}
 	case channel.StateWaiting:
 		if from == withdrawPending {
-			_, err := db.Exec(ctx, `UPDATE pay_withdrawal SET state='accepted', channel_order_no=COALESCE(NULLIF($2,''), channel_order_no),
+			var tag interface{ RowsAffected() int64 }
+			tag, err = db.Exec(ctx, `UPDATE pay_withdrawal SET state='accepted', channel_order_no=COALESCE(NULLIF($2,''), channel_order_no),
 				updated_at=now() WHERE withdraw_no=$1 AND state='pending'`, w.WithdrawNo, res.ChannelOrderNo)
-			if err != nil {
-				return w, err
+			if err == nil && tag.RowsAffected() == 1 {
+				logWithdraw(w.WithdrawNo, from, withdrawAccepted, res.ChannelOrderNo)
 			}
-			logWithdraw(w.WithdrawNo, from, withdrawAccepted, res.ChannelOrderNo)
+		} else {
+			_, err = db.Exec(ctx, `UPDATE pay_withdrawal SET updated_at=now() WHERE withdraw_no=$1 AND state=$2`, w.WithdrawNo, from)
 		}
 	default:
-		_, _ = db.Exec(ctx, `UPDATE pay_withdrawal SET err_code=$2, err_msg=$3, updated_at=now() WHERE withdraw_no=$1`,
-			w.WithdrawNo, res.ErrCode, trunc(res.ErrMsg, 500))
+		_, err = db.Exec(ctx, `UPDATE pay_withdrawal SET err_code=$2, err_msg=$3, updated_at=now() WHERE withdraw_no=$1 AND state=$4`,
+			w.WithdrawNo, res.ErrCode, trunc(res.ErrMsg, 500), from)
+	}
+	if err != nil {
+		return w, err
 	}
 	return findWithdraw(ctx, w.WithdrawNo)
 }
@@ -368,56 +526,97 @@ func logWithdraw(no, from, to, note string) {
 	log.Printf(`{"event":"withdrawal","withdrawNo":%q,"from":%q,"to":%q,"note":%q}`, no, from, to, note)
 }
 
-// syncWithdrawal 查渠道推进 accepted（或 pending）的提现。
-func syncWithdrawal(ctx context.Context, w Withdrawal) (Withdrawal, error) {
-	cc, err := channel.Controlled(w.IfCode)
+// withdrawTarget 提现单对应的渠道与参数。
+func withdrawTarget(ctx context.Context, w Withdrawal) (channel.WithdrawChannel, map[string]string, map[string]string, error) {
+	wc, err := channel.Withdrawing(w.IfCode)
 	if err != nil {
-		return w, err
+		return nil, nil, nil, err
 	}
 	mch, err := loadMerchant(ctx, w.MchNo)
 	if err != nil {
-		return w, err
+		return nil, nil, nil, err
 	}
 	provider, sub, err := resolveParams(ctx, mch, w.IfCode)
+	return wc, provider, sub, err
+}
+
+// syncWithdrawal 查渠道推进提现（accepted 的终态；success 的银行退票）。
+func syncWithdrawal(ctx context.Context, w Withdrawal) (Withdrawal, error) {
+	wc, provider, sub, err := withdrawTarget(ctx, w)
 	if err != nil {
 		return w, err
 	}
-	res, err := cc.QueryWithdraw(ctx, channel.WithdrawRef{WithdrawNo: w.WithdrawNo, ChannelOrderNo: w.ChannelOrderNo, Provider: provider, Sub: sub})
+	res, err := wc.QueryWithdraw(ctx, channel.WithdrawRef{WithdrawNo: w.WithdrawNo, ChannelOrderNo: w.ChannelOrderNo, Provider: provider, Sub: sub})
 	if err != nil {
 		return w, err
 	}
 	return applyWithdrawResult(ctx, w, res)
 }
 
-// withdrawalWorker 每分钟补查 accepted 提现。
+// resubmitWithdrawal 提交结果未知的提现用原提现单号重提（渠道按 out_request_no 幂等）。
+func resubmitWithdrawal(ctx context.Context, w Withdrawal) (Withdrawal, error) {
+	wc, provider, sub, err := withdrawTarget(ctx, w)
+	if err != nil {
+		return w, err
+	}
+	return submitWithdraw(ctx, wc, w, provider, sub)
+}
+
+// withdrawalWorker 每分钟：pending 的用原单号重提；accepted 的查询终态；
+// 成功后 10 天内每 6 小时复查一次（微信提现成功后仍可能银行退票，变为 REFUND）。
+// 同一轮也恢复结果未知的确认结算。
 func withdrawalWorker(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(60 * time.Second):
-		}
-		rows, err := db.Query(ctx, `SELECT `+withdrawCols+` FROM pay_withdrawal
-			WHERE state='accepted' AND updated_at < now() - interval '30 seconds' ORDER BY updated_at LIMIT 50`)
-		if err != nil {
-			if ctx.Err() == nil {
-				log.Printf("withdrawal worker: %v", err)
-			}
-			continue
-		}
-		var batch []Withdrawal
-		for rows.Next() {
-			if w, serr := scanWithdraw(rows); serr == nil {
-				batch = append(batch, w)
-			}
-		}
-		rows.Close()
-		for _, w := range batch {
-			if _, err := syncWithdrawal(ctx, w); err != nil {
-				log.Printf("withdrawal %s sync: %v", w.WithdrawNo, err)
-			}
+	everyLeased(ctx, "controlled", 60*time.Second, sweepControlled)
+}
+
+func sweepControlled(ctx context.Context) error {
+	rows, err := db.Query(ctx, `SELECT `+settleCols+` FROM pay_settle
+		WHERE state='pending' AND updated_at < now() - interval '1 minute' ORDER BY updated_at LIMIT 50`)
+	if err != nil {
+		return err
+	}
+	var settles []Settle
+	for rows.Next() {
+		if s, serr := scanSettle(rows); serr == nil {
+			settles = append(settles, s)
 		}
 	}
+	rows.Close()
+	for _, s := range settles {
+		if _, err := resubmitSettle(ctx, s); err != nil {
+			log.Printf("settle %s recover: %v", s.SettleNo, err)
+			_, _ = db.Exec(ctx, `UPDATE pay_settle SET err_msg=$2, updated_at=now() WHERE settle_no=$1 AND state='pending'`, s.SettleNo, trunc(err.Error(), 500))
+		}
+	}
+
+	rows, err = db.Query(ctx, `SELECT `+withdrawCols+` FROM pay_withdrawal
+		WHERE (state='pending' AND updated_at < now() - interval '1 minute')
+		   OR (state='accepted' AND updated_at < now() - interval '30 seconds')
+		   OR (state='success' AND created_at > now() - interval '10 days' AND updated_at < now() - interval '6 hours')
+		ORDER BY updated_at LIMIT 50`)
+	if err != nil {
+		return err
+	}
+	var batch []Withdrawal
+	for rows.Next() {
+		if w, serr := scanWithdraw(rows); serr == nil {
+			batch = append(batch, w)
+		}
+	}
+	rows.Close()
+	for _, w := range batch {
+		var err error
+		if w.State == withdrawPending {
+			_, err = resubmitWithdrawal(ctx, w)
+		} else {
+			_, err = syncWithdrawal(ctx, w)
+		}
+		if err != nil {
+			log.Printf("withdrawal %s recover: %v", w.WithdrawNo, err)
+			_, _ = db.Exec(ctx, `UPDATE pay_withdrawal SET err_msg=$2, updated_at=now() WHERE withdraw_no=$1`, w.WithdrawNo, trunc(err.Error(), 500))
+		}
+	}
+	return nil
 }
 
 // ── 开放 API ────────────────────────────────────────────────
@@ -447,12 +646,7 @@ func handleCreateWithdrawal(c *gin.Context) {
 	}
 	w, dup, err := createWithdrawal(c.Request.Context(), mch, in.IfCode, in.MchWithdrawNo, in.Amount, in.Remark, "app:"+app.AppID)
 	if err != nil {
-		// 直清渠道、金额非法是请求错误；余额与台账不一致、超额是拒绝动账。
-		code := http.StatusConflict
-		if !channel.IsControlled(in.IfCode) || strings.Contains(err.Error(), "必须为正") {
-			code = http.StatusBadRequest
-		}
-		c.JSON(code, gin.H{"error": err.Error()})
+		c.JSON(moneyStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"withdrawal": w, "idempotent": dup})
@@ -476,7 +670,7 @@ func handleQueryWithdrawal(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"withdrawal": w})
 }
 
-// handleSettleOrder POST /v1/orders/:mchOrderNo/settle：归集模式确认结算。
+// handleSettleOrder POST /v1/orders/:mchOrderNo/settle {holdForDivision}：归集模式确认结算。
 func handleSettleOrder(c *gin.Context) {
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBodyByte))
 	if err != nil {
@@ -485,6 +679,13 @@ func handleSettleOrder(c *gin.Context) {
 	}
 	app, mch, ok := signedApp(c, body)
 	if !ok {
+		return
+	}
+	var in struct {
+		HoldForDivision bool `json:"holdForDivision"`
+	}
+	if len(body) > 0 && json.Unmarshal(body, &in) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体不是合法 JSON"})
 		return
 	}
 	ctx := c.Request.Context()
@@ -501,13 +702,9 @@ func handleSettleOrder(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "订单不属于该应用"})
 		return
 	}
-	if !channel.IsControlled(order.IfCode) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "直清模式没有结算确认"})
-		return
-	}
-	s, dup, err := createSettle(ctx, mch, order)
+	s, dup, err := createSettle(ctx, mch, order, in.HoldForDivision)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(moneyStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"settle": s, "idempotent": dup})
@@ -524,16 +721,22 @@ func handleBalance(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ifCode 必填"})
 		return
 	}
-	if !channel.IsControlled(ifCode) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "直清模式没有平台余额"})
-		return
-	}
+	writeBalance(c, mch, ifCode)
+}
+
+func writeBalance(c *gin.Context, mch Merchant, ifCode string) {
 	v, err := merchantBalance(c.Request.Context(), mch, ifCode)
-	if err != nil {
+	var re reqError
+	switch {
+	case errors.As(err, &re):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, errNotConfigured):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	case err != nil:
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
+	default:
+		c.JSON(http.StatusOK, v)
 	}
-	c.JSON(http.StatusOK, v)
 }
 
 // ── 管理接口 ─────────────────────────────────────────────────
@@ -561,12 +764,7 @@ func handleAdminBalance(c *gin.Context) {
 	if denyOtherTenant(c, claims, mch.TenantID, "商户") {
 		return
 	}
-	v, err := merchantBalance(c.Request.Context(), mch, ifCode)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, v)
+	writeBalance(c, mch, ifCode)
 }
 
 // handleListWithdrawals GET /admin/withdrawals?mchNo=&state=
@@ -601,7 +799,7 @@ func handleListWithdrawals(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
-// handleSyncWithdrawal POST /admin/withdrawals/:no/sync
+// handleSyncWithdrawal POST /admin/withdrawals/:no/sync：pending 重提，其余查询。
 func handleSyncWithdrawal(c *gin.Context) {
 	claims, ok := requireRole(c, roleOperator)
 	if !ok {
@@ -619,11 +817,15 @@ func handleSyncWithdrawal(c *gin.Context) {
 	if denyOtherTenant(c, claims, w.TenantID, "提现单") {
 		return
 	}
-	if w.State == withdrawSuccess || w.State == withdrawFailed {
+	if w.State == withdrawFailed {
 		c.JSON(http.StatusOK, gin.H{"withdrawal": w})
 		return
 	}
-	w, err = syncWithdrawal(c.Request.Context(), w)
+	if w.State == withdrawPending {
+		w, err = resubmitWithdrawal(c.Request.Context(), w)
+	} else {
+		w, err = syncWithdrawal(c.Request.Context(), w)
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

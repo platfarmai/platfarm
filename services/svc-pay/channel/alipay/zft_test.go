@@ -75,7 +75,8 @@ func TestZFT_SignRoundTripAndPay(t *testing.T) {
 	if got.Get("method") != "alipay.trade.precreate" || got.Get("app_id") != "2021" || got.Get("sign_type") != "RSA2" {
 		t.Fatalf("form = %v", got)
 	}
-	if !strings.Contains(got.Get("biz_content"), `"merchant_id":"2088"`) || !strings.Contains(got.Get("biz_content"), `"royalty_freeze":"true"`) {
+	// 下单时不冻结：分账冻结在确认结算时按需声明。
+	if !strings.Contains(got.Get("biz_content"), `"merchant_id":"2088"`) || strings.Contains(got.Get("biz_content"), "royalty_freeze") {
 		t.Fatalf("biz = %s", got.Get("biz_content"))
 	}
 	if !strings.Contains(got.Get("biz_content"), `"total_amount":"12.34"`) {
@@ -142,30 +143,30 @@ func sortStrings(s []string) {
 	}
 }
 
-func TestZFT_SettleRoyaltyWithdrawAndNotify(t *testing.T) {
+func TestZFT_SettleRoyaltyAndNotify(t *testing.T) {
 	privPEM, pubPEM, priv := testKeyPair(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		form, _ := url.ParseQuery(string(raw))
 		method := form.Get("method")
+		biz := form.Get("biz_content")
 		var node any
 		switch method {
 		case "alipay.trade.settle.confirm":
-			if !strings.Contains(form.Get("biz_content"), `"amount":"90.00"`) {
-				t.Errorf("settle biz = %s", form.Get("biz_content"))
+			// 幂等号是结算单号；要分账时结算带冻结标识。
+			if !strings.Contains(biz, `"amount":"90.00"`) || !strings.Contains(biz, `"out_request_no":"S-1"`) ||
+				!strings.Contains(biz, `"royalty_freeze":"true"`) || !strings.Contains(biz, `"defaultSettle"`) {
+				t.Errorf("settle biz = %s", biz)
 			}
 			node = map[string]string{"code": "10000", "msg": "Success", "trade_no": "T1", "settle_no": "S1"}
 		case "alipay.trade.order.settle":
+			// 最后一笔分账带完结标识，解冻剩余资金。
+			if !strings.Contains(biz, `"royalty_finish":"true"`) {
+				t.Errorf("royalty biz = %s", biz)
+			}
 			node = map[string]string{"code": "10000", "msg": "Success", "trade_no": "T1", "settle_no": "R1"}
 		case "alipay.trade.order.settle.query":
 			node = map[string]any{"code": "10000", "msg": "Success", "royalty_detail_list": []map[string]string{{"state": "SUCCESS", "trans_in": "a@b.c", "amount": "10.00"}}}
-		case "alipay.fund.trans.uni.transfer":
-			if !strings.Contains(form.Get("biz_content"), `"trans_amount":"90.00"`) || !strings.Contains(form.Get("biz_content"), "DIRECT_TRANSFER") {
-				t.Errorf("transfer biz = %s", form.Get("biz_content"))
-			}
-			node = map[string]string{"code": "10000", "msg": "Success", "order_id": "O1", "status": "SUCCESS", "pay_fund_order_id": "F1"}
-		case "alipay.data.bill.balance.query":
-			node = map[string]string{"code": "10000", "msg": "Success", "available_amount": "0.00", "freeze_amount": "1.50"}
 		case "ant.merchant.expand.indirect.zft.create":
 			node = map[string]string{"code": "10000", "msg": "Success", "order_id": "Z1"}
 		case "ant.merchant.expand.indirect.zftorder.query":
@@ -183,11 +184,12 @@ func TestZFT_SettleRoyaltyWithdrawAndNotify(t *testing.T) {
 	z := &zft{}
 	ctx := context.Background()
 
-	st, err := z.SettleConfirm(ctx, channel.SettleIn{PayOrderID: "P1", ChannelOrderNo: "T1", Amount: 9000, Provider: prov, Sub: sub})
+	st, err := z.SettleConfirm(ctx, channel.SettleIn{SettleNo: "S-1", PayOrderID: "P1", ChannelOrderNo: "T1", Amount: 9000,
+		HoldForDivision: true, Provider: prov, Sub: sub})
 	if err != nil || st.State != channel.StateSuccess || st.ChannelOrderNo != "S1" {
 		t.Fatalf("settle: %+v %v", st, err)
 	}
-	sh, err := z.Share(ctx, channel.DivisionIn{DivisionNo: "D1", ChannelOrderNo: "T1", Provider: prov, Sub: sub,
+	sh, err := z.Share(ctx, channel.DivisionIn{DivisionNo: "D1", ChannelOrderNo: "T1", UnfreezeUnsplit: true, Provider: prov, Sub: sub,
 		Receivers: []channel.DivisionReceiver{{Type: "loginName", Account: "a@b.c", Amount: 1000}}})
 	if err != nil || sh.State != channel.StateWaiting || sh.ChannelOrderNo != "R1" {
 		t.Fatalf("share: %+v %v", sh, err)
@@ -196,13 +198,12 @@ func TestZFT_SettleRoyaltyWithdrawAndNotify(t *testing.T) {
 	if err != nil || qs.State != channel.StateSuccess || qs.Receivers[0].Amount != 1000 {
 		t.Fatalf("query share: %+v %v", qs, err)
 	}
-	wd, err := z.Withdraw(ctx, channel.WithdrawIn{WithdrawNo: "WD1", Amount: 9000, Provider: prov, Sub: sub})
-	if err != nil || wd.State != channel.StateSuccess || wd.ChannelOrderNo != "F1" {
-		t.Fatalf("withdraw: %+v %v", wd, err)
+	// 直付通没有平台侧余额，也就没有提现能力。
+	if _, err := channel.Withdrawing("alipay_zft"); err == nil {
+		t.Fatal("alipay_zft must not offer withdrawals")
 	}
-	bal, err := z.Balance(ctx, prov, sub)
-	if err != nil || bal.Available != 0 || bal.Pending != 150 {
-		t.Fatalf("balance: %+v %v", bal, err)
+	if _, err := channel.Settling("alipay_zft"); err != nil {
+		t.Fatalf("alipay_zft settles: %v", err)
 	}
 	ar, err := z.SubmitApplyment(ctx, channel.ApplymentIn{BusinessCode: "B1", Provider: prov, Payload: sampleApplyment()})
 	if err != nil || ar.ChannelApplymentID != "Z1" {

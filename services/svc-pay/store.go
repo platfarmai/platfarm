@@ -306,11 +306,11 @@ func createRefund(ctx context.Context, r Refund) (Refund, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var state string
+	var state, settleState string
 	var payAmount, refunded int64
-	err = tx.QueryRow(ctx, `SELECT state, amount, refund_amount FROM pay_order
+	err = tx.QueryRow(ctx, `SELECT state, amount, refund_amount, settle_state FROM pay_order
 		WHERE pay_order_id=$1 AND mch_no=$2 FOR UPDATE`, r.PayOrderID, r.MchNo).
-		Scan(&state, &payAmount, &refunded)
+		Scan(&state, &payAmount, &refunded, &settleState)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Refund{}, fmt.Errorf("支付订单不存在")
 	}
@@ -319,6 +319,10 @@ func createRefund(ctx context.Context, r Refund) (Refund, error) {
 	}
 	if state != orderSuccess {
 		return Refund{}, fmt.Errorf("订单状态 %s 不可退款", state)
+	}
+	// 确认结算进行中时资金去向未定（冻结还是已释放），等结算出结果再退。
+	if settleState == orderSettlePending {
+		return Refund{}, fmt.Errorf("订单正在确认结算，结算完成后再退款")
 	}
 	if refunded+r.RefundAmount > payAmount {
 		return Refund{}, fmt.Errorf("退款金额超出可退余额")

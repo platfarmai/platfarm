@@ -1,6 +1,7 @@
 // wxpay_ecommerce 微信电商收付通（归集模式）。
 // 资金进入二级商户账户并冻结；平台分账后调用完结分账解冻剩余，二级商户再预约提现。
 // 请求签名、验签、敏感字段加密与 wxpay_partner 共用 doRequest / verifyKeyFor / encryptKey。
+// 合单支付（WX_COMBINE）暂不开放：子单金额与收款子商户必须按子单建模、逐单记账后才能上线。
 package wxpay
 
 import (
@@ -20,24 +21,21 @@ type ecommerce struct{}
 
 func (e *ecommerce) IfCode() string   { return "wxpay_ecommerce" }
 func (e *ecommerce) FundMode() string { return channel.FundControlled }
-func (e *ecommerce) Ways() []string   { return []string{"WX_JSAPI", "WX_NATIVE", "WX_COMBINE"} }
+func (e *ecommerce) Ways() []string   { return []string{"WX_JSAPI", "WX_NATIVE"} }
 
 var (
 	_ channel.PayChannel        = (*ecommerce)(nil)
 	_ channel.OnboardingChannel = (*ecommerce)(nil)
 	_ channel.SharingChannel    = (*ecommerce)(nil)
 	_ channel.BillChannel       = (*ecommerce)(nil)
-	_ channel.ControlledChannel = (*ecommerce)(nil)
+	_ channel.SettleChannel     = (*ecommerce)(nil)
+	_ channel.WithdrawChannel   = (*ecommerce)(nil)
 )
 
 // ── 支付 ────────────────────────────────────────────────────
 
-// Pay 普通单走 /v3/pay/partner/transactions（与直清同形，但收付通必须声明分账冻结）；
-// WX_COMBINE 走合单 /v3/combine-transactions，子单金额与单号放在 channelExtra（combine JSON）。
+// Pay 走 /v3/pay/partner/transactions（与直清同形，但收付通必须声明分账冻结）。
 func (e *ecommerce) Pay(ctx context.Context, in channel.PayIn) (channel.Result, error) {
-	if in.WayCode == "WX_COMBINE" {
-		return e.combinePay(ctx, in)
-	}
 	path := "/v3/pay/partner/transactions/"
 	req := jsapiReq{
 		SpAppID: in.Provider["sp_appid"], SpMchID: in.Provider["sp_mchid"],
@@ -90,100 +88,7 @@ func (e *ecommerce) Pay(ctx context.Context, in channel.PayIn) (channel.Result, 
 	return res, nil
 }
 
-// combineSub 合单子单。OutTradeNo 缺省时用 PayOrderID。
-type combineSub struct {
-	SubMchID    string `json:"sub_mchid"`
-	OutTradeNo  string `json:"out_trade_no"`
-	Amount      int64  `json:"amount"`
-	Description string `json:"description"`
-	Attach      string `json:"attach"`
-}
-
-// combinePay POST /v3/combine-transactions/{jsapi|native}。
-// channelExtra["combine"] 是子单 JSON 数组；缺省时用当前订单自身作为唯一子单。
-func (e *ecommerce) combinePay(ctx context.Context, in channel.PayIn) (channel.Result, error) {
-	subs, err := combineSubs(in)
-	if err != nil {
-		return channel.Result{}, err
-	}
-	orders := make([]map[string]any, 0, len(subs))
-	for _, s := range subs {
-		orders = append(orders, map[string]any{
-			"mchid": in.Provider["sp_mchid"], "sub_mchid": orDefault(s.SubMchID, in.Sub["sub_mchid"]),
-			"out_trade_no": orDefault(s.OutTradeNo, in.PayOrderID), "description": orDefault(s.Description, in.Subject),
-			"attach":      s.Attach,
-			"amount":      map[string]any{"total_amount": s.Amount, "currency": orDefault(in.Currency, "CNY")},
-			"settle_info": map[string]any{"profit_sharing": true},
-		})
-	}
-	way := "jsapi"
-	body := map[string]any{
-		"combine_appid": in.Provider["sp_appid"], "combine_mchid": in.Provider["sp_mchid"],
-		"combine_out_trade_no": in.PayOrderID, "notify_url": in.NotifyURL, "sub_orders": orders,
-	}
-	switch in.ChannelExtra["combine_way"] {
-	case "native", "WX_NATIVE":
-		way = "native"
-		if in.ClientIP != "" {
-			body["scene_info"] = map[string]any{"payer_client_ip": in.ClientIP}
-		}
-	default:
-		openid := in.ChannelExtra["sp_openid"]
-		if openid == "" {
-			openid = in.ChannelExtra["sub_openid"]
-		}
-		if openid == "" {
-			return channel.Result{}, fmt.Errorf("WX_COMBINE jsapi 需要 sp_openid 或 sub_openid")
-		}
-		body["combine_payer_info"] = map[string]any{"openid": openid}
-	}
-	raw, _ := json.Marshal(body)
-	resp, out, err := doSigned(ctx, http.MethodPost, "/v3/combine-transactions/"+way, raw, in.Provider)
-	if err != nil {
-		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
-	}
-	if resp.StatusCode/100 != 2 {
-		return failOrUnknown(resp.StatusCode, out, payAmbiguousCodes...), nil
-	}
-	var parsed struct {
-		PrepayID string `json:"prepay_id"`
-		CodeURL  string `json:"code_url"`
-	}
-	if json.Unmarshal(out, &parsed) != nil {
-		return channel.Result{State: channel.StateUnknown, ErrMsg: "bad response", Raw: string(out)}, nil
-	}
-	res := channel.Result{State: channel.StateWaiting, Raw: string(out)}
-	if way == "native" {
-		res.Credential = map[string]string{"codeUrl": parsed.CodeURL}
-	} else {
-		res.Credential = jsapiPayParams(in.Provider, parsed.PrepayID)
-	}
-	return res, nil
-}
-
-func combineSubs(in channel.PayIn) ([]combineSub, error) {
-	if raw := in.ChannelExtra["combine"]; raw != "" {
-		var subs []combineSub
-		if err := json.Unmarshal([]byte(raw), &subs); err != nil || len(subs) == 0 {
-			return nil, fmt.Errorf("channelExtra.combine 不是合法的子单数组")
-		}
-		return subs, nil
-	}
-	return []combineSub{{SubMchID: in.Sub["sub_mchid"], OutTradeNo: in.PayOrderID, Amount: in.Amount, Description: in.Subject}}, nil
-}
-
 func (e *ecommerce) Query(ctx context.Context, ref channel.OrderRef) (channel.Result, error) {
-	if ref.WayCode == "WX_COMBINE" {
-		path := fmt.Sprintf("/v3/combine-transactions/out-trade-no/%s", ref.PayOrderID)
-		resp, raw, err := doSigned(ctx, http.MethodGet, path, nil, ref.Provider)
-		if err != nil {
-			return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
-		}
-		if resp.StatusCode/100 != 2 {
-			return unknownFromBody(raw), nil
-		}
-		return combineState(raw), nil
-	}
 	path := fmt.Sprintf("/v3/pay/partner/transactions/out-trade-no/%s?sp_mchid=%s&sub_mchid=%s",
 		ref.PayOrderID, ref.Provider["sp_mchid"], ref.Sub["sub_mchid"])
 	resp, raw, err := doSigned(ctx, http.MethodGet, path, nil, ref.Provider)
@@ -196,59 +101,9 @@ func (e *ecommerce) Query(ctx context.Context, ref channel.OrderRef) (channel.Re
 	return tradeState(raw), nil
 }
 
-// combineState 合单：全部子单 SUCCESS → SUCCESS；任一失败 → FAIL；否则 WAITING。
-func combineState(raw []byte) channel.Result {
-	var d struct {
-		SubOrders []struct {
-			TradeState    string `json:"trade_state"`
-			TransactionID string `json:"transaction_id"`
-		} `json:"sub_orders"`
-	}
-	_ = json.Unmarshal(raw, &d)
-	res := channel.Result{State: channel.StateWaiting, Raw: string(raw)}
-	if len(d.SubOrders) == 0 {
-		return res
-	}
-	fail, ok := 0, 0
-	for _, s := range d.SubOrders {
-		switch s.TradeState {
-		case "SUCCESS":
-			ok++
-			if res.ChannelOrderNo == "" {
-				res.ChannelOrderNo = s.TransactionID
-			}
-		case "CLOSED", "REVOKED", "PAYERROR":
-			fail++
-		}
-	}
-	switch {
-	case ok == len(d.SubOrders):
-		res.State = channel.StateSuccess
-	case fail > 0 && ok+fail == len(d.SubOrders):
-		res.State = channel.StateFail
-		res.ErrCode = "COMBINE_FAILED"
-	}
-	return res
-}
-
 func (e *ecommerce) Close(ctx context.Context, ref channel.OrderRef) error {
-	var path string
-	var body []byte
-	if ref.WayCode == "WX_COMBINE" {
-		path = "/v3/combine-transactions/out-trade-no/" + ref.PayOrderID + "/close"
-		subs, _ := combineSubs(channel.PayIn{PayOrderID: ref.PayOrderID, Amount: 0, Sub: ref.Sub})
-		orders := make([]map[string]string, 0, len(subs))
-		for _, s := range subs {
-			orders = append(orders, map[string]string{
-				"mchid": ref.Provider["sp_mchid"], "sub_mchid": orDefault(s.SubMchID, ref.Sub["sub_mchid"]),
-				"out_trade_no": orDefault(s.OutTradeNo, ref.PayOrderID),
-			})
-		}
-		body, _ = json.Marshal(map[string]any{"combine_appid": ref.Provider["sp_appid"], "sub_orders": orders})
-	} else {
-		path = "/v3/pay/partner/transactions/out-trade-no/" + ref.PayOrderID + "/close"
-		body, _ = json.Marshal(map[string]string{"sp_mchid": ref.Provider["sp_mchid"], "sub_mchid": ref.Sub["sub_mchid"]})
-	}
+	path := "/v3/pay/partner/transactions/out-trade-no/" + ref.PayOrderID + "/close"
+	body, _ := json.Marshal(map[string]string{"sp_mchid": ref.Provider["sp_mchid"], "sub_mchid": ref.Sub["sub_mchid"]})
 	resp, raw, err := doSigned(ctx, http.MethodPost, path, body, ref.Provider)
 	if err != nil {
 		return err
@@ -551,12 +406,17 @@ func parseEcommerceDivision(raw []byte) channel.DivisionResult {
 // ── 结算确认 / 提现 / 余额 ──────────────────────────────────
 
 // SettleConfirm 收付通的「确认结算」是完结分账：把订单剩余冻结资金解冻给二级商户。
+// 幂等号用结算单号（同一 out_order_no 重试等同一次）。NOT_ENOUGH 表示已没有冻结资金可解冻
+// （已全部分出或此前已解冻）——释放这件事已经发生，按成功处理。
 func (e *ecommerce) SettleConfirm(ctx context.Context, in channel.SettleIn) (channel.Result, error) {
 	res, err := e.FinishShare(ctx, channel.DivisionRef{
-		DivisionNo: in.PayOrderID + "S", ChannelOrderNo: in.ChannelOrderNo, Provider: in.Provider, Sub: in.Sub,
+		DivisionNo: in.SettleNo, ChannelOrderNo: in.ChannelOrderNo, Provider: in.Provider, Sub: in.Sub,
 	})
 	if err != nil {
 		return channel.Result{State: channel.StateUnknown, ErrMsg: err.Error()}, nil
+	}
+	if res.State == channel.StateFail && res.ErrCode == "NOT_ENOUGH" {
+		return channel.Result{State: channel.StateSuccess, ErrMsg: "无剩余冻结资金（已释放）", Raw: res.Raw}, nil
 	}
 	return channel.Result{State: res.State, ChannelOrderNo: res.ChannelOrderNo, ErrCode: res.ErrCode, ErrMsg: res.ErrMsg, Raw: res.Raw}, nil
 }

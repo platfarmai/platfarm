@@ -205,6 +205,18 @@ func createDivision(ctx context.Context, app App, mch Merchant, order Order, req
 	if existing, err := findActiveDivisionByOrder(ctx, order.PayOrderID); err == nil {
 		return existing, true, nil
 	}
+	if channel.IsControlled(order.IfCode) {
+		if channel.Withdrawable(order.IfCode) {
+			// 收付通：分账在确认结算（完结分账）之前；分账时不解冻，剩余资金统一由确认结算释放并记入可提现台账。
+			if order.SettleState != orderSettleNone {
+				return Division{}, false, fmt.Errorf("收付通订单确认结算后剩余资金已解冻，不能再分账")
+			}
+			unfreeze = false
+		} else if s, err := findActiveSettle(ctx, order.PayOrderID); err != nil || s.State != settleSuccess || !s.HoldForDivision {
+			// 直付通：结算前不支持分账；结算时须带 holdForDivision 冻结，资金才不会被挪走。
+			return Division{}, false, fmt.Errorf("直付通须先以 holdForDivision=true 确认结算成功后再分账")
+		}
+	}
 	sh, err := channel.Sharing(order.IfCode)
 	if err != nil {
 		return Division{}, false, err

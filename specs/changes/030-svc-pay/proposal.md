@@ -35,7 +35,7 @@ pay_isv.fund_mode = direct | controlled
 ```
 
 `direct` — channel settles to the sub-merchant; "settlement" in this system means **rebate ledger + reconciliation** only.
-`controlled` — funds are held; settlement means **settle-confirm + profit-sharing + withdrawal**, and those rows are real money movements.
+`controlled` — funds are held; settlement means **settle-confirm + profit-sharing (+ withdrawal where the channel keeps a sub-merchant balance)**, and those rows are real money movements. WeChat 收付通: share first, settle (finish-order) releases the remainder into the sub-merchant's withdrawable balance, the platform withdraws on its behalf. Alipay 直付通: settle first (frozen when a split follows), then royalty; funds land in the sub-merchant's own settlement account, so there is no platform-side balance and no withdrawal.
 
 Both modes share merchants, apps, orders, refunds, notify and reconciliation. They differ only in which channel adapter is bound and which post-payment flows are legal: profit-sharing is opt-in under `direct` (WeChat `settle_info.profit_sharing`, ratio capped by the sub-merchant's granted maximum) and mandatory under `controlled`; withdrawal exists only under `controlled`. The ledger tables below cover both; `direct` simply never writes withdrawal rows.
 
