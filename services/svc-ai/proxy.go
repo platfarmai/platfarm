@@ -100,6 +100,10 @@ func proxyModel(db *pgxpool.Pool, client string) gin.HandlerFunc {
 		}
 		stream, _ := payload["stream"].(bool)
 		delete(payload, "stream")
+		if client == "images" && stream {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "image streaming is not supported"})
+			return
+		}
 
 		// 3. 路由
 		rt, err := resolveRoute(ctx, db, model)
@@ -111,6 +115,8 @@ func proxyModel(db *pgxpool.Pool, client string) gin.HandlerFunc {
 		var upURL string
 		var upBody []byte
 		switch {
+		case client == "images":
+			upURL, upBody, err = imageRequest(payload, rt)
 		case client == "anthropic" && rt.Kind == "openai":
 			upURL = strings.TrimRight(rt.BaseURL, "/") + "/chat/completions"
 			upBody, err = toOpenAIRequest(payload, rt.Model)
@@ -199,11 +205,16 @@ func proxyModel(db *pgxpool.Pool, client string) gin.HandlerFunc {
 			}
 			return
 		}
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, (32<<20)+1))
+		if readErr != nil || len(respBody) > 32<<20 {
+			recordUsage(db, keyName, rt, 0, 0, http.StatusBadGateway, time.Since(start))
+			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream response unreadable or exceeds 32 MB"})
+			return
+		}
 
 		// 5. 响应翻译 + 计量（成功解析 usage，失败记 0 token + 状态码）
 		in, out := 0, 0
-		if resp.StatusCode == http.StatusOK && client != rt.Kind {
+		if resp.StatusCode == http.StatusOK && client != rt.Kind && client != "images" {
 			if client == "anthropic" {
 				converted, pin, pout, cerr := fromOpenAIResponse(respBody, model)
 				if cerr != nil {
