@@ -111,6 +111,7 @@ func main() {
 
 	// 网关路径：虚拟 key 鉴权（不依赖平台 JWT，内网直调可用）
 	r.POST(mount+"/v1/messages", proxyMessages(db))
+	r.POST(mount+"/v1/chat/completions", proxyChatCompletions(db))
 
 	admin := r.Group(mount+"/admin", requireUser, requireAdmin)
 	admin.GET("/providers", listProviders(db))

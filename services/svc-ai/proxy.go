@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -52,13 +53,25 @@ func resolveRoute(ctx context.Context, db *pgxpool.Pool, model string) (*route, 
 }
 
 func proxyMessages(db *pgxpool.Pool) gin.HandlerFunc {
+	return proxyModel(db, "anthropic")
+}
+
+func proxyChatCompletions(db *pgxpool.Pool) gin.HandlerFunc {
+	return proxyModel(db, "openai")
+}
+
+func proxyModel(db *pgxpool.Pool, client string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 
-		// 1. 虚拟 key 鉴权
+		// 1. 虚拟 key 鉴权。Anthropic 客户端用 x-api-key，OpenAI 客户端用 Bearer。
 		plain := c.GetHeader("x-api-key")
 		if plain == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing x-api-key"})
+			plain = strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+			plain = strings.TrimSpace(plain)
+		}
+		if plain == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing api key"})
 			return
 		}
 		var keyName string
@@ -85,10 +98,8 @@ func proxyMessages(db *pgxpool.Pool) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "model required"})
 			return
 		}
-		if stream, _ := payload["stream"].(bool); stream {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "v1 暂不支持 stream"})
-			return
-		}
+		stream, _ := payload["stream"].(bool)
+		delete(payload, "stream")
 
 		// 3. 路由
 		rt, err := resolveRoute(ctx, db, model)
@@ -96,23 +107,28 @@ func proxyMessages(db *pgxpool.Pool) gin.HandlerFunc {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "无可用 provider（请在 AI 中心配置）"})
 			return
 		}
-		// 4. 按 provider 协议构造上游请求
+		// 4. 按客户端协议和 provider 协议构造上游请求
 		var upURL string
 		var upBody []byte
-		if rt.Kind == "openai" {
+		switch {
+		case client == "anthropic" && rt.Kind == "openai":
 			upURL = strings.TrimRight(rt.BaseURL, "/") + "/chat/completions"
 			upBody, err = toOpenAIRequest(payload, rt.Model)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "openai request build: " + err.Error()})
-				return
-			}
-		} else {
+		case client == "openai" && rt.Kind == "anthropic":
 			upURL = strings.TrimRight(rt.BaseURL, "/") + "/v1/messages"
-			if rt.Model != model {
-				payload["model"] = rt.Model
-				body, _ = json.Marshal(payload)
-			}
-			upBody = body
+			upBody, err = toAnthropicRequest(payload, rt.Model)
+		case rt.Kind == "openai":
+			upURL = strings.TrimRight(rt.BaseURL, "/") + "/chat/completions"
+			payload["model"] = rt.Model
+			upBody, err = json.Marshal(payload)
+		default:
+			upURL = strings.TrimRight(rt.BaseURL, "/") + "/v1/messages"
+			payload["model"] = rt.Model
+			upBody, err = json.Marshal(payload)
+		}
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "request build: " + err.Error()})
+			return
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, upURL, bytes.NewReader(upBody))
@@ -123,6 +139,30 @@ func proxyMessages(db *pgxpool.Pool) gin.HandlerFunc {
 		req.Header.Set("Content-Type", "application/json")
 		if rt.Kind == "openai" {
 			req.Header.Set("Authorization", "Bearer "+rt.APIKey)
+			if stream && client == "openai" {
+				var decoded map[string]any
+				if err := json.Unmarshal(upBody, &decoded); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+				decoded["stream"] = true
+				decoded["stream_options"] = map[string]any{"include_usage": true}
+				upBody, _ = json.Marshal(decoded)
+				req.Body = io.NopCloser(bytes.NewReader(upBody))
+				req.ContentLength = int64(len(upBody))
+			}
+			if stream && client != "openai" {
+				var decoded map[string]any
+				if err := json.Unmarshal(upBody, &decoded); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+				decoded["stream"] = true
+				decoded["stream_options"] = map[string]any{"include_usage": true}
+				upBody, _ = json.Marshal(decoded)
+				req.Body = io.NopCloser(bytes.NewReader(upBody))
+				req.ContentLength = int64(len(upBody))
+			}
 		} else {
 			req.Header.Set("x-api-key", rt.APIKey)
 			ver := c.GetHeader("anthropic-version")
@@ -130,6 +170,17 @@ func proxyMessages(db *pgxpool.Pool) gin.HandlerFunc {
 				ver = "2023-06-01"
 			}
 			req.Header.Set("anthropic-version", ver)
+			if stream && client == "anthropic" {
+				var decoded map[string]any
+				if err := json.Unmarshal(upBody, &decoded); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+				decoded["stream"] = true
+				upBody, _ = json.Marshal(decoded)
+				req.Body = io.NopCloser(bytes.NewReader(upBody))
+				req.ContentLength = int64(len(upBody))
+			}
 		}
 
 		start := time.Now()
@@ -140,12 +191,20 @@ func proxyMessages(db *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 		defer resp.Body.Close()
+		if stream && resp.StatusCode == http.StatusOK && client != rt.Kind {
+			if client == "anthropic" {
+				proxyOpenAIStream(c, db, keyName, rt, model, resp.Body, start)
+			} else {
+				proxyAnthropicStream(c, db, keyName, rt, model, resp.Body, start)
+			}
+			return
+		}
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
 
 		// 5. 响应翻译 + 计量（成功解析 usage，失败记 0 token + 状态码）
 		in, out := 0, 0
-		if resp.StatusCode == http.StatusOK {
-			if rt.Kind == "openai" {
+		if resp.StatusCode == http.StatusOK && client != rt.Kind {
+			if client == "anthropic" {
 				converted, pin, pout, cerr := fromOpenAIResponse(respBody, model)
 				if cerr != nil {
 					recordUsage(db, keyName, rt, 0, 0, http.StatusBadGateway, time.Since(start))
@@ -154,14 +213,27 @@ func proxyMessages(db *pgxpool.Pool) gin.HandlerFunc {
 				}
 				respBody, in, out = converted, pin, pout
 			} else {
-				var u struct {
-					Usage struct {
-						InputTokens  int `json:"input_tokens"`
-						OutputTokens int `json:"output_tokens"`
-					} `json:"usage"`
+				converted, pin, pout, cerr := fromAnthropicResponse(respBody, model)
+				if cerr != nil {
+					recordUsage(db, keyName, rt, 0, 0, http.StatusBadGateway, time.Since(start))
+					c.JSON(http.StatusBadGateway, gin.H{"error": cerr.Error()})
+					return
 				}
-				if json.Unmarshal(respBody, &u) == nil {
-					in, out = u.Usage.InputTokens, u.Usage.OutputTokens
+				respBody, in, out = converted, pin, pout
+			}
+		} else if resp.StatusCode == http.StatusOK {
+			var u struct {
+				Usage struct {
+					InputTokens      int `json:"input_tokens"`
+					OutputTokens     int `json:"output_tokens"`
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal(respBody, &u) == nil {
+				in, out = u.Usage.InputTokens, u.Usage.OutputTokens
+				if in == 0 && out == 0 {
+					in, out = u.Usage.PromptTokens, u.Usage.CompletionTokens
 				}
 			}
 		}
@@ -169,6 +241,146 @@ func proxyMessages(db *pgxpool.Pool) gin.HandlerFunc {
 
 		c.Data(resp.StatusCode, "application/json", respBody)
 	}
+}
+
+func proxyOpenAIStream(c *gin.Context, db *pgxpool.Pool, keyName string, rt *route, model string, body io.Reader, start time.Time) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Status(http.StatusOK)
+	flusher, _ := c.Writer.(http.Flusher)
+	state := anthropicStream{model: model}
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64*1024), 4<<20)
+	var data strings.Builder
+	fail := func(err error) {
+		raw, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": "api_error", "message": err.Error()}})
+		_, _ = c.Writer.Write([]byte("event: error\ndata: " + string(raw) + "\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			chunk := data.String()
+			data.Reset()
+			if chunk == "" || chunk == "[DONE]" {
+				continue
+			}
+			events, err := state.Events([]byte(chunk))
+			if err != nil {
+				fail(err)
+				recordUsage(db, keyName, rt, state.input, state.output, http.StatusBadGateway, time.Since(start))
+				return
+			}
+			for _, event := range events {
+				_, _ = io.WriteString(c.Writer, event)
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			if data.Len() > 0 {
+				data.WriteByte('\n')
+			}
+			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		fail(err)
+		recordUsage(db, keyName, rt, state.input, state.output, http.StatusBadGateway, time.Since(start))
+		return
+	}
+	events, err := state.Finish()
+	if err != nil {
+		fail(err)
+		recordUsage(db, keyName, rt, state.input, state.output, http.StatusBadGateway, time.Since(start))
+		return
+	}
+	for _, event := range events {
+		_, _ = io.WriteString(c.Writer, event)
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	recordUsage(db, keyName, rt, state.input, state.output, http.StatusOK, time.Since(start))
+}
+
+func proxyAnthropicStream(c *gin.Context, db *pgxpool.Pool, keyName string, rt *route, model string, body io.Reader, start time.Time) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Status(http.StatusOK)
+	flusher, _ := c.Writer.(http.Flusher)
+	state := openAIStream{model: model}
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64*1024), 4<<20)
+	var event string
+	var data strings.Builder
+	fail := func(err error) {
+		raw, _ := json.Marshal(map[string]any{"error": map[string]any{"message": err.Error(), "type": "api_error"}})
+		_, _ = c.Writer.Write([]byte("data: " + string(raw) + "\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	flush := func() bool {
+		chunk := data.String()
+		data.Reset()
+		if chunk == "" {
+			return true
+		}
+		frame, err := state.Events(event, []byte(chunk))
+		event = ""
+		if err != nil {
+			fail(err)
+			recordUsage(db, keyName, rt, state.input, state.output, http.StatusBadGateway, time.Since(start))
+			return false
+		}
+		if frame != "" {
+			_, _ = io.WriteString(c.Writer, frame)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		return true
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case line == "":
+			if !flush() {
+				return
+			}
+		case strings.HasPrefix(line, "event:"):
+			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		case strings.HasPrefix(line, "data:"):
+			if data.Len() > 0 {
+				data.WriteByte('\n')
+			}
+			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if !flush() {
+		return
+	}
+	if err := scanner.Err(); err != nil {
+		fail(err)
+		recordUsage(db, keyName, rt, state.input, state.output, http.StatusBadGateway, time.Since(start))
+		return
+	}
+	frame, err := state.Finish()
+	if err != nil {
+		fail(err)
+		recordUsage(db, keyName, rt, state.input, state.output, http.StatusBadGateway, time.Since(start))
+		return
+	}
+	_, _ = io.WriteString(c.Writer, frame)
+	if flusher != nil {
+		flusher.Flush()
+	}
+	recordUsage(db, keyName, rt, state.input, state.output, http.StatusOK, time.Since(start))
 }
 
 func recordUsage(db *pgxpool.Pool, keyName string, rt *route, in, out, status int, dur time.Duration) {

@@ -1,5 +1,5 @@
 # svc-ai — 平台 AI 管理中心（specs/029）：LLM 网关 + provider 凭据 + 虚拟 key + 用量计量。
-# 业务服务内网直调 http://svc-ai:8080/api/ai/v1/messages（Anthropic Messages 协议，虚拟 key 鉴权）。
+# 业务服务内网直调 http://svc-ai:8080/api/ai/v1/messages（Anthropic）或 /api/ai/v1/chat/completions（OpenAI）。
 manifest: v1
 id: svc-ai
 version: 0.1.0
