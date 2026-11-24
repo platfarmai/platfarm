@@ -130,6 +130,38 @@ func handleCreateISV(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"isvNo": in.IsvNo, "fundMode": in.FundMode})
 }
 
+func handleListISVs(c *gin.Context) {
+	claims, ok := requireOperator(c)
+	if !ok {
+		return
+	}
+	scope, args := tenantScope(claims)
+	// 平台（租户 0）的服务商可被各租户挂靠，列表里一并给出。
+	rows, err := db.Query(c.Request.Context(), `SELECT isv_no, isv_name, fund_mode, rebate_rate_bps, state, tenant_id
+		FROM pay_isv WHERE `+scope+` OR tenant_id=0 ORDER BY created_at DESC LIMIT 200`, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	defer rows.Close()
+	type isvItem struct {
+		IsvNo         string `json:"isvNo"`
+		IsvName       string `json:"isvName"`
+		FundMode      string `json:"fundMode"`
+		RebateRateBps int    `json:"rebateRateBps"`
+		State         string `json:"state"`
+		TenantID      int    `json:"tenantId"`
+	}
+	items := []isvItem{}
+	for rows.Next() {
+		var it isvItem
+		if rows.Scan(&it.IsvNo, &it.IsvName, &it.FundMode, &it.RebateRateBps, &it.State, &it.TenantID) == nil {
+			items = append(items, it)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
 // targetTenant 新建对象的归属租户：默认调用者租户；只有平台管理员能指定其他租户。失败已写响应。
 func targetTenant(c *gin.Context, claims *Claims, requested *int) (int, bool) {
 	if requested == nil || *requested == claims.TenantId {

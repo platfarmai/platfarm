@@ -11,7 +11,11 @@ const filter = ref("");
 const current = ref(null); // { applyment, media }
 const editing = ref(false);
 const form = ref({ mchNo: "", ifCode: "wxpay_partner", payloadText: "" });
+const fields = ref(blank());
+const jsonError = ref("");
+const showJson = ref(false);
 const uploading = ref("");
+let writing = false;
 
 const imageKinds = [
   ["license", "营业执照"],
@@ -20,24 +24,159 @@ const imageKinds = [
   ["storefront", "门头照（线下场景）"],
   ["interior", "店内环境照"],
 ];
-
-const payloadTemplate = {
-  subject: { type: "enterprise", name: "", short_name: "", license_no: "", license_valid: "2020-01-01,长期", mcc: "" },
-  legal_person: { name: "", id_type: "id_card", id_no: "", id_valid: "2020-01-01,长期", phone: "" },
-  contact: { name: "", phone: "", email: "" },
-  business: {
-    service_phone: "",
-    address: { province: "", city: "", district: "", detail: "", code: "" },
-    scene: { types: ["offline"], appid: "" },
-  },
-  settlement_account: { type: "corporate", bank: "", branch: "", account_name: "", account_no: "", address_code: "" },
-  rates: [{ way_code: "WX_JSAPI", fee_rate_bps: 60, settle_cycle: "T1" }],
-  images: {},
-  extra: { wx_qualification_type: "" },
+const scenes = [
+  ["offline", "线下门店"],
+  ["mini_program", "小程序"],
+  ["mp", "公众号"],
+  ["app", "APP"],
+  ["web", "网站"],
+];
+// 微信特约进件：subject.mcc 存结算规则 ID，extra.wx_qualification_type 存所属行业。
+// 只收录无需特殊资质、费率 0.6% 的常用项。来源：微信支付入驻结算规则对照表。
+const settlementRules = {
+  enterprise: [
+    ["716", "企业 · 餐饮/零售/生活服务（0.6%，T+1）"],
+    ["711", "企业 · 互联网服务（1%，T+1）"],
+  ],
+  individual: [
+    ["719", "个体户 · 餐饮/零售/生活服务（0.6%，T+1）"],
+    ["746", "个体户 · 互联网服务（1%，T+1）"],
+  ],
+  institution: [
+    ["727", "事业单位/其他组织 · 咨询票务等（0.6%，T+1）"],
+  ],
 };
+const industries = {
+  716: ["餐饮", "电商平台", "零售", "食品生鲜", "咨询/娱乐票务", "房产中介", "休闲娱乐/旅游服务", "居民生活服务", "景区/酒店", "停车缴费"],
+  719: ["餐饮", "电商平台", "零售", "食品生鲜", "咨询/娱乐票务", "房产中介", "休闲娱乐/旅游服务", "居民生活服务", "景区/酒店", "停车缴费"],
+  711: ["门户论坛/网络广告及推广/软件开发/其他互联网服务"],
+  746: ["门户论坛/网络广告及推广/软件开发/其他互联网服务"],
+  727: ["咨询/娱乐票务/其他"],
+};
+const banks = ["工商银行", "交通银行", "招商银行", "民生银行", "中信银行", "浦发银行", "兴业银行", "光大银行", "广发银行", "平安银行", "北京银行", "华夏银行", "农业银行", "建设银行", "邮政储蓄银行", "中国银行", "宁波银行", "其他银行"];
+const ways = [
+  ["WX_JSAPI", "微信 JSAPI / 小程序"],
+  ["WX_NATIVE", "微信 Native 扫码"],
+];
+const regions = [
+  ["110000", "北京市"], ["120000", "天津市"], ["130000", "河北省"], ["140000", "山西省"],
+  ["150000", "内蒙古自治区"], ["210000", "辽宁省"], ["220000", "吉林省"], ["230000", "黑龙江省"],
+  ["310000", "上海市"], ["320000", "江苏省"], ["330000", "浙江省"], ["340000", "安徽省"],
+  ["350000", "福建省"], ["360000", "江西省"], ["370000", "山东省"], ["410000", "河南省"],
+  ["420000", "湖北省"], ["430000", "湖南省"], ["440000", "广东省"], ["450000", "广西壮族自治区"],
+  ["460000", "海南省"], ["500000", "重庆市"], ["510000", "四川省"], ["520000", "贵州省"],
+  ["530000", "云南省"], ["540000", "西藏自治区"], ["610000", "陕西省"], ["620000", "甘肃省"],
+  ["630000", "青海省"], ["640000", "宁夏回族自治区"], ["650000", "新疆维吾尔自治区"],
+];
+
+function blank() {
+  return {
+    subject: { type: "enterprise", name: "", short_name: "", license_no: "", license_valid: "2020-01-01,长期", mcc: "716" },
+    legal_person: { name: "", id_type: "id_card", id_no: "", id_valid: "2020-01-01,长期", phone: "" },
+    contact: { name: "", phone: "", email: "" },
+    business: {
+      service_phone: "",
+      address: { province: "", city: "", district: "", detail: "", code: "" },
+      scene: { types: ["offline"], appid: "" },
+    },
+    settlement_account: { type: "corporate", bank: "", branch: "", account_name: "", account_no: "", address_code: "" },
+    rates: [{ way_code: "WX_JSAPI", fee_rate_bps: 60, settle_cycle: "T1" }],
+    images: {},
+    extra: { wx_qualification_type: "零售", wx_contact_type: "LEGAL", web_domain: "" },
+  };
+}
 
 const reviewable = computed(() => current.value?.applyment?.state === "reviewing");
 const pollable = computed(() => ["submitted", "channel_auditing", "need_sign", "need_verify"].includes(current.value?.applyment?.state));
+const needsAppID = computed(() => fields.value.business.scene.types.some((t) => t === "mini_program" || t === "mp" || t === "app"));
+const needsWeb = computed(() => fields.value.business.scene.types.includes("web"));
+const ruleOptions = computed(() => settlementRules[fields.value.subject.type] || settlementRules.enterprise);
+const industryOptions = computed(() => industries[fields.value.subject.mcc] || []);
+const regionValue = computed(() => {
+  const code = fields.value.business.address.code || "";
+  const hit = regions.find(([c]) => c === code || c.slice(0, 2) === code.slice(0, 2));
+  return hit ? hit[0] : "";
+});
+
+function fill(payload) {
+  const base = blank();
+  const src = payload && typeof payload === "object" ? payload : {};
+  for (const key of ["subject", "legal_person", "contact", "settlement_account", "extra"]) {
+    base[key] = { ...base[key], ...(src[key] || {}) };
+  }
+  base.business = {
+    service_phone: src.business?.service_phone || "",
+    address: { ...base.business.address, ...(src.business?.address || {}) },
+    scene: {
+      types: Array.isArray(src.business?.scene?.types) ? [...src.business.scene.types] : ["offline"],
+      appid: src.business?.scene?.appid || "",
+    },
+  };
+  base.rates = Array.isArray(src.rates) && src.rates.length
+    ? src.rates.map((r) => ({ way_code: r.way_code || "", fee_rate_bps: Number(r.fee_rate_bps) || 0, settle_cycle: r.settle_cycle || "T1" }))
+    : base.rates;
+  base.images = { ...(src.images || {}) };
+  return base;
+}
+
+function writeJson() {
+  writing = true;
+  form.value.payloadText = JSON.stringify(fields.value, null, 2);
+  jsonError.value = "";
+  queueMicrotask(() => { writing = false; });
+}
+
+function readJson() {
+  if (writing) return;
+  try {
+    fields.value = fill(JSON.parse(form.value.payloadText));
+    jsonError.value = "";
+  } catch (e) {
+    jsonError.value = "JSON 还不能解析：" + e.message;
+  }
+}
+
+function set(path, value) {
+  const parts = path.split(".");
+  let cur = fields.value;
+  for (let i = 0; i < parts.length - 1; i++) cur = cur[parts[i]];
+  cur[parts.at(-1)] = value;
+  writeJson();
+}
+
+function onInput(path, ev) {
+  set(path, ev.target.value);
+}
+
+function onSubjectType(ev) {
+  const type = ev.target.value;
+  fields.value.subject.type = type;
+  const rules = settlementRules[type] || [];
+  if (!rules.some(([id]) => id === fields.value.subject.mcc)) fields.value.subject.mcc = rules[0]?.[0] || "";
+  onRule();
+}
+
+function onRule() {
+  const list = industries[fields.value.subject.mcc] || [];
+  if (!list.includes(fields.value.extra.wx_qualification_type)) fields.value.extra.wx_qualification_type = list[0] || "";
+  writeJson();
+}
+
+function onRegion(ev) {
+  const code = ev.target.value;
+  const name = regions.find(([c]) => c === code)?.[1] || "";
+  fields.value.business.address.province = name;
+  fields.value.business.address.code = code;
+  if (!fields.value.settlement_account.address_code) fields.value.settlement_account.address_code = code;
+  writeJson();
+}
+
+function toggleScene(key, on) {
+  const types = new Set(fields.value.business.scene.types);
+  if (on) types.add(key);
+  else types.delete(key);
+  set("business.scene.types", [...types]);
+}
 
 async function load() {
   err.value = "";
@@ -80,10 +219,18 @@ function reject() {
   if (reason && reason.trim()) act("reject", { reason: reason.trim() });
 }
 
-function startNew() {
-  form.value = { mchNo: merchants.value[0]?.mchNo || "", ifCode: "wxpay_partner", payloadText: JSON.stringify(payloadTemplate, null, 2) };
-  current.value = null;
+function begin(payload) {
+  fields.value = fill(payload);
+  writeJson();
+  jsonError.value = "";
+  showJson.value = false;
   editing.value = true;
+}
+
+function startNew() {
+  form.value = { mchNo: merchants.value[0]?.mchNo || "", ifCode: "wxpay_partner", payloadText: "" };
+  current.value = null;
+  begin(blank());
 }
 
 function startEdit() {
@@ -92,11 +239,15 @@ function startEdit() {
   const p = JSON.parse(JSON.stringify(a.payload));
   p.legal_person.id_no = "";
   p.settlement_account.account_no = "";
-  form.value = { mchNo: a.mchNo, ifCode: a.ifCode, payloadText: JSON.stringify(p, null, 2) };
-  editing.value = true;
+  form.value = { mchNo: a.mchNo, ifCode: a.ifCode, payloadText: "" };
+  begin(p);
 }
 
 function parsePayload() {
+  if (jsonError.value) {
+    err.value = jsonError.value;
+    return null;
+  }
   try {
     return JSON.parse(form.value.payloadText);
   } catch (e) {
@@ -116,9 +267,7 @@ async function upload(kind, ev) {
     const r = await api("POST", "/admin/applyments/upload-url", { filename: file.name, mime: file.type, size: file.size });
     const put = await fetch(r.uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
     if (!put.ok) throw new Error("上传到对象存储失败 HTTP " + put.status);
-    payload.images = payload.images || {};
-    payload.images[kind] = String(r.fileId);
-    form.value.payloadText = JSON.stringify(payload, null, 2);
+    set("images." + kind, String(r.fileId));
   } catch (e) {
     err.value = e.message || String(e);
   } finally {
@@ -189,22 +338,196 @@ onMounted(load);
     <!-- 新建 / 修改资料 -->
     <div v-if="editing" class="pf-card flex flex-col gap-3">
       <h2 class="m-0 text-[16px] font-semibold">{{ current ? "修改资料 " + current.applyment.applymentId : "新建进件" }}</h2>
-      <div v-if="!current" class="flex gap-2">
-        <select v-model="form.mchNo" class="pf-input">
-          <option v-for="m in merchants" :key="m.mchNo" :value="m.mchNo">{{ m.mchName }}（{{ m.mchNo }}）</option>
-        </select>
-        <select v-model="form.ifCode" class="pf-input">
-          <option value="wxpay_partner">微信普通服务商</option>
-        </select>
+      <div v-if="!current" class="grid grid-cols-2 gap-3">
+        <label class="flex flex-col gap-1 text-[13px]">商户
+          <select :value="form.mchNo" class="pf-input" @change="form.mchNo = $event.target.value">
+            <option v-for="m in merchants" :key="m.mchNo" :value="m.mchNo">{{ m.mchName }}（{{ m.mchNo }}）</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">渠道
+          <select :value="form.ifCode" class="pf-input" @change="form.ifCode = $event.target.value">
+            <option value="wxpay_partner">微信普通服务商</option>
+          </select>
+        </label>
       </div>
+
+      <h3 class="m-0 text-[14px] font-semibold">主体</h3>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="flex flex-col gap-1 text-[13px]">主体类型
+          <select class="pf-input" :value="fields.subject.type" @change="onSubjectType">
+            <option value="enterprise">企业</option>
+            <option value="individual">个体户</option>
+            <option value="institution">事业单位</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">结算规则
+          <select class="pf-input" :value="fields.subject.mcc" @change="onInput('subject.mcc', $event); onRule()">
+            <option v-for="[id, label] in ruleOptions" :key="id" :value="id">{{ label }}（{{ id }}）</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">所属行业
+          <select class="pf-input" :value="fields.extra.wx_qualification_type" @change="onInput('extra.wx_qualification_type', $event)">
+            <option v-for="name in industryOptions" :key="name" :value="name">{{ name }}</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">商户名称
+          <input class="pf-input" :value="fields.subject.name" @input="onInput('subject.name', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">简称
+          <input class="pf-input" :value="fields.subject.short_name" @input="onInput('subject.short_name', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">执照号
+          <input class="pf-input" :value="fields.subject.license_no" @input="onInput('subject.license_no', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">执照有效期
+          <input class="pf-input" :value="fields.subject.license_valid" placeholder="2020-01-01,长期" @input="onInput('subject.license_valid', $event)">
+        </label>
+      </div>
+
+      <h3 class="m-0 text-[14px] font-semibold">法人 / 经营者</h3>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="flex flex-col gap-1 text-[13px]">姓名
+          <input class="pf-input" :value="fields.legal_person.name" @input="onInput('legal_person.name', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">证件类型
+          <select class="pf-input" :value="fields.legal_person.id_type" @change="onInput('legal_person.id_type', $event)">
+            <option value="id_card">身份证</option>
+            <option value="passport">护照</option>
+            <option value="hk_macao">港澳通行证</option>
+            <option value="taiwan">台胞证</option>
+            <option value="foreign_residence">外国人居留证</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">证件号
+          <input class="pf-input" :value="fields.legal_person.id_no" @input="onInput('legal_person.id_no', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">证件有效期
+          <input class="pf-input" :value="fields.legal_person.id_valid" placeholder="2020-01-01,长期" @input="onInput('legal_person.id_valid', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">手机
+          <input class="pf-input" :value="fields.legal_person.phone" @input="onInput('legal_person.phone', $event)">
+        </label>
+      </div>
+
+      <h3 class="m-0 text-[14px] font-semibold">联系人</h3>
+      <div class="grid grid-cols-3 gap-3">
+        <label class="flex flex-col gap-1 text-[13px]">身份
+          <select class="pf-input" :value="fields.extra.wx_contact_type" @change="onInput('extra.wx_contact_type', $event)">
+            <option value="LEGAL">法人 / 经营者本人</option>
+            <option value="SUPER">经办人</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">姓名
+          <input class="pf-input" :value="fields.contact.name" @input="onInput('contact.name', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">手机
+          <input class="pf-input" :value="fields.contact.phone" @input="onInput('contact.phone', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">邮箱
+          <input class="pf-input" :value="fields.contact.email" @input="onInput('contact.email', $event)">
+        </label>
+      </div>
+
+      <h3 class="m-0 text-[14px] font-semibold">经营</h3>
+      <div class="grid grid-cols-3 gap-3">
+        <label class="flex flex-col gap-1 text-[13px]">客服电话
+          <input class="pf-input" :value="fields.business.service_phone" @input="onInput('business.service_phone', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">省 / 直辖市
+          <select class="pf-input" :value="regionValue" @change="onRegion">
+            <option value="">请选择</option>
+            <option v-for="[code, name] in regions" :key="code" :value="code">{{ name }}</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">市
+          <input class="pf-input" :value="fields.business.address.city" @input="onInput('business.address.city', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">区
+          <input class="pf-input" :value="fields.business.address.district" @input="onInput('business.address.district', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">详细地址
+          <input class="pf-input" :value="fields.business.address.detail" @input="onInput('business.address.detail', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">微信地区编码
+          <input class="pf-input" :value="fields.business.address.code" placeholder="选省后自动填省级编码，可改成区县编码" @input="onInput('business.address.code', $event)">
+        </label>
+      </div>
+      <div class="flex flex-wrap gap-3 text-[13px]">
+        <label v-for="[key, label] in scenes" :key="key" class="flex gap-1 items-center">
+          <input type="checkbox" :checked="fields.business.scene.types.includes(key)" @change="toggleScene(key, $event.target.checked)">
+          {{ label }}
+        </label>
+      </div>
+      <label v-if="needsAppID" class="flex flex-col gap-1 text-[13px]">小程序 / 公众号 / APP 的 AppID
+        <input class="pf-input" :value="fields.business.scene.appid" @input="onInput('business.scene.appid', $event)">
+      </label>
+      <label v-if="needsWeb" class="flex flex-col gap-1 text-[13px]">网站域名
+        <input class="pf-input" :value="fields.extra.web_domain" placeholder="example.com" @input="onInput('extra.web_domain', $event)">
+      </label>
+
+      <h3 class="m-0 text-[14px] font-semibold">结算账户</h3>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="flex flex-col gap-1 text-[13px]">账户类型
+          <select class="pf-input" :value="fields.settlement_account.type" @change="onInput('settlement_account.type', $event)">
+            <option value="corporate">对公</option>
+            <option value="personal">对私</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">开户银行
+          <select class="pf-input" :value="fields.settlement_account.bank" @change="onInput('settlement_account.bank', $event)">
+            <option value="">请选择</option>
+            <option v-for="bank in banks" :key="bank" :value="bank">{{ bank }}</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">支行
+          <input class="pf-input" :value="fields.settlement_account.branch" @input="onInput('settlement_account.branch', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">户名
+          <input class="pf-input" :value="fields.settlement_account.account_name" @input="onInput('settlement_account.account_name', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">账号
+          <input class="pf-input" :value="fields.settlement_account.account_no" @input="onInput('settlement_account.account_no', $event)">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">开户行省市编码
+          <input class="pf-input" :value="fields.settlement_account.address_code" @input="onInput('settlement_account.address_code', $event)">
+        </label>
+      </div>
+      <p class="pf-muted m-0">对公户名必须与商户名称一致，对私户名必须与法人姓名一致。</p>
+
+      <h3 class="m-0 text-[14px] font-semibold">费率</h3>
+      <div class="grid grid-cols-3 gap-3">
+        <label class="flex flex-col gap-1 text-[13px]">支付方式
+          <select class="pf-input" :value="fields.rates[0].way_code" @change="fields.rates[0].way_code = $event.target.value; writeJson()">
+            <option v-for="[code, label] in ways" :key="code" :value="code">{{ label }}</option>
+          </select>
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">费率（万分位）
+          <input class="pf-input" type="number" min="0" max="1000" :value="fields.rates[0].fee_rate_bps" @input="fields.rates[0].fee_rate_bps = Number($event.target.value); writeJson()">
+        </label>
+        <label class="flex flex-col gap-1 text-[13px]">结算周期
+          <select class="pf-input" :value="fields.rates[0].settle_cycle" @change="fields.rates[0].settle_cycle = $event.target.value; writeJson()">
+            <option value="T1">T1</option>
+            <option value="D1">D1</option>
+            <option value="D0">D0</option>
+          </select>
+        </label>
+      </div>
+      <p class="pf-muted m-0">微信不接受自定义费率，这里仅作平台记录。</p>
+
+      <h3 class="m-0 text-[14px] font-semibold">证照</h3>
       <div class="flex flex-wrap gap-3">
         <label v-for="[kind, label] in imageKinds" :key="kind" class="flex flex-col gap-1 text-[13px]">
-          <span>{{ label }} <span class="pf-muted">{{ uploading === kind ? "上传中…" : "" }}</span></span>
+          <span>{{ label }} <span class="pf-muted">{{ fields.images[kind] ? "已选 " + fields.images[kind] : (uploading === kind ? "上传中…" : "未上传") }}</span></span>
           <input type="file" accept="image/jpeg,image/png" :disabled="!!uploading" @change="upload(kind, $event)" />
         </label>
       </div>
-      <textarea v-model="form.payloadText" class="pf-input font-mono text-[12px]" rows="24" spellcheck="false"></textarea>
-      <p class="pf-muted m-0">证件号与银行账号保存后只以掩码回显；修改资料时需重新填写。微信不接受自定义费率，rates 仅作平台记录。</p>
+
+      <div class="flex gap-2 items-center">
+        <pf-button size="sm" variant="ghost" @click="showJson = !showJson">{{ showJson ? "收起 JSON" : "查看 / 编辑 JSON" }}</pf-button>
+        <span v-if="jsonError" class="pf-muted">{{ jsonError }}</span>
+      </div>
+      <textarea v-if="showJson" v-model="form.payloadText" class="pf-input font-mono text-[12px]" rows="18" spellcheck="false" @input="readJson"></textarea>
+      <p class="pf-muted m-0">表单和 JSON 双向同步。证件号与银行账号保存后只以掩码回显，修改时需重新填写。</p>
       <div class="flex gap-2">
         <pf-button variant="primary" size="sm" @click="save">保存草稿</pf-button>
         <pf-button size="sm" @click="editing = false">取消</pf-button>

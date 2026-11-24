@@ -127,6 +127,7 @@ func claimsOf(c *gin.Context) *Claims { return c.MustGet("claims").(*Claims) }
 // registerAdminRoutes 管理接口全集；测试用自定义身份中间件挂同一组路由。
 func registerAdminRoutes(admin *gin.RouterGroup) {
 	admin.POST("/isv", handleCreateISV)
+	admin.GET("/isv", handleListISVs)
 	admin.POST("/merchants", handleCreateMerchant)
 	admin.GET("/merchants", handleListMerchants)
 	admin.POST("/apps", handleCreateApp)
