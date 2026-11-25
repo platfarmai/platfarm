@@ -141,6 +141,8 @@ type Merchant struct {
 	MchType      int    `json:"mchType"`
 	IsvNo        string `json:"isvNo"`
 	AgentNo      string `json:"agentNo"`
+	ContactName  string `json:"contactName"`
+	ContactPhone string `json:"contactPhone"`
 	State        string `json:"state"`
 	TenantID     int    `json:"tenantId"`
 }
@@ -422,11 +424,17 @@ func rollupRefund(ctx context.Context, q querier, payOrderID string, amount int6
 
 // ── 商户 / 应用 / 路由 / 渠道参数 ──────────────────────────
 
+const merchantCols = `mch_no, mch_name, mch_short_name, mch_type, isv_no, agent_no, contact_name, contact_phone, state, tenant_id`
+
+// scanDest 与 merchantCols 一一对应的 Scan 目标。
+func (m *Merchant) scanDest() []any {
+	return []any{&m.MchNo, &m.MchName, &m.MchShortName, &m.MchType, &m.IsvNo, &m.AgentNo,
+		&m.ContactName, &m.ContactPhone, &m.State, &m.TenantID}
+}
+
 func loadMerchant(ctx context.Context, mchNo string) (Merchant, error) {
 	var m Merchant
-	err := db.QueryRow(ctx, `SELECT mch_no, mch_name, mch_short_name, mch_type, isv_no, agent_no, state, tenant_id
-		FROM pay_merchant WHERE mch_no=$1`, mchNo).
-		Scan(&m.MchNo, &m.MchName, &m.MchShortName, &m.MchType, &m.IsvNo, &m.AgentNo, &m.State, &m.TenantID)
+	err := db.QueryRow(ctx, `SELECT `+merchantCols+` FROM pay_merchant WHERE mch_no=$1`, mchNo).Scan(m.scanDest()...)
 	return m, err
 }
 

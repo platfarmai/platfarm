@@ -237,7 +237,7 @@ func handleListMerchants(c *gin.Context) {
 		return
 	}
 	scope, args := tenantScope(claims)
-	rows, err := db.Query(c.Request.Context(), `SELECT mch_no, mch_name, mch_short_name, mch_type, isv_no, agent_no, state, tenant_id
+	rows, err := db.Query(c.Request.Context(), `SELECT `+merchantCols+`
 		FROM pay_merchant WHERE `+scope+` ORDER BY created_at DESC LIMIT 200`, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
@@ -247,7 +247,7 @@ func handleListMerchants(c *gin.Context) {
 	items := []Merchant{}
 	for rows.Next() {
 		var m Merchant
-		if rows.Scan(&m.MchNo, &m.MchName, &m.MchShortName, &m.MchType, &m.IsvNo, &m.AgentNo, &m.State, &m.TenantID) == nil {
+		if rows.Scan(m.scanDest()...) == nil {
 			items = append(items, m)
 		}
 	}

@@ -44,24 +44,34 @@ func (p *partner) ParamFields() ([]channel.ParamField, []channel.ParamField) { r
 
 func paramFields(directSettle bool) (provider, sub []channel.ParamField) {
 	provider = []channel.ParamField{
-		{Key: "sp_mchid", Label: "服务商商户号", Required: true, Hint: "微信支付服务商平台的商户号"},
-		{Key: "sp_appid", Label: "服务商 AppID", Required: true, Hint: "与服务商商户号绑定的公众号 / 小程序 AppID"},
-		{Key: "mch_serial_no", Label: "商户 API 证书序列号", Required: true},
+		{Key: "sp_mchid", Label: "服务商商户号", Required: true,
+			Hint: "你自己的微信支付服务商商户号，10 位数字。登录微信支付服务商平台（pay.weixin.qq.com）→ 账户中心 → 商户信息 查看。注意是服务商号，不是下面某个特约商户的号。"},
+		{Key: "sp_appid", Label: "服务商 AppID", Required: true,
+			Hint: "与服务商商户号绑定的公众号或小程序 AppID，wx 开头共 18 位。服务商平台 → 产品中心 → AppID 账号管理 里“已关联”的那个；没关联过要先在那里发起关联并到公众平台确认。"},
+		{Key: "mch_serial_no", Label: "商户 API 证书序列号", Required: true,
+			Hint: "40 位十六进制。服务商平台 → 账户中心 → API 安全 → 商户 API 证书 →「管理证书」里能看到。必须和下面的私钥是同一张证书，重新申请证书后两项要一起换。"},
 		{Key: "private_key", Label: "商户 API 私钥", Secret: true, Required: true, Multiline: true,
-			Hint: "apiclient_key.pem 的全文（含 BEGIN / END 行）"},
-		{Key: "api_v3_key", Label: "APIv3 密钥", Secret: true, Required: true, Hint: "32 位，用于解密回调与平台证书"},
-		{Key: "wx_public_key_id", Label: "微信支付公钥 ID", Hint: "PUB_KEY_ID_ 开头；公钥模式商户填写"},
-		{Key: "wx_public_key", Label: "微信支付公钥", Multiline: true, Hint: "pub_key.pem 全文；公钥模式商户填写"},
-		{Key: "wx_platform_cert_serial", Label: "平台证书序列号", Hint: "证书模式商户；用「同步平台证书」自动填入"},
-		{Key: "wx_platform_cert", Label: "平台证书公钥", Multiline: true, Hint: "证书模式商户；用「同步平台证书」自动填入"},
+			Hint: "申请商户 API 证书时生成的 apiclient_key.pem，用记事本打开后整段粘贴，包含 -----BEGIN PRIVATE KEY----- 和 -----END PRIVATE KEY----- 两行。保存后加密存储、不再回显；留空表示不修改。"},
+		{Key: "api_v3_key", Label: "APIv3 密钥", Secret: true, Required: true,
+			Hint: "32 位字母数字，是你自己在 服务商平台 → 账户中心 → API 安全 →「设置 APIv3 密钥」里设的。用来解密支付回调和平台证书；填错时下单能成功但收不到回调。保存后不再回显。"},
+		{Key: "wx_public_key_id", Label: "微信支付公钥 ID",
+			Hint: "PUB_KEY_ID_ 开头。API 安全页有「微信支付公钥」一栏的商户号（近年新开的基本都是）属于公钥模式：这一项和下一项都要填，不用点「同步平台证书」。"},
+		{Key: "wx_public_key", Label: "微信支付公钥", Multiline: true,
+			Hint: "API 安全 → 微信支付公钥 →「下载公钥」得到的 pub_key.pem，整段粘贴（含 BEGIN / END PUBLIC KEY 两行）。用来验证微信回调签名、加密进件里的身份证号和银行卡号。"},
+		{Key: "wx_platform_cert_serial", Label: "平台证书序列号",
+			Hint: "证书模式（API 安全页没有「微信支付公钥」的老商户号）使用。不用手填：先保存上面五项必填，再点下方「同步平台证书」自动写入。"},
+		{Key: "wx_platform_cert", Label: "平台证书公钥", Multiline: true,
+			Hint: "同上，由「同步平台证书」自动写入。平台证书会过期，进件或回调提示验签/加密失败时重新同步一次。"},
 	}
 	sub = []channel.ParamField{
-		{Key: "sub_mchid", Label: "特约商户号", Required: true, Hint: "进件完成后自动写入，也可手工填写已有的特约商户号"},
-		{Key: "sub_appid", Label: "子商户 AppID", Hint: "JSAPI 下单传 channelExtra.sub_openid（子商户 AppID 下的 openid）时必填"},
+		{Key: "sub_mchid", Label: "特约商户号", Required: true,
+			Hint: "微信分配给这个商户的特约商户号，10 位数字。走本系统进件的，微信审核通过并签约后会自动写入，不用填；商户早就在你的服务商名下开过户的，把已有的号直接填进来即可，不必重新进件。"},
+		{Key: "sub_appid", Label: "子商户 AppID",
+			Hint: "选填。只有商户用自己的公众号 / 小程序收款、下单时传的是 channelExtra.sub_openid（用户在商户自己 AppID 下的 openid）才需要，填商户那个 wx 开头的 AppID，并且它要先在服务商平台与该特约商户号完成绑定。用服务商 AppID 下的 openid 下单则留空。"},
 	}
 	if directSettle {
 		sub = append(sub, channel.ParamField{Key: "profit_sharing", Label: "默认分账冻结",
-			Hint: "填 true 时该商户每笔订单都按分账单下单；留空则由下单参数 channelExtra.profitSharing 决定"})
+			Hint: "选填。填 true：该商户每笔订单都按分账单下单，资金先冻结，等你发起分账或解冻后才结算给商户。留空：是否分账由每次下单的 channelExtra.profitSharing 决定。不做分账就留空。"})
 	}
 	return provider, sub
 }

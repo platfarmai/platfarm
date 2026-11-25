@@ -63,15 +63,22 @@ func gateway() string {
 // sub 子商户参数键：smid（直付通二级商户号），分账另需 app_auth_token（可选）。
 func (z *zft) ParamFields() (provider, sub []channel.ParamField) {
 	provider = []channel.ParamField{
-		{Key: "app_id", Label: "应用 AppID", Required: true, Hint: "开通直付通的支付宝开放平台应用"},
-		{Key: "private_key", Label: "应用私钥", Secret: true, Required: true, Multiline: true, Hint: "RSA2 私钥全文"},
-		{Key: "alipay_public_key", Label: "支付宝公钥", Required: true, Multiline: true, Hint: "用于验证响应与回调签名"},
-		{Key: "app_cert_sn", Label: "应用公钥证书 SN", Hint: "证书模式填写"},
-		{Key: "alipay_root_cert_sn", Label: "支付宝根证书 SN", Hint: "证书模式填写"},
+		{Key: "app_id", Label: "应用 AppID", Required: true,
+			Hint: "支付宝开放平台（open.alipay.com）控制台里那个已签约「直付通」产品的应用的 APPID，16 位数字，一般 2021 开头。应用必须已上线，且直付通产品状态为“已生效”。"},
+		{Key: "private_key", Label: "应用私钥", Secret: true, Required: true, Multiline: true,
+			Hint: "用「支付宝开放平台密钥工具」生成的 RSA2（2048 位）应用私钥，整段粘贴，带不带 BEGIN / END 行都可以。它和你上传到开放平台的应用公钥是一对，重新生成后两边要一起换。保存后加密存储、不再回显；留空表示不修改。"},
+		{Key: "alipay_public_key", Label: "支付宝公钥", Required: true, Multiline: true,
+			Hint: "注意是「支付宝公钥」，不是你自己的应用公钥。开放平台 → 应用详情 → 开发设置 → 接口加签方式 →「查看」里复制。用来验证支付宝的响应和回调签名；填成应用公钥时所有调用都会报验签失败。"},
+		{Key: "app_cert_sn", Label: "应用公钥证书 SN",
+			Hint: "只有接口加签方式选了「证书」模式才填：应用公钥证书 appCertPublicKey_xxx.crt 的序列号（用密钥工具或 SDK 的 getCertSN 算出）。选「公钥」模式的留空。"},
+		{Key: "alipay_root_cert_sn", Label: "支付宝根证书 SN",
+			Hint: "同上，证书模式才填：支付宝根证书 alipayRootCert.crt 的序列号。公钥模式留空；证书模式下这一项和上一项要同时填。"},
 	}
 	sub = []channel.ParamField{
-		{Key: "smid", Label: "二级商户号", Required: true, Hint: "直付通进件完成后自动写入"},
-		{Key: "app_auth_token", Label: "应用授权令牌", Secret: true, Hint: "代商户调用时才需要"},
+		{Key: "smid", Label: "二级商户号", Required: true,
+			Hint: "支付宝分配给这个商户的直付通二级商户号（smid），2088 开头 16 位数字。走本系统直付通进件的，审核通过后自动写入，不用填；商户已经是你名下二级商户的，把已有的号直接填进来。"},
+		{Key: "app_auth_token", Label: "应用授权令牌", Secret: true,
+			Hint: "选填，一般留空。只有商户通过「第三方应用授权」把自己的支付宝账号授权给你的应用、需要代它调用接口时才填授权后拿到的 app_auth_token。保存后不再回显。"},
 	}
 	return provider, sub
 }
@@ -883,8 +890,12 @@ func (z *zft) SettleConfirm(ctx context.Context, in channel.SettleIn) (channel.R
 
 // TradeBill alipay.data.dataservice.bill.downloadurl.query，下载后按 CSV 解析。
 func (z *zft) TradeBill(ctx context.Context, billDate, billType string, prov, sub map[string]string) ([]channel.BillRow, error) {
+	alipayBillType := "trade"
+	if billType != "" && billType != "ALL" && billType != "SUCCESS" && billType != "REFUND" {
+		alipayBillType = billType
+	}
 	node, err := call(ctx, "alipay.data.dataservice.bill.downloadurl.query", map[string]any{
-		"bill_type": orDefault(billType, "trade"), "bill_date": billDate,
+		"bill_type": alipayBillType, "bill_date": billDate,
 	}, prov, sub, "")
 	if err != nil {
 		if strings.Contains(err.Error(), "isp.bill_not_exist") || strings.Contains(err.Error(), "BILL_NOT_EXIST") {

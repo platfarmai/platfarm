@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from "vue";
 import { api } from "../api.js";
 import { yuan, when } from "../utils.js";
+import Field from "../components/Field.vue";
 
 const MAX_LEVEL = 5;
 
@@ -55,6 +56,16 @@ function keeps(a) {
 }
 const label = (a) => `${"　".repeat(a.level - 1)}${a.agentName}（${a.level} 级 · ${a.rateBps}）`;
 const fen = (v) => Math.round(Number(v) * 100);
+// 万分位换成百分数，给说明文字用：30 → 0.30%。
+const bpsPct = (bps) => (Number(bps || 0) / 100).toFixed(2) + "%";
+// 正在编辑的代理商的费率上下限：上限看上级（一级看服务商返佣），下限看它下级里最高的那个。
+const editLimits = computed(() => {
+  const a = byNo.value[editing.value?.agentNo];
+  if (!a) return { min: 0, max: 0 };
+  const parent = byNo.value[a.parentAgentNo];
+  const below = agents.value.filter((x) => x.parentAgentNo === a.agentNo).map((x) => x.rateBps);
+  return { min: below.length ? Math.max(...below) : 0, max: parent ? parent.rateBps : isv.value?.rebateRateBps || 0 };
+});
 
 function fail(e) {
   err.value = e.message || String(e);
@@ -190,12 +201,35 @@ onMounted(load);
     <pf-alert v-if="err" tone="danger">{{ err }}</pf-alert>
     <pf-alert v-if="msg" tone="ok">{{ msg }}</pf-alert>
 
-    <div class="flex gap-2 items-center">
-      <select v-model="isvNo" class="pf-input" @change="switchISV">
-        <option v-for="i in isvs" :key="i.isvNo" :value="i.isvNo">{{ i.isvName }}（{{ i.isvNo }}）</option>
-      </select>
-      <span v-if="isv" class="pf-muted">返佣费率 {{ isv.rebateRateBps }}（万分位）</span>
-      <pf-button v-if="isv" size="sm" variant="primary" @click="showCreate = !showCreate">新建代理商</pf-button>
+    <div class="pf-card flex flex-col gap-2">
+      <h2 class="m-0 text-[16px] font-semibold">代理商和分润是怎么回事</h2>
+      <p class="pf-muted m-0">
+        代理商 = 帮你发展商户的人或公司。商户每收一笔款，渠道（微信 / 支付宝）会按「返佣费率」给服务商一笔返佣；你可以从这笔返佣里让出一部分给代理商，这就是分润。
+        代理商可以再发展下级，最多 {{ MAX_LEVEL }} 级，每一级拿的是自己和下级之间的差额。
+      </p>
+      <p class="pf-muted m-0">
+        用法：① 先在「商户」页给服务商设好返佣费率 → ② 在这里「新建代理商」并定它的分润费率 → ③ 在最下面「商户归属」把商户归到代理商名下 →
+        ④ 之后这个商户每成交一笔，系统自动给代理商记一笔分润 → ⑤ 你在线下把钱付给代理商后，回来点「登记结算」。本页只记账，系统不会自动给代理商打款。
+      </p>
+      <p class="pf-muted m-0">
+        本页所有费率的单位都是<b>万分位</b>（万分之一）：10 = 0.10%，30 = 0.30%，100 = 1%。例如代理商费率 20，商户收款 10000 元，这条线一共分到 20 元。
+      </p>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3">
+      <Field label="服务商" hint="代理商是挂在某个服务商名下的，分润从这个服务商的返佣里出。先选服务商，下面只显示它名下的代理商和商户。只有一个服务商时不用动。">
+        <select v-model="isvNo" class="pf-input" @change="switchISV">
+          <option v-for="i in isvs" :key="i.isvNo" :value="i.isvNo">{{ i.isvName }}（{{ i.isvNo }}）</option>
+        </select>
+      </Field>
+      <div v-if="isv" class="flex flex-col gap-1 text-[13px]">
+        <span>这个服务商的返佣费率</span>
+        <div class="flex gap-2 items-center">
+          <span class="pf-dot" :data-tone="isv.rebateRateBps ? 'ok' : 'warn'">{{ isv.rebateRateBps }}（万分位，即 {{ bpsPct(isv.rebateRateBps) }}）</span>
+          <pf-button size="sm" variant="primary" @click="showCreate = !showCreate">新建代理商</pf-button>
+        </div>
+        <span class="pf-muted">一级代理商的分润费率不能超过它。要改返佣费率，到「商户」页编辑这个服务商。</span>
+      </div>
     </div>
 
     <pf-alert v-if="!isvs.length" tone="info">还没有服务商。先到「商户」里登记服务商并设置返佣费率，代理商的分润从返佣里让出。</pf-alert>
@@ -208,30 +242,35 @@ onMounted(load);
         它自己实得的是和下级之间的差额。最多 {{ MAX_LEVEL }} 级，建好后不能换上级。
       </p>
       <div class="grid grid-cols-2 gap-3">
-        <label class="flex flex-col gap-1 text-[13px]">名称
-          <input v-model="form.agentName" class="pf-input">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px]">上级
+        <Field label="名称" required hint="代理商的名字，公司填公司名、个人填姓名，例如「成都某某科技」「张三」。只在本系统里显示，方便你辨认，之后可以改。">
+          <input v-model="form.agentName" class="pf-input" placeholder="例如 成都某某科技">
+        </Field>
+        <Field label="上级" hint="这个代理商是谁发展来的。直接由你（服务商）发展的选「无」，它就是一级代理商；由某个代理商发展来的，选那个代理商。括号里是它的级别和分润费率。建好后不能换上级，选错只能停用重建。">
           <select v-model="form.parentAgentNo" class="pf-input">
             <option value="">无（一级代理商，直接挂在服务商下）</option>
             <option v-for="a in parents" :key="a.agentNo" :value="a.agentNo">{{ label(a) }}</option>
           </select>
-        </label>
-        <label class="flex flex-col gap-1 text-[13px]">分润费率（万分位，最高 {{ parentLimit }}）
-          <input v-model="form.rateBps" class="pf-input" type="number" min="0" :max="parentLimit">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px]">代理商号（可空）
+        </Field>
+        <Field :label="`分润费率（万分位，最高 ${parentLimit}）`" required>
+          <input v-model="form.rateBps" class="pf-input" type="number" min="0" :max="parentLimit" placeholder="例如 20">
+          <template #hint>
+            让给这个代理商<b>整条线</b>（它自己加上它以后发展的所有下级）的分润，单位万分位：填 20 = 0.20%，商户每收 10000 元这条线分 20 元。
+            不能超过{{ form.parentAgentNo ? "上级代理商的费率" : "服务商的返佣费率" }}（现在是 {{ parentLimit }}，即 {{ bpsPct(parentLimit) }}）。当前填的是 {{ bpsPct(form.rateBps) }}。
+            填 0 表示先建档、暂不分润。只对之后的新订单生效。
+          </template>
+        </Field>
+        <Field label="代理商号" hint="选填，一般留空，系统会自动生成一个 G 开头的编号。想用自己已有的编号（例如合同号）就填进来；不能和已有代理商重复，建好后不能改。">
           <input v-model="form.agentNo" class="pf-input" placeholder="留空自动生成">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px]">联系人
-          <input v-model="form.contactName" class="pf-input">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px]">联系电话
-          <input v-model="form.contactPhone" class="pf-input">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px] col-span-2">备注
-          <input v-model="form.remark" class="pf-input">
-        </label>
+        </Field>
+        <Field label="联系人" hint="选填。代理商那边对接人的姓名，结算分润、有问题时找他。">
+          <input v-model="form.contactName" class="pf-input" placeholder="例如 张三">
+        </Field>
+        <Field label="联系电话" hint="选填。联系人的手机号或座机，只在本系统留存。">
+          <input v-model="form.contactPhone" class="pf-input" placeholder="例如 13800000000">
+        </Field>
+        <Field class="col-span-2" label="备注" hint="选填。随手记点和这个代理商有关的事，例如合作协议编号、收款账户、结算周期（按月 / 按季）。">
+          <input v-model="form.remark" class="pf-input" placeholder="例如 合同 HT-2026-018，每月 10 日结上月分润">
+        </Field>
       </div>
       <div class="flex gap-2">
         <pf-button variant="primary" size="sm" @click="create">保存</pf-button>
@@ -284,28 +323,38 @@ onMounted(load);
         </tbody>
       </table>
       <p class="pf-muted m-0">
-        费率都是万分位。待结余额 = 累计分润 − 退款冲回 − 已结算；为负表示已经结算出去的分润后来被退款冲回，下一期结算时抵扣。
+        各列的意思：<b>费率</b> = 让给这条线的分润（万分位）；<b>本级实得</b> = 它自己能留下的部分，有下级时是一个范围（商户挂在费率最高的下级名下时留得最少，直接挂在它自己名下时全留）；
+        <b>商户</b> = 直接归在它名下的商户数；<b>累计分润</b> = 已支付订单给它记的分润总额；<b>退款冲回</b> = 订单退款后按比例扣回的分润；<b>已结算</b> = 你登记过的已付金额。
+      </p>
+      <p class="pf-muted m-0">
+        待结余额 = 累计分润 − 退款冲回 − 已结算，也就是现在还欠这个代理商多少钱；为负表示已经结算出去的分润后来被退款冲回，下一期结算时抵扣。
+        「登记结算」只在待结余额大于 0 时出现；「停用」后新订单不再给它计分润，已有的分润和余额不变。
       </p>
     </div>
 
     <div v-if="editing" class="pf-card flex flex-col gap-3">
       <h2 class="m-0 text-[16px] font-semibold">编辑代理商 <span class="pf-code">{{ editing.agentNo }}</span></h2>
+      <p class="pf-muted m-0">代理商号、上级和所属服务商建好后不能改；要换上级只能新建一个代理商，再把商户改归过去。</p>
       <div class="grid grid-cols-2 gap-3">
-        <label class="flex flex-col gap-1 text-[13px]">名称
+        <Field label="名称" required hint="代理商的名字，只在本系统显示，随时可以改，不影响已有的分润记录。">
           <input v-model="editing.agentName" class="pf-input">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px]">分润费率（万分位，介于下级和上级之间）
-          <input v-model="editing.rateBps" class="pf-input" type="number" min="0">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px]">联系人
+        </Field>
+        <Field :label="`分润费率（万分位，${editLimits.min}–${editLimits.max}）`" required>
+          <input v-model="editing.rateBps" class="pf-input" type="number" :min="editLimits.min" :max="editLimits.max">
+          <template #hint>
+            单位万分位，当前填的是 {{ bpsPct(editing.rateBps) }}。不能高于上一级（{{ editLimits.max }}），也不能低于它下级里最高的那个（{{ editLimits.min }}）；
+            想调到比下级还低，要先把下级调低。改动只对之后的新订单生效，已经下单的订单按下单时的费率算。
+          </template>
+        </Field>
+        <Field label="联系人" hint="选填。代理商那边对接人的姓名。">
           <input v-model="editing.contactName" class="pf-input">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px]">联系电话
+        </Field>
+        <Field label="联系电话" hint="选填。联系人的手机号或座机。">
           <input v-model="editing.contactPhone" class="pf-input">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px] col-span-2">备注
+        </Field>
+        <Field class="col-span-2" label="备注" hint="选填。例如合作协议编号、收款账户、结算周期。">
           <input v-model="editing.remark" class="pf-input">
-        </label>
+        </Field>
       </div>
       <div class="flex gap-2">
         <pf-button variant="primary" size="sm" @click="save">保存</pf-button>
@@ -319,15 +368,15 @@ onMounted(load);
         这里只记账，不会打款。先在线下把钱付给代理商，再回来登记。待结余额 {{ yuan(paying.balance) }} 元，登记金额不能超过它。
       </p>
       <div class="grid grid-cols-2 gap-3">
-        <label class="flex flex-col gap-1 text-[13px]">结算金额（元）
+        <Field label="结算金额（元）" required :hint="`你这次实际付给代理商的钱，单位是元，可以带两位小数，例如 1234.56。默认填的是全部待结余额；只付了一部分就改成实付的数。必须大于 0，且不能超过待结余额 ${yuan(paying.balance)} 元。`">
           <input v-model="paying.amount" class="pf-input" type="number" min="0.01" step="0.01">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px]">结算单号（可空，填银行流水号便于核对）
+        </Field>
+        <Field label="结算单号" hint="选填，建议填这笔转账的银行流水号或你们内部的付款单号，以后对账好查。最长 64 个字符。同一个单号只会记一次账：不小心点了两次「登记」也不会重复扣余额。留空则自动生成 AP 开头的单号。">
           <input v-model="paying.payoutNo" class="pf-input" placeholder="留空自动生成" maxlength="64">
-        </label>
-        <label class="flex flex-col gap-1 text-[13px] col-span-2">备注
+        </Field>
+        <Field class="col-span-2" label="备注" hint="选填，最长 200 个字符。写清楚这笔钱结的是哪一期，例如「2026 年 11 月分润」。会显示在代理商的分润明细里，系统会自动在后面附上登记人的账号。">
           <input v-model="paying.memo" class="pf-input" placeholder="例如 2026 年 11 月分润" maxlength="200">
-        </label>
+        </Field>
       </div>
       <div class="flex gap-2">
         <pf-button variant="primary" size="sm" @click="payout">登记</pf-button>
@@ -359,7 +408,8 @@ onMounted(load);
     <div v-if="isv" class="pf-card flex flex-col gap-3">
       <h2 class="m-0 text-[14px] font-semibold">商户归属</h2>
       <p class="pf-muted m-0">
-        把商户归到直接发展它的那个代理商名下，它的上级会按级差自动分到。改归属只影响之后的新订单，已有订单按下单时的归属结算。
+        把商户归到<b>直接发展它</b>的那个代理商名下，它的上级会按级差自动分到，不用给上级重复设置。在「改为」一列选好代理商后，右边会出现「保存」按钮，点了才生效。
+        选「不归属代理商」表示这个商户是你自己发展的，返佣全部归服务商。只列出启用中的代理商；改归属只影响之后的新订单，已有订单按下单时的归属结算。
       </p>
       <table class="pf-table">
         <thead><tr><th>商户</th><th>当前归属</th><th>改为</th><th></th></tr></thead>

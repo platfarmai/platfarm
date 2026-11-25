@@ -137,6 +137,7 @@ func registerAdminRoutes(admin *gin.RouterGroup) {
 	admin.GET("/isv", handleListISVs)
 	admin.POST("/merchants", handleCreateMerchant)
 	admin.GET("/merchants", handleListMerchants)
+	admin.PUT("/merchants/:mchNo", handleUpdateMerchant)
 	admin.POST("/apps", handleCreateApp)
 	admin.GET("/apps", handleListApps)
 	admin.POST("/apps/:appId/secret", handleRotateAppSecret)
