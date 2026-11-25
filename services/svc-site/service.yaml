@@ -1,0 +1,23 @@
+# svc-site — 支付中心根站点首页（mount.website）。
+# 提供平台品牌入口、同源 Cookie 登录弹窗、业务开通指引、进件资料准备清单、渠道参数与开放 API 速查。
+manifest: v1
+id: svc-site
+version: 0.1.0
+lang: go
+
+mount:
+  path: /
+  website: true
+
+auth:
+  required: false
+
+limits:
+  rate_per_minute: 300
+
+runtime:
+  port: 8080
+  health: /healthz
+
+test:
+  command: wget -qO- http://127.0.0.1:8080/healthz

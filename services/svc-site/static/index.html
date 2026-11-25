@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>三润支付中心 · 聚合支付与商户进件平台</title>
+<meta name="description" content="三润支付中心：微信支付服务商、支付宝直付通聚合收款，商户进件、分账、提现与对账一站式管理。">
+<link rel="icon" type="image/png" href="/logo-28.png">
+<link rel="stylesheet" href="/platform/ui/v1/pf-ui.css">
+<link rel="stylesheet" href="/platform/ui/v1/tw.css">
+<link rel="stylesheet" href="/style.css">
+<script src="/platform/ui/v1/pf-ui.js" defer></script>
+<script src="/app.js" defer></script>
+</head>
+<body class="pf-body">
+<div class="site-shell">
+
+  <header class="site-header">
+    <a class="site-brand" href="/">
+      <img class="site-logo" src="/logo-108.png" alt="三润支付中心">
+      <div>
+        <p class="site-brand-title">三润支付中心</p>
+        <p class="site-brand-sub">聚合支付 · 商户进件 · 分账对账</p>
+      </div>
+    </a>
+    <div class="site-actions">
+      <span id="gatewayDot" class="pf-dot" data-tone="neutral">检测中…</span>
+      <div id="guestActions" class="site-actions">
+        <pf-button id="btnOpenLogin" variant="primary">登录</pf-button>
+      </div>
+      <div id="userActions" class="site-actions" hidden>
+        <span class="site-user-pill"><span id="userName">已登录</span><pf-badge id="userRole" tone="info">业务操作员</pf-badge></span>
+        <pf-button id="btnEnterPay" variant="primary">支付中心</pf-button>
+        <pf-button id="btnOpenapiConsole" hidden>开放平台</pf-button>
+        <pf-button id="btnPlatformConsole" hidden>平台控制台</pf-button>
+        <pf-button id="btnLogout" variant="ghost">退出</pf-button>
+      </div>
+    </div>
+  </header>
+
+  <section class="site-hero">
+    <div class="site-hero-main">
+      <h1 class="site-hero-title">一个后台，管好微信支付与支付宝收款</h1>
+      <p class="site-hero-desc">
+        以微信支付服务商、支付宝直付通身份为下级商户提供进件开户、统一下单、退款、分账、提现和每日对账。
+        业务系统只需对接一套开放 API，不用分别适配两家渠道。
+      </p>
+      <div class="site-hero-cta">
+        <pf-button id="btnHeroPrimary" variant="primary">登录并进入支付中心</pf-button>
+        <a class="pf-link" href="#flow">先看看怎么开通 →</a>
+      </div>
+      <p class="pf-muted m-0 site-small">账号由平台管理员分配；忘记密码可在 <a class="pf-link" href="/api/users/account/#forgot">账号中心</a> 找回。</p>
+    </div>
+    <div class="site-hero-side">
+      <p class="site-hero-side-title">常用入口</p>
+      <a id="entryPayConsole" class="site-entry-item" href="/api/pay/console/">
+        <span><span class="site-entry-name">支付中心工作台</span><br><span class="site-entry-desc">服务商、商户、应用、进件、订单、分账、对账</span></span>
+        <span>→</span>
+      </a>
+      <a class="site-entry-item" href="/api/users/account/">
+        <span><span class="site-entry-name">账号中心</span><br><span class="site-entry-desc">修改密码、开启两步验证、找回密码</span></span>
+        <span>→</span>
+      </a>
+      <a class="site-entry-item" href="/docs">
+        <span><span class="site-entry-name">接口文档</span><br><span class="site-entry-desc">各服务 OpenAPI 文档索引</span></span>
+        <span>→</span>
+      </a>
+      <a class="site-entry-item" href="/platform/info">
+        <span><span class="site-entry-name">平台接口索引</span><br><span class="site-entry-desc">JSON 格式，供程序探测网关能力</span></span>
+        <span>→</span>
+      </a>
+    </div>
+  </section>
+
+  <section>
+    <div class="site-section-head"><h2 class="site-section-title">能做什么</h2></div>
+    <div class="site-grid-4">
+      <div class="site-stat-card">
+        <p class="site-stat-title">商户进件</p>
+        <p class="pf-muted m-0 site-small">在线填写营业执照、法人、结算账户等资料，提交到微信支付 / 支付宝审核，实时跟踪签约与验证状态。</p>
+      </div>
+      <div class="site-stat-card">
+        <p class="site-stat-title">聚合收款</p>
+        <p class="pf-muted m-0 site-small">JSAPI、小程序、扫码、H5、APP、电脑网站等支付方式统一下单，异步通知统一格式回调。</p>
+      </div>
+      <div class="site-stat-card">
+        <p class="site-stat-title">分账与提现</p>
+        <p class="pf-muted m-0 site-small">按订单把资金分给代理、合作方等接收方；归集模式下商户余额可申请提现。</p>
+      </div>
+      <div class="site-stat-card">
+        <p class="site-stat-title">每日对账</p>
+        <p class="pf-muted m-0 site-small">每天自动下载渠道账单与本地订单逐笔核对，长短款、金额不符一目了然。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="flow">
+    <div class="site-section-head">
+      <h2 class="site-section-title">开通流程</h2>
+      <span class="pf-muted site-small">登录支付中心后按左侧菜单从上到下操作即可</span>
+    </div>
+    <div class="site-grid-3">
+      <div class="site-step-card">
+        <div class="site-step-head"><span class="site-step-num">1</span><h3 class="site-step-title">配置服务商</h3></div>
+        <p class="site-step-body">在「服务商」页填写渠道参数：微信支付服务商商户号、APIv3 密钥、商户证书序列号与私钥、平台公钥；支付宝填应用 AppID、应用私钥、支付宝公钥。每个输入框下都有填写说明。</p>
+      </div>
+      <div class="site-step-card">
+        <div class="site-step-head"><span class="site-step-num">2</span><h3 class="site-step-title">创建商户并进件</h3></div>
+        <p class="site-step-body">在「商户」页新建商户（名称仅作内部标识），然后到「进件」页提交资料。主体名称必须与营业执照完全一致，审核通过后按提示让法人完成签约。</p>
+      </div>
+      <div class="site-step-card">
+        <div class="site-step-head"><span class="site-step-num">3</span><h3 class="site-step-title">创建应用并联调</h3></div>
+        <p class="site-step-body">在「应用」页为商户创建应用、选择支付方式和通道，拿到 AppID 与签名密钥，交给业务系统对接下单接口；可先用沙箱通道走通全流程。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="site-grid-2">
+    <div class="pf-card">
+      <h2 class="site-section-title mb-3">进件前准备好这些资料</h2>
+      <ul class="site-list">
+        <li><strong>营业执照</strong>：清晰彩色照片或扫描件，统一社会信用代码、名称与执照一致；个体户同样需要。</li>
+        <li><strong>法人身份证</strong>：正反面照片，在有效期内；经营者需与执照上的法定代表人一致。</li>
+        <li><strong>结算账户</strong>：企业填对公账户（开户名 = 执照名称）；个体户可填法人本人银行卡。需要开户银行与支行信息。</li>
+        <li><strong>超级管理员</strong>：负责签约和接收渠道通知的人，需要姓名、手机号、邮箱，非法人时还需身份证号。</li>
+        <li><strong>经营场景</strong>：门店照片、公众号 / 小程序 AppID 或网站域名，按实际售卖的商品选择经营类目。</li>
+      </ul>
+    </div>
+    <div class="pf-card">
+      <h2 class="site-section-title mb-3">接入方怎么对接</h2>
+      <ul class="site-list">
+        <li>接口地址：<code class="pf-code"><span class="js-origin">https://apipay.sanrun.fun</span>/api/pay/v1/…</code></li>
+        <li>获取访问令牌：<code class="pf-code">POST <span class="js-origin">https://apipay.sanrun.fun</span>/oauth/token</code>，请求体传开放平台分配的 <code class="pf-code">appKey</code> / <code class="pf-code">appSecret</code>，令牌有效期 1 小时。</li>
+        <li>调用支付接口时带上 <code class="pf-code">Authorization: Bearer 令牌</code>，并按应用签名密钥对请求签名（网关校验令牌与权限，支付服务再校验商户签名）。</li>
+        <li>下单时传应用 AppID、商户订单号、金额（单位：分）和支付方式代码，例如 <code class="pf-code">WX_JSAPI</code>、<code class="pf-code">ALI_QR</code>。</li>
+        <li>支付结果以异步通知为准：收到通知后验签并返回成功，未确认前可调用查单接口兜底。</li>
+        <li>完整字段说明见 <a class="pf-link" href="/docs">接口文档</a>；联调期间可让管理员开启沙箱通道，不产生真实扣款。</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <span>© 2026 三润支付中心 · 资金由微信支付、支付宝持牌机构清算</span>
+    <div class="site-footer-links">
+      <a class="pf-link" href="/api/pay/console/">支付中心</a>
+      <a class="pf-link" href="/api/users/account/">账号中心</a>
+      <a class="pf-link" href="/docs">接口文档</a>
+    </div>
+  </footer>
+</div>
+
+<pf-dialog id="loginDialog" title="登录三润支付中心">
+  <form id="formLogin" class="flex flex-col gap-3" autocomplete="on">
+    <pf-alert id="loginAlert" tone="danger" hidden></pf-alert>
+    <div class="pf-field">
+      <label for="loginUsername">用户名</label>
+      <input id="loginUsername" name="username" autocomplete="username" placeholder="平台管理员分配的登录账号">
+    </div>
+    <div class="pf-field">
+      <label for="loginPassword">密码</label>
+      <input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="登录密码">
+    </div>
+    <div id="totpWrap" class="pf-field" hidden>
+      <label for="loginTotp">两步验证码</label>
+      <input id="loginTotp" name="totp" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="验证器 App 中的 6 位数字">
+    </div>
+    <div class="pf-field">
+      <label for="loginTarget">登录后进入</label>
+      <select id="loginTarget">
+        <option value="/api/pay/console/">支付中心工作台</option>
+        <option value="/api/openapi/console/">开放平台控制台（管理员）</option>
+        <option value="/platform/console/">平台控制台（管理员）</option>
+        <option value="/api/users/account/">账号中心</option>
+      </select>
+    </div>
+    <div class="flex items-center justify-between gap-2">
+      <a class="pf-link site-small" href="/api/users/account/#forgot">忘记密码？</a>
+      <div class="flex gap-2">
+        <pf-button id="btnCancelLogin" variant="ghost">取消</pf-button>
+        <pf-button id="btnSubmitLogin" type="submit" variant="primary">登录</pf-button>
+      </div>
+    </div>
+  </form>
+</pf-dialog>
+</body>
+</html>

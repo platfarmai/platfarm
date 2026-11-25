@@ -12,9 +12,16 @@ services:
         plugins:
           - name: rate-limiting
             config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
-      - name: platform-root
-        paths: ["/"]
+      - name: oauth-token
+        paths: ["/oauth/token"]
+        methods: ["POST"]
         strip_path: false
+        plugins:
+          - name: rate-limiting
+            config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
+      - name: platform-info
+        paths: ["/platform/info"]
+        strip_path: true
       - name: platform-docs
         paths: ["/docs"]
         strip_path: false
@@ -1411,6 +1418,17 @@ services:
                     end
           - name: rate-limiting
             config: { minute: 600, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
+
+  - name: svc-site
+    url: http://svc-site:8080
+    retries: 2
+    routes:
+      - name: svc-site-root
+        paths: ["/"]
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config: { minute: 300, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
 
   - name: svc-users
     url: http://svc-users:8080
