@@ -49,7 +49,7 @@
         <pf-button id="btnHeroPrimary" variant="primary">登录并进入支付中心</pf-button>
         <a class="pf-link" href="#flow">先看看怎么开通 →</a>
       </div>
-      <p class="pf-muted m-0 site-small">账号由平台管理员分配；忘记密码可在 <a class="pf-link" href="/api/users/account/#forgot">账号中心</a> 找回。</p>
+      <p class="pf-muted m-0 site-small">账号由平台管理员分配；忘记密码请联系管理员在平台控制台重置。</p>
     </div>
     <div class="site-hero-side">
       <p class="site-hero-side-title">常用入口</p>
@@ -57,8 +57,8 @@
         <span><span class="site-entry-name">支付中心工作台</span><br><span class="site-entry-desc">服务商、商户、应用、进件、订单、分账、对账</span></span>
         <span>→</span>
       </a>
-      <a class="site-entry-item" href="/api/users/account/">
-        <span><span class="site-entry-name">账号中心</span><br><span class="site-entry-desc">修改密码、开启两步验证、找回密码</span></span>
+      <a class="site-entry-item" href="/api/openapi/console/">
+        <span><span class="site-entry-name">开放平台控制台</span><br><span class="site-entry-desc">为接入方创建 appKey / appSecret、分配接口权限（管理员）</span></span>
         <span>→</span>
       </a>
       <a class="site-entry-item" href="/docs">
@@ -143,7 +143,6 @@
     <span>© 2026 三润支付中心 · 资金由微信支付、支付宝持牌机构清算</span>
     <div class="site-footer-links">
       <a class="pf-link" href="/api/pay/console/">支付中心</a>
-      <a class="pf-link" href="/api/users/account/">账号中心</a>
       <a class="pf-link" href="/docs">接口文档</a>
     </div>
   </footer>
@@ -170,11 +169,10 @@
         <option value="/api/pay/console/">支付中心工作台</option>
         <option value="/api/openapi/console/">开放平台控制台（管理员）</option>
         <option value="/platform/console/">平台控制台（管理员）</option>
-        <option value="/api/users/account/">账号中心</option>
       </select>
     </div>
     <div class="flex items-center justify-between gap-2">
-      <a class="pf-link site-small" href="/api/users/account/#forgot">忘记密码？</a>
+      <span class="pf-muted site-small">忘记密码请联系管理员重置</span>
       <div class="flex gap-2">
         <pf-button id="btnCancelLogin" variant="ghost">取消</pf-button>
         <pf-button id="btnSubmitLogin" type="submit" variant="primary">登录</pf-button>
