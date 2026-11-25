@@ -27,6 +27,7 @@ runtime:
     - OPENAPI_CLIENT_ID
     - OPENAPI_CLIENT_SECRET
     - LOKI_URL
+    - PF_SCOPE_CATALOG # pctl sync 由各服务清单的 open_api 生成，不用在 .env 配
 
 test:
   command: wget -qO- http://127.0.0.1:8080/healthz # compose exec 不经 shell，不能用重定向/管道

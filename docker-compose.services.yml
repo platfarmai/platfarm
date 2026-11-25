@@ -215,6 +215,7 @@ services:
       OPENAPI_CLIENT_ID: ${SVC_OPENAPI_OPENAPI_CLIENT_ID:-${OPENAPI_CLIENT_ID}}
       OPENAPI_CLIENT_SECRET: ${SVC_OPENAPI_OPENAPI_CLIENT_SECRET:-${OPENAPI_CLIENT_SECRET}}
       LOKI_URL: ${LOKI_URL:-}
+      PF_SCOPE_CATALOG: '[{"service":"svc-data","name":"data.records.read","desc":"读取数据中台各数据集记录（开放 API）","routes":["GET /api/data/records"]},{"service":"svc-demo","name":"data.orders.read","desc":"读取订单数据（开放 API）","routes":["GET /api/demo/data"]},{"service":"svc-pay","name":"pay.order.create","desc":"创建支付订单（开放 API）","routes":["POST /api/pay/v1/orders","POST /api/pay/v1/orders/*/close"]},{"service":"svc-pay","name":"pay.order.query","desc":"查询支付订单（开放 API）","routes":["GET /api/pay/v1/orders/*"]},{"service":"svc-pay","name":"pay.refund.create","desc":"发起退款（开放 API）","routes":["POST /api/pay/v1/refunds"]},{"service":"svc-pay","name":"pay.division.create","desc":"对已支付订单发起分账（开放 API）","routes":["POST /api/pay/v1/divisions"]},{"service":"svc-pay","name":"pay.division.query","desc":"查询分账单（开放 API）","routes":["GET /api/pay/v1/divisions/*"]},{"service":"svc-pay","name":"pay.settle.confirm","desc":"归集模式确认结算（开放 API）","routes":["POST /api/pay/v1/orders/*/settle"]},{"service":"svc-pay","name":"pay.withdrawal.create","desc":"归集模式发起提现（开放 API）","routes":["POST /api/pay/v1/withdrawals"]},{"service":"svc-pay","name":"pay.withdrawal.query","desc":"查询提现单与余额（开放 API）","routes":["GET /api/pay/v1/withdrawals/*","GET /api/pay/v1/balance"]}]'
     volumes:
       - ./.keys/pf-auth.pem.pub:/pf/jwt.pub:ro
       - ./.keys/jwks-extra:/pf/jwt-extra:ro

@@ -5,11 +5,13 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -72,11 +74,36 @@ func writeProxy(c *gin.Context, status int, out []byte, err error) {
 	c.Data(status, "application/json", out)
 }
 
-// scopeCatalog: M2 static list; M3 auto-derives from manifest sync.
-func scopeCatalog() []map[string]string {
-	return []map[string]string{
-		{"name": "data.orders.read", "desc": "读取订单数据"},
+// scopeEntry 一个可授权给 app 的 scope：来自哪个服务、放行哪些开放路由。
+type scopeEntry struct {
+	Service string   `json:"service"`
+	Name    string   `json:"name"`
+	Desc    string   `json:"desc"`
+	Routes  []string `json:"routes"`
+}
+
+// scopeCatalog 可授权的 scope 目录。pctl sync 把所有启用服务清单里
+// 被 open_api 路由引用的 scope 汇总成 JSON，经 PF_SCOPE_CATALOG 注入：
+// 服务上下线、增删开放路由后重新 sync 即可，不用改本服务。
+func scopeCatalog() []scopeEntry {
+	return parseScopeCatalog(os.Getenv("PF_SCOPE_CATALOG"))
+}
+
+func parseScopeCatalog(raw string) []scopeEntry {
+	out := []scopeEntry{}
+	if strings.TrimSpace(raw) == "" {
+		return out
 	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		log.Printf("PF_SCOPE_CATALOG 不是合法 JSON，scope 目录为空: %v", err)
+		return []scopeEntry{}
+	}
+	for i := range out {
+		if out[i].Routes == nil {
+			out[i].Routes = []string{}
+		}
+	}
+	return out
 }
 
 // ── embedded SPA ─────────────────────────────────────────────

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 
 const base = "/api/openapi";
 const err = ref("");
@@ -11,6 +11,23 @@ const form = ref({ appKey: "", name: "", scopes: [], ratePerMin: 60 });
 // 用量视图（specs/013）
 const usage = ref({ enabled: false, usage: [] });
 const usageWindow = ref("24h");
+
+// scope 目录来自各服务清单的 open_api（pctl sync 生成）：按服务分组展示。
+const scopeGroups = computed(() => {
+  const groups = [];
+  for (const s of scopes.value) {
+    let g = groups.find((x) => x.service === s.service);
+    if (!g) groups.push((g = { service: s.service || "其他", scopes: [] }));
+    g.scopes.push(s);
+  }
+  return groups;
+});
+// app 上已授权、但目录里已经没有的 scope（服务下线或路由删除）：仍列出来，方便收回。
+function staleScopes(app) {
+  const known = new Set(scopes.value.map((s) => s.name));
+  return (app.scopes || []).filter((s) => !known.has(s));
+}
+const routeTip = (s) => (s.routes || []).join("\n");
 
 function fail(e) { err.value = e.message || String(e); setTimeout(() => (err.value = ""), 5000); }
 
@@ -108,13 +125,19 @@ onMounted(load);
             <label for="o-rate">每分钟限流</label>
             <input id="o-rate" v-model.number="form.ratePerMin" type="number" placeholder="每分钟限流" />
           </div>
-          <div class="my-2 flex flex-wrap gap-3">
-            <label v-for="s in scopes" :key="s.name" class="inline-flex items-center gap-1.5 text-[13px]">
-              <input type="checkbox" :value="s.name" v-model="form.scopes" />
-              <span>{{ s.name }}</span>
-              <span class="pf-muted">{{ s.desc }}</span>
-            </label>
+          <div v-for="g in scopeGroups" :key="g.service" class="my-2 flex flex-col gap-1.5">
+            <span class="text-[12px] font-semibold">{{ g.service }}</span>
+            <div class="flex flex-wrap gap-x-4 gap-y-1.5">
+              <label v-for="s in g.scopes" :key="s.name" class="inline-flex items-center gap-1.5 text-[13px]" :title="routeTip(s)">
+                <input type="checkbox" :value="s.name" v-model="form.scopes" />
+                <span>{{ s.name }}</span>
+                <span class="pf-muted">{{ s.desc }}</span>
+              </label>
+            </div>
           </div>
+          <p v-if="!scopes.length" class="pf-muted my-2">
+            当前没有可授权的 scope：没有启用的服务在清单里声明 open_api，或改清单后还没重新执行 pctl sync。
+          </p>
           <div class="pf-toolbar">
             <pf-button variant="primary" @click="create">创建</pf-button>
             <pf-button variant="ghost" @click="creating = false">取消</pf-button>
@@ -153,20 +176,31 @@ onMounted(load);
               <td><span class="pf-code">{{ a.appKey }}</span></td>
               <td>{{ a.name }}</td>
               <td>
-                <div class="flex flex-col gap-0.5">
-                  <label
-                    v-for="s in scopes"
-                    :key="s.name"
-                    class="chip text-[12px] text-muted"
-                    :data-on="(a.scopes || []).includes(s.name) ? '1' : null"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="(a.scopes || []).includes(s.name)"
-                      @change="toggleScope(a, s.name)"
-                    />
-                    {{ s.name }}
-                  </label>
+                <div class="flex flex-col gap-1.5">
+                  <div v-for="g in scopeGroups" :key="g.service" class="flex flex-col gap-0.5">
+                    <span class="pf-muted text-[11px]">{{ g.service }}</span>
+                    <label
+                      v-for="s in g.scopes"
+                      :key="s.name"
+                      class="chip text-[12px] text-muted"
+                      :title="[s.desc, routeTip(s)].filter(Boolean).join('\n')"
+                      :data-on="(a.scopes || []).includes(s.name) ? '1' : null"
+                    >
+                      <input
+                        type="checkbox"
+                        :checked="(a.scopes || []).includes(s.name)"
+                        @change="toggleScope(a, s.name)"
+                      />
+                      {{ s.name }}
+                    </label>
+                  </div>
+                  <div v-if="staleScopes(a).length" class="flex flex-col gap-0.5">
+                    <span class="pf-muted text-[11px]">已失效（目录里没有，取消勾选即收回）</span>
+                    <label v-for="s in staleScopes(a)" :key="s" class="chip text-[12px] text-muted" data-on="1">
+                      <input type="checkbox" checked @change="toggleScope(a, s)" />
+                      {{ s }}
+                    </label>
+                  </div>
                 </div>
               </td>
               <td>
