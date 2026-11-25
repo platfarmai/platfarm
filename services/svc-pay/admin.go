@@ -65,15 +65,10 @@ func handleSyncPlatformCert(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	params["wx_platform_cert"] = cert.PublicKeyPEM
-	params["wx_platform_cert_serial"] = cert.Serial
-	sealed, err := mustSealParams(params)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "加密失败"})
-		return
-	}
-	if _, err := db.Exec(ctx, `UPDATE pay_channel_config SET if_params=$4, updated_at=now()
-		WHERE owner_type=$1 AND owner_id=$2 AND if_code=$3`, in.OwnerType, in.OwnerID, in.IfCode, sealed); err != nil {
+	// 只并入这两个键：拉证书期间别人改过的其它参数不能被这里的旧快照盖回去。
+	if err := mergeChannelParams(ctx, in.OwnerType, in.OwnerID, in.IfCode, map[string]string{
+		"wx_platform_cert": cert.PublicKeyPEM, "wx_platform_cert_serial": cert.Serial,
+	}, tenant); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
 		return
 	}
@@ -316,6 +311,9 @@ func handlePutChannelConfig(c *gin.Context) {
 		OwnerID   string            `json:"ownerId"`
 		IfCode    string            `json:"ifCode"`
 		Params    map[string]string `json:"params"`
+		// Merge 为 true 时在已有参数上叠加（非空覆盖、空串删除、未出现的键保留）；
+		// 默认整体替换，会丢掉没有带上的键（包括同步来的平台证书）。
+		Merge bool `json:"merge"`
 	}
 	if c.ShouldBindJSON(&in) != nil || in.OwnerID == "" || in.IfCode == "" || len(in.Params) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ownerId、ifCode、params 必填"})
@@ -340,6 +338,14 @@ func handlePutChannelConfig(c *gin.Context) {
 		return
 	}
 	if denyOtherTenant(c, claims, tenant, "参数归属") {
+		return
+	}
+	if in.Merge {
+		if err := mergeChannelParams(c.Request.Context(), in.OwnerType, in.OwnerID, in.IfCode, in.Params, tenant); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
 		return
 	}
 	sealed, err := mustSealParams(in.Params)
@@ -371,6 +377,10 @@ func handlePutPassage(c *gin.Context) {
 	}
 	if c.ShouldBindJSON(&in) != nil || in.AppID == "" || in.IfCode == "" || in.WayCode == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "appId、ifCode、wayCode 必填"})
+		return
+	}
+	if in.RateBps < 0 || in.RateBps > 10000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rateBps 须在 0..10000（万分位）"})
 		return
 	}
 	supported := false

@@ -39,6 +39,33 @@ func (p *partner) IfCode() string   { return "wxpay_partner" }
 func (p *partner) FundMode() string { return channel.FundDirect }
 func (p *partner) Ways() []string   { return []string{"WX_JSAPI", "WX_NATIVE"} }
 
+// ParamFields 直清与收付通读同一套参数键（doRequest / verifyKeyFor / encryptKey 共用）。
+func (p *partner) ParamFields() ([]channel.ParamField, []channel.ParamField) { return paramFields(true) }
+
+func paramFields(directSettle bool) (provider, sub []channel.ParamField) {
+	provider = []channel.ParamField{
+		{Key: "sp_mchid", Label: "服务商商户号", Required: true, Hint: "微信支付服务商平台的商户号"},
+		{Key: "sp_appid", Label: "服务商 AppID", Required: true, Hint: "与服务商商户号绑定的公众号 / 小程序 AppID"},
+		{Key: "mch_serial_no", Label: "商户 API 证书序列号", Required: true},
+		{Key: "private_key", Label: "商户 API 私钥", Secret: true, Required: true, Multiline: true,
+			Hint: "apiclient_key.pem 的全文（含 BEGIN / END 行）"},
+		{Key: "api_v3_key", Label: "APIv3 密钥", Secret: true, Required: true, Hint: "32 位，用于解密回调与平台证书"},
+		{Key: "wx_public_key_id", Label: "微信支付公钥 ID", Hint: "PUB_KEY_ID_ 开头；公钥模式商户填写"},
+		{Key: "wx_public_key", Label: "微信支付公钥", Multiline: true, Hint: "pub_key.pem 全文；公钥模式商户填写"},
+		{Key: "wx_platform_cert_serial", Label: "平台证书序列号", Hint: "证书模式商户；用「同步平台证书」自动填入"},
+		{Key: "wx_platform_cert", Label: "平台证书公钥", Multiline: true, Hint: "证书模式商户；用「同步平台证书」自动填入"},
+	}
+	sub = []channel.ParamField{
+		{Key: "sub_mchid", Label: "特约商户号", Required: true, Hint: "进件完成后自动写入，也可手工填写已有的特约商户号"},
+		{Key: "sub_appid", Label: "子商户 AppID", Hint: "JSAPI 下单传 channelExtra.sub_openid（子商户 AppID 下的 openid）时必填"},
+	}
+	if directSettle {
+		sub = append(sub, channel.ParamField{Key: "profit_sharing", Label: "默认分账冻结",
+			Hint: "填 true 时该商户每笔订单都按分账单下单；留空则由下单参数 channelExtra.profitSharing 决定"})
+	}
+	return provider, sub
+}
+
 // apiBase 生产地址。联调可设 WXPAY_API_BASE 指向沙箱或桩，签名与路径不变。
 func apiBase() string {
 	if v := os.Getenv("WXPAY_API_BASE"); v != "" {

@@ -61,6 +61,20 @@ func gateway() string {
 
 // prov 服务商参数键：app_id private_key alipay_public_key [app_cert_sn] [alipay_root_cert_sn]。
 // sub 子商户参数键：smid（直付通二级商户号），分账另需 app_auth_token（可选）。
+func (z *zft) ParamFields() (provider, sub []channel.ParamField) {
+	provider = []channel.ParamField{
+		{Key: "app_id", Label: "应用 AppID", Required: true, Hint: "开通直付通的支付宝开放平台应用"},
+		{Key: "private_key", Label: "应用私钥", Secret: true, Required: true, Multiline: true, Hint: "RSA2 私钥全文"},
+		{Key: "alipay_public_key", Label: "支付宝公钥", Required: true, Multiline: true, Hint: "用于验证响应与回调签名"},
+		{Key: "app_cert_sn", Label: "应用公钥证书 SN", Hint: "证书模式填写"},
+		{Key: "alipay_root_cert_sn", Label: "支付宝根证书 SN", Hint: "证书模式填写"},
+	}
+	sub = []channel.ParamField{
+		{Key: "smid", Label: "二级商户号", Required: true, Hint: "直付通进件完成后自动写入"},
+		{Key: "app_auth_token", Label: "应用授权令牌", Secret: true, Hint: "代商户调用时才需要"},
+	}
+	return provider, sub
+}
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 

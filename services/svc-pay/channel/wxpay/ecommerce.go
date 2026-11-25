@@ -24,6 +24,11 @@ func (e *ecommerce) IfCode() string   { return "wxpay_ecommerce" }
 func (e *ecommerce) FundMode() string { return channel.FundControlled }
 func (e *ecommerce) Ways() []string   { return []string{"WX_JSAPI", "WX_NATIVE"} }
 
+// ParamFields 收付通每笔订单固定分账冻结，没有 profit_sharing 开关。
+func (e *ecommerce) ParamFields() ([]channel.ParamField, []channel.ParamField) {
+	return paramFields(false)
+}
+
 var (
 	_ channel.PayChannel        = (*ecommerce)(nil)
 	_ channel.OnboardingChannel = (*ecommerce)(nil)
