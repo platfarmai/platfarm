@@ -65,9 +65,126 @@ func sampleApplyment() channel.Applyment {
 		FeeRateBps  int    `json:"fee_rate_bps"`
 		SettleCycle string `json:"settle_cycle"`
 	}{{WayCode: "WX_JSAPI", FeeRateBps: 60, SettleCycle: "T1"}}
-	a.Images = map[string]string{"license": "1", "id_front": "2", "id_back": "3", "storefront": "4"}
-	a.Extra = map[string]string{"wx_qualification_type": "零售批发/生活娱乐/其他"}
+	a.Images = map[string]string{"license": "1", "id_front": "2", "id_back": "3", "storefront": "4", "interior": "5"}
+	a.Extra = map[string]string{"wx_qualification_type": "零售", "wx_id_card_address": "北京市海淀区某路1号"}
 	return a
+}
+
+var sampleMedia = map[string]string{"license": "M1", "id_front": "M2", "id_back": "M3", "storefront": "M4", "interior": "M5"}
+
+// submitCapture 用假微信接住申请单，返回请求体。
+func submitCapture(t *testing.T, a channel.Applyment, media map[string]string) map[string]any {
+	t.Helper()
+	merchantPriv, wxPub, _ := testKeys(t)
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &got)
+		_, _ = w.Write([]byte(`{"applyment_id":1}`))
+	}))
+	defer srv.Close()
+	t.Setenv("WXPAY_API_BASE", srv.URL)
+	_, err := (&partner{}).SubmitApplyment(context.Background(), channel.ApplymentIn{
+		BusinessCode: "BC-1", Payload: a, Media: media,
+		Provider: map[string]string{"sp_mchid": "1900000109", "mch_serial_no": "ABC", "private_key": merchantPriv,
+			"wx_platform_cert": wxPub, "wx_platform_cert_serial": "544AB49A"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestApplymentProblems_SampleIsClean(t *testing.T) {
+	if p := (&partner{}).ApplymentProblems(sampleApplyment()); len(p) != 0 {
+		t.Fatalf("unexpected problems: %v", p)
+	}
+}
+
+func TestApplymentProblems_WeChatRequiredFields(t *testing.T) {
+	a := sampleApplyment()
+	a.Contact.Email = ""
+	a.SettlementAccount.Type = "personal"
+	a.SettlementAccount.Bank, a.SettlementAccount.Branch = "其他银行", ""
+	a.Business.Scene.Types = []string{"offline", "mp", "app", "web"}
+	delete(a.Images, "interior")
+	a.Extra = map[string]string{"wx_contact_type": "SUPER"}
+	p := strings.Join((&partner{}).ApplymentProblems(a), "\n")
+	for _, want := range []string{"contact.email", "wx_qualification_type", "对公账户", "wx_id_card_address",
+		"settlement_account.branch", "wx_contact_id_no", "wx_contact_id_valid", "contact_id_front", "contact_id_back",
+		"images.interior", "images.mp_pic", "images.app_pic", "web_domain"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("missing problem for %s in:\n%s", want, p)
+		}
+	}
+	// 资料不全时不该打到微信。
+	_, err := (&partner{}).SubmitApplyment(context.Background(), channel.ApplymentIn{BusinessCode: "BC-1", Payload: a})
+	if err == nil || !strings.Contains(err.Error(), "资料不满足微信进件要求") {
+		t.Fatalf("expected preflight error, got %v", err)
+	}
+}
+
+func TestApplyment_InstitutionSendsCertificateInfo(t *testing.T) {
+	a := sampleApplyment()
+	a.Subject.Type, a.Subject.MCC = "institution", "725"
+	subject := submitCapture(t, a, sampleMedia)["subject_info"].(map[string]any)
+	if subject["subject_type"] != "SUBJECT_TYPE_INSTITUTIONS" {
+		t.Errorf("subject_type = %v", subject["subject_type"])
+	}
+	if _, has := subject["business_license_info"]; has {
+		t.Error("institution must not send business_license_info")
+	}
+	cert := subject["certificate_info"].(map[string]any)
+	if cert["cert_type"] != "CERTIFICATE_TYPE_2388" || cert["cert_copy"] != "M1" || cert["cert_number"] != "91110000MA01ABCD2E" ||
+		cert["company_address"] != "北京市北京市海淀区中关村大街1号" || cert["period_end"] != "长期" {
+		t.Errorf("certificate_info = %v", cert)
+	}
+}
+
+func TestApplyment_NonIDCardUsesIDDocInfo(t *testing.T) {
+	a := sampleApplyment()
+	a.LegalPerson.IDType, a.LegalPerson.IDNo = "passport", "E12345678"
+	identity := submitCapture(t, a, sampleMedia)["subject_info"].(map[string]any)["identity_info"].(map[string]any)
+	if _, has := identity["id_card_info"]; has {
+		t.Error("passport must not send id_card_info")
+	}
+	doc := identity["id_doc_info"].(map[string]any)
+	if identity["id_doc_type"] != "IDENTIFICATION_TYPE_OVERSEA_PASSPORT" || doc["id_doc_copy"] != "M2" || doc["doc_period_end"] != "2035-01-01" {
+		t.Errorf("identity_info = %v", identity)
+	}
+	if _, has := doc["id_doc_copy_back"]; has {
+		t.Error("passport has no back side")
+	}
+	if doc["id_doc_address"] == nil || doc["id_doc_address"] == "北京市海淀区某路1号" {
+		t.Errorf("id_doc_address must be sent encrypted, got %v", doc["id_doc_address"])
+	}
+}
+
+func TestApplyment_SuperContactAndScenePics(t *testing.T) {
+	a := sampleApplyment()
+	a.Business.Scene.Types = []string{"mp", "app"}
+	a.Extra["wx_contact_type"] = "SUPER"
+	a.Extra["wx_contact_id_no"] = "110101199202022345"
+	a.Extra["wx_contact_id_valid"] = "2018-03-01,2038-03-01"
+	for _, k := range []string{"contact_id_front", "contact_id_back", "mp_pic", "app_pic", "app_pic_3"} {
+		a.Images[k] = "x"
+	}
+	media := map[string]string{"license": "M1", "id_front": "M2", "id_back": "M3", "contact_id_front": "C1",
+		"contact_id_back": "C2", "mp_pic": "P1", "app_pic": "A1", "app_pic_3": "A3"}
+	body := submitCapture(t, a, media)
+	contact := body["contact_info"].(map[string]any)
+	if contact["contact_id_doc_copy"] != "C1" || contact["contact_id_doc_copy_back"] != "C2" ||
+		contact["contact_period_begin"] != "2018-03-01" || contact["contact_period_end"] != "2038-03-01" ||
+		contact["contact_id_number"] == "110101199202022345" || contact["contact_id_number"] == "" {
+		t.Errorf("contact_info = %v", contact)
+	}
+	sales := body["business_info"].(map[string]any)["sales_info"].(map[string]any)
+	if got, _ := json.Marshal(sales["mp_info"].(map[string]any)["mp_pics"]); string(got) != `["P1"]` {
+		t.Errorf("mp_pics = %s", got)
+	}
+	if got, _ := json.Marshal(sales["app_info"].(map[string]any)["app_pics"]); string(got) != `["A1","A3"]` {
+		t.Errorf("app_pics = %s", got)
+	}
 }
 
 func TestApplyment_SubmitEncryptsSensitiveFieldsAndSetsSerial(t *testing.T) {
@@ -98,7 +215,7 @@ func TestApplyment_SubmitEncryptsSensitiveFieldsAndSetsSerial(t *testing.T) {
 	}
 	res, err := (&partner{}).SubmitApplyment(context.Background(), channel.ApplymentIn{
 		BusinessCode: "BC-1", Payload: sampleApplyment(),
-		Media:    map[string]string{"license": "M1", "id_front": "M2", "id_back": "M3", "storefront": "M4"},
+		Media:    sampleMedia,
 		Provider: prov,
 	})
 	if err != nil {
@@ -145,6 +262,15 @@ func TestApplyment_SubmitEncryptsSensitiveFieldsAndSetsSerial(t *testing.T) {
 	store := sales["biz_store_info"].(map[string]any)
 	if pics, _ := json.Marshal(store["store_entrance_pic"]); string(pics) != `["M4"]` {
 		t.Errorf("store_entrance_pic = %s", pics)
+	}
+	if pics, _ := json.Marshal(store["indoor_pic"]); string(pics) != `["M5"]` {
+		t.Errorf("indoor_pic = %s", pics)
+	}
+	if email := gotBody["contact_info"].(map[string]any)["contact_email"].(string); decryptOAEP(t, wxPriv, email) != "zs@example.com" {
+		t.Errorf("contact_email not sent encrypted: %q", email)
+	}
+	if addr, _ := idCard["id_card_address"].(string); addr == "" || decryptOAEP(t, wxPriv, addr) != "北京市海淀区某路1号" {
+		t.Errorf("id_card_address = %q", addr)
 	}
 	if gotBody["settlement_info"].(map[string]any)["settlement_id"] != "719" {
 		t.Errorf("settlement_id = %v", gotBody["settlement_info"])

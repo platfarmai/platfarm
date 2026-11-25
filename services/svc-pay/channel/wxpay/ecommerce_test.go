@@ -134,9 +134,44 @@ func TestEcommerce_SettleWithdrawBalance(t *testing.T) {
 	}
 }
 
+// 事业单位在 business_license_info 里报登记证书；contact_type 是数字码，不能把 LEGAL/SUPER 原样发出去。
+func TestEcommerce_InstitutionApplymentBody(t *testing.T) {
+	merchantPriv, wxPub, _ := testKeys(t)
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &got)
+		_, _ = w.Write([]byte(`{"applyment_id":1}`))
+	}))
+	defer srv.Close()
+	t.Setenv("WXPAY_API_BASE", srv.URL)
+	a := sampleApplyment()
+	a.Subject.Type = "institution"
+	a.Extra["wx_contact_type"] = "LEGAL"
+	_, err := (&ecommerce{}).SubmitApplyment(context.Background(), channel.ApplymentIn{
+		BusinessCode: "BC-1", Payload: a, Media: sampleMedia,
+		Provider: map[string]string{"sp_mchid": "1900000109", "mch_serial_no": "ABC", "private_key": merchantPriv,
+			"wx_platform_cert": wxPub, "wx_platform_cert_serial": "544AB49A"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lic := got["business_license_info"].(map[string]any)
+	if got["organization_type"] != "3" || lic["cert_type"] != "CERTIFICATE_TYPE_2388" ||
+		lic["company_address"] != "北京市北京市海淀区中关村大街1号" || lic["business_license_copy"] != "M1" {
+		t.Errorf("business_license_info = %v (organization_type %v)", lic, got["organization_type"])
+	}
+	if ct := got["contact_info"].(map[string]any)["contact_type"]; ct != "65" {
+		t.Errorf("contact_type = %v, want 65", ct)
+	}
+}
+
 func TestEcommerce_ApplymentAndWithdrawFold(t *testing.T) {
-	if ecommerceOrgType("enterprise") != "2" || ecommerceOrgType("individual") != "4" {
+	if ecommerceOrgType("enterprise") != "2" || ecommerceOrgType("individual") != "4" || ecommerceOrgType("institution") != "3" {
 		t.Fatal("org type")
+	}
+	if ecommerceContactType("") != "65" || ecommerceContactType("LEGAL") != "65" || ecommerceContactType("SUPER") != "66" || ecommerceContactType("66") != "66" {
+		t.Fatal("contact type")
 	}
 	if withdrawStatus("SUCCESS", "") != channel.StateSuccess || withdrawStatus("REFUND", "") != channel.StateFail ||
 		withdrawStatus("CREATE_SUCCESS", "") != channel.StateWaiting || withdrawStatus("", channel.StateWaiting) != channel.StateWaiting {

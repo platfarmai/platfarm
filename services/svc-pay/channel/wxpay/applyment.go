@@ -27,7 +27,68 @@ import (
 )
 
 // 编译期保证 partner 实现了进件接口。
-var _ channel.OnboardingChannel = (*partner)(nil)
+var (
+	_ channel.OnboardingChannel = (*partner)(nil)
+	_ channel.ApplymentChecker  = (*partner)(nil)
+)
+
+// ApplymentProblems applyment4sub 文档里的必填与条件必填项（归一校验管不到的部分）。
+// 建草稿和提交渠道前都会查，避免审核通过后才被微信以 PARAM_ERROR 打回。
+func (p *partner) ApplymentProblems(a channel.Applyment) []string {
+	var out []string
+	need := func(cond bool, msg string) {
+		if !cond {
+			out = append(out, msg)
+		}
+	}
+	need(a.Contact.Email != "", "contact.email 必填（微信用它接收开户邮件）")
+	need(a.Extra["wx_qualification_type"] != "", "extra.wx_qualification_type（所属行业）必填")
+	if a.Subject.Type != "individual" {
+		need(a.SettlementAccount.Type == "corporate", "企业/事业单位的结算账户必须是对公账户")
+	}
+	if a.Subject.Type == "enterprise" {
+		need(a.Extra["wx_id_card_address"] != "", "extra.wx_id_card_address（法人证件居住地址）企业主体必填")
+	}
+	if a.SettlementAccount.Bank == "其他银行" {
+		need(a.SettlementAccount.Branch != "", "开户银行为“其他银行”时 settlement_account.branch（开户行全称含支行）必填")
+	}
+	if a.Extra["wx_contact_type"] == "SUPER" {
+		need(a.Extra["wx_contact_id_no"] != "", "extra.wx_contact_id_no（经办人身份证号）必填")
+		need(channel.ValidPeriod(a.Extra["wx_contact_id_valid"]), "extra.wx_contact_id_valid（经办人证件有效期）格式须为 YYYY-MM-DD,YYYY-MM-DD 或 YYYY-MM-DD,长期")
+		need(a.Images["contact_id_front"] != "", "images.contact_id_front（经办人身份证人像面）必填")
+		need(a.Images["contact_id_back"] != "", "images.contact_id_back（经办人身份证国徽面）必填")
+	}
+	for _, t := range a.Business.Scene.Types {
+		switch t {
+		case "offline":
+			need(a.Business.Address.Code != "", "business.address.code（省市编码）线下场景必填")
+			need(a.Images["storefront"] != "", "images.storefront（门头照）线下场景必填")
+			need(a.Images["interior"] != "", "images.interior（店内环境照）线下场景必填")
+		case "mp":
+			need(a.Images["mp_pic"] != "", "images.mp_pic（公众号页面截图）公众号场景必填")
+		case "app":
+			need(a.Images["app_pic"] != "", "images.app_pic（APP 截图）APP 场景必填")
+		case "web":
+			need(a.Extra["web_domain"] != "", "extra.web_domain（网站域名）网站场景必填")
+		}
+	}
+	return out
+}
+
+// pics 收集同一类截图的 media_id：kind、kind_2 … kind_5，按序取已上传的。
+func pics(media map[string]string, kind string) []string {
+	var out []string
+	for i := 1; i <= 5; i++ {
+		k := kind
+		if i > 1 {
+			k = fmt.Sprintf("%s_%d", kind, i)
+		}
+		if m := media[k]; m != "" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
 
 // UploadMedia POST /v3/merchant/media/upload：multipart，签名正文是 meta JSON。
 func (p *partner) UploadMedia(ctx context.Context, filename string, data []byte, prov map[string]string) (string, error) {
@@ -85,6 +146,9 @@ func mimeOf(filename string) string {
 
 // SubmitApplyment 把归一资料映射成 applyment4sub 请求。微信不接受自定义费率，rates 永远报为无法表达。
 func (p *partner) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (channel.ApplymentResult, error) {
+	if probs := p.ApplymentProblems(in.Payload); len(probs) > 0 {
+		return channel.ApplymentResult{}, fmt.Errorf("资料不满足微信进件要求：%s", strings.Join(probs, "；"))
+	}
 	serial, pubPEM, err := encryptKey(in.Provider)
 	if err != nil {
 		return channel.ApplymentResult{}, err
@@ -100,16 +164,19 @@ func (p *partner) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (
 		return channel.ApplymentResult{}, err
 	}
 	contactPhone, _ := enc(a.Contact.Phone)
+	contactEmail, _ := enc(a.Contact.Email)
 	contact := map[string]any{
 		"contact_type": orDefault(a.Extra["wx_contact_type"], "LEGAL"),
-		"contact_name": contactName, "mobile_phone": contactPhone,
-	}
-	if a.Contact.Email != "" {
-		contact["contact_email"], _ = enc(a.Contact.Email)
+		"contact_name": contactName, "mobile_phone": contactPhone, "contact_email": contactEmail,
 	}
 	if contact["contact_type"] == "SUPER" {
+		// 经办人须提供本人证件（不是法人的）：号码、正反面、有效期。
+		cBegin, cEnd := splitValid(a.Extra["wx_contact_id_valid"])
 		contact["contact_id_doc_type"] = "IDENTIFICATION_TYPE_IDCARD"
-		contact["contact_id_number"], _ = enc(orDefault(a.Extra["wx_contact_id_no"], a.LegalPerson.IDNo))
+		contact["contact_id_number"], _ = enc(a.Extra["wx_contact_id_no"])
+		contact["contact_id_doc_copy"] = in.Media["contact_id_front"]
+		contact["contact_id_doc_copy_back"] = in.Media["contact_id_back"]
+		contact["contact_period_begin"], contact["contact_period_end"] = cBegin, cEnd
 	}
 	body["contact_info"] = contact
 
@@ -117,26 +184,52 @@ func (p *partner) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (
 	idBegin, idEnd := splitValid(a.LegalPerson.IDValid)
 	idName, _ := enc(a.LegalPerson.Name)
 	idNo, _ := enc(a.LegalPerson.IDNo)
-	idCard := map[string]any{
-		"id_card_copy": in.Media["id_front"], "id_card_national": in.Media["id_back"],
-		"id_card_name": idName, "id_card_number": idNo,
-		"card_period_begin": begin0(idBegin), "card_period_end": idEnd,
+	idAddr, _ := enc(a.Extra["wx_id_card_address"])
+	docType := idDocType(a.LegalPerson.IDType)
+	identity := map[string]any{"id_holder_type": "LEGAL", "id_doc_type": docType, "owner": true}
+	if docType == "IDENTIFICATION_TYPE_IDCARD" {
+		idCard := map[string]any{
+			"id_card_copy": in.Media["id_front"], "id_card_national": in.Media["id_back"],
+			"id_card_name": idName, "id_card_number": idNo,
+			"card_period_begin": begin0(idBegin), "card_period_end": idEnd,
+		}
+		if idAddr != "" {
+			idCard["id_card_address"] = idAddr
+		}
+		identity["id_card_info"] = idCard
+	} else {
+		// 非身份证走 id_doc_info；护照没有反面。
+		doc := map[string]any{
+			"id_doc_copy": in.Media["id_front"], "id_doc_name": idName, "id_doc_number": idNo,
+			"doc_period_begin": begin0(idBegin), "doc_period_end": idEnd,
+		}
+		if m := in.Media["id_back"]; m != "" && a.LegalPerson.IDType != "passport" {
+			doc["id_doc_copy_back"] = m
+		}
+		if idAddr != "" {
+			doc["id_doc_address"] = idAddr
+		}
+		identity["id_doc_info"] = doc
 	}
-	if addr := a.Extra["wx_id_card_address"]; addr != "" {
-		idCard["id_card_address"], _ = enc(addr)
-	}
-	body["subject_info"] = map[string]any{
-		"subject_type": subjectType(a.Subject.Type),
-		"business_license_info": map[string]any{
+	address := strings.Join([]string{a.Business.Address.Province, a.Business.Address.City,
+		a.Business.Address.District, a.Business.Address.Detail}, "")
+	subject := map[string]any{"subject_type": subjectType(a.Subject.Type), "identity_info": identity}
+	if a.Subject.Type == "institution" {
+		// 事业单位报登记证书（事业单位法人证书），不是营业执照。
+		subject["certificate_info"] = map[string]any{
+			"cert_copy": in.Media["license"], "cert_type": "CERTIFICATE_TYPE_2388",
+			"cert_number": a.Subject.LicenseNo, "merchant_name": a.Subject.Name,
+			"company_address": orDefault(a.Extra["wx_company_address"], address),
+			"legal_person":    a.LegalPerson.Name, "period_begin": begin0(begin), "period_end": end,
+		}
+	} else {
+		subject["business_license_info"] = map[string]any{
 			"license_copy": in.Media["license"], "license_number": a.Subject.LicenseNo,
 			"merchant_name": a.Subject.Name, "legal_person": a.LegalPerson.Name,
 			"period_begin": begin0(begin), "period_end": end,
-		},
-		"identity_info": map[string]any{
-			"id_holder_type": "LEGAL", "id_doc_type": idDocType(a.LegalPerson.IDType),
-			"id_card_info": idCard, "owner": true,
-		},
+		}
 	}
+	body["subject_info"] = subject
 
 	sales := map[string]any{}
 	var scenes []string
@@ -144,32 +237,25 @@ func (p *partner) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (
 		switch t {
 		case "offline":
 			scenes = append(scenes, "SALES_SCENES_STORE")
-			store := map[string]any{
+			sales["biz_store_info"] = map[string]any{
 				"biz_store_name": a.Subject.ShortName, "biz_address_code": a.Business.Address.Code,
-				"biz_store_address": strings.Join([]string{a.Business.Address.Province, a.Business.Address.City,
-					a.Business.Address.District, a.Business.Address.Detail}, ""),
+				"biz_store_address":  address,
+				"store_entrance_pic": []string{in.Media["storefront"]}, "indoor_pic": []string{in.Media["interior"]},
 			}
-			if m := in.Media["storefront"]; m != "" {
-				store["store_entrance_pic"] = []string{m}
-			}
-			if m := in.Media["interior"]; m != "" {
-				store["indoor_pic"] = []string{m}
-			}
-			sales["biz_store_info"] = store
 		case "mp":
 			scenes = append(scenes, "SALES_SCENES_MP")
-			sales["mp_info"] = map[string]any{"mp_appid": a.Business.Scene.AppID}
+			sales["mp_info"] = map[string]any{"mp_appid": a.Business.Scene.AppID, "mp_pics": pics(in.Media, "mp_pic")}
 		case "mini_program":
 			scenes = append(scenes, "SALES_SCENES_MINI_PROGRAM")
-			sales["mini_program_info"] = map[string]any{"mini_program_appid": a.Business.Scene.AppID}
+			mini := map[string]any{"mini_program_appid": a.Business.Scene.AppID}
+			if ps := pics(in.Media, "mini_program_pic"); len(ps) > 0 {
+				mini["mini_program_pics"] = ps
+			}
+			sales["mini_program_info"] = mini
 		case "app":
 			scenes = append(scenes, "SALES_SCENES_APP")
-			sales["app_info"] = map[string]any{"app_appid": a.Business.Scene.AppID}
+			sales["app_info"] = map[string]any{"app_appid": a.Business.Scene.AppID, "app_pics": pics(in.Media, "app_pic")}
 		case "web":
-			if a.Extra["web_domain"] == "" {
-				unexpressed = append(unexpressed, "business.scene.types:web（缺 extra.web_domain）")
-				continue
-			}
 			scenes = append(scenes, "SALES_SCENES_WEB")
 			sales["web_info"] = map[string]any{"domain": a.Extra["web_domain"]}
 		}

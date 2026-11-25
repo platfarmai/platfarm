@@ -79,7 +79,8 @@ type Applyment struct {
 		SettleCycle string `json:"settle_cycle"` // T1|D1|D0
 	} `json:"rates"`
 	Images map[string]string `json:"images"` // kind → svc-file 文件 id
-	// Extra 渠道专属补充项（不入列、不校验），如微信 wx_qualification_type / wx_contact_type、web 场景 web_domain。
+	// Extra 渠道专属补充项（不入列，由渠道的 ApplymentProblems 校验），如微信 wx_qualification_type /
+	// wx_contact_type / wx_id_card_address、web 场景 web_domain。wx_contact_id_no 是证件号，业务层密封。
 	Extra map[string]string `json:"extra,omitempty"`
 }
 
@@ -162,6 +163,28 @@ func (a Applyment) Problems() []string {
 		need(a.Images[kind] != "", "images."+kind+" 必填")
 	}
 	return p
+}
+
+// ValidPeriod 有效期格式是否为 "YYYY-MM-DD,YYYY-MM-DD" 或 "YYYY-MM-DD,长期"。
+func ValidPeriod(s string) bool { return validRe.MatchString(s) }
+
+// ApplymentChecker 渠道专属的必填项校验（可选实现）。Problems 只管归一结构；
+// 渠道接口文档里的条件必填（如微信的联系邮箱、门头照）由适配器在这里报出，建草稿时就能看到，
+// 不必等审核通过后才被渠道打回。
+type ApplymentChecker interface {
+	ApplymentProblems(a Applyment) []string
+}
+
+// ChannelProblems 渠道专属校验；渠道未注册或未实现 ApplymentChecker 时返回空。
+func ChannelProblems(ifCode string, a Applyment) []string {
+	c, err := Get(ifCode)
+	if err != nil {
+		return nil
+	}
+	if ck, ok := c.(ApplymentChecker); ok {
+		return ck.ApplymentProblems(a)
+	}
+	return nil
 }
 
 // MaskID 证件/账号脱敏：保留前 3 后 4，中间 ***。短于 8 位整体打码。

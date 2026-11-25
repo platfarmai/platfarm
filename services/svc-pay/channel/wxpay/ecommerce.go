@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"platfarm/svc-pay/channel"
 )
@@ -177,14 +178,21 @@ func (e *ecommerce) SubmitApplyment(ctx context.Context, in channel.ApplymentIn)
 	begin, end := splitValid(a.Subject.LicenseValid)
 	idBegin, idEnd := splitValid(a.LegalPerson.IDValid)
 
+	license := map[string]any{
+		"business_license_copy": in.Media["license"], "business_license_number": a.Subject.LicenseNo,
+		"merchant_name": a.Subject.Name, "legal_person": a.LegalPerson.Name,
+		"business_time": fmt.Sprintf(`["%s","%s"]`, begin0(begin), end),
+	}
+	if a.Subject.Type == "institution" {
+		// 事业单位在同一对象里报登记证书：证书类型与注册地址必填。
+		license["cert_type"] = "CERTIFICATE_TYPE_2388"
+		license["company_address"] = orDefault(a.Extra["wx_company_address"], strings.Join([]string{a.Business.Address.Province,
+			a.Business.Address.City, a.Business.Address.District, a.Business.Address.Detail}, ""))
+	}
 	body := map[string]any{
-		"out_request_no":    in.BusinessCode,
-		"organization_type": ecommerceOrgType(a.Subject.Type),
-		"business_license_info": map[string]any{
-			"business_license_copy": in.Media["license"], "business_license_number": a.Subject.LicenseNo,
-			"merchant_name": a.Subject.Name, "legal_person": a.LegalPerson.Name,
-			"business_time": fmt.Sprintf(`["%s","%s"]`, begin0(begin), end),
-		},
+		"out_request_no":        in.BusinessCode,
+		"organization_type":     ecommerceOrgType(a.Subject.Type),
+		"business_license_info": license,
 		"id_card_info": map[string]any{
 			"id_card_copy": in.Media["id_front"], "id_card_national": in.Media["id_back"],
 			"id_card_name": idName, "id_card_number": idNo,
@@ -195,7 +203,7 @@ func (e *ecommerce) SubmitApplyment(ctx context.Context, in channel.ApplymentIn)
 			"account_bank":      a.SettlementAccount.Bank, "account_name": accountName, "account_number": accountNo,
 		},
 		"contact_info": map[string]any{
-			"contact_type": orDefault(a.Extra["wx_contact_type"], "65"),
+			"contact_type": ecommerceContactType(a.Extra["wx_contact_type"]),
 			"contact_name": contactName, "mobile_phone": contactPhone,
 		},
 		"sales_scene_info":   map[string]any{"store_name": a.Subject.ShortName, "store_url": a.Business.Scene.AppID},
@@ -253,6 +261,17 @@ func (e *ecommerce) QueryApplyment(ctx context.Context, businessCode string, pro
 		ChannelApplymentID: d.ApplymentID.String(), State: foldApplymentState(d.State), RawState: d.State,
 		Message: msg, SignURL: d.SignURL, SubMchID: d.SubMchID, Raw: string(raw),
 	}, nil
+}
+
+// ecommerceContactType 收付通 contact_type 是数字码：65 经营者/法定代表人、66 经办人。
+// extra.wx_contact_type 与 applyment4sub 共用 LEGAL / SUPER 写法，这里折成数字码；已是数字码的原样透传。
+func ecommerceContactType(v string) string {
+	switch v {
+	case "SUPER", "66":
+		return "66"
+	default:
+		return "65"
+	}
 }
 
 // ecommerceOrgType 收付通 organization_type：个体 4、企业 2、事业单位 3。

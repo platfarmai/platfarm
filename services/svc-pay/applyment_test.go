@@ -25,6 +25,31 @@ func samplePayload() map[string]any {
 	}
 }
 
+// 经办人身份证号放在 extra 里，也必须密封落库、脱敏回显，且不改调用方手里的 map。
+func TestSealPayload_ContactIDInExtra(t *testing.T) {
+	const idNo = "110101199202022345"
+	var a channel.Applyment
+	a.Extra = map[string]string{"wx_contact_type": "SUPER", extraContactIDNo: idNo}
+	sealed, err := sealPayload(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sealed.Extra[extraContactIDNo]; got == "" || got == idNo {
+		t.Fatalf("contact id not sealed: %q", got)
+	}
+	if a.Extra[extraContactIDNo] != idNo {
+		t.Fatal("sealPayload mutated caller's extra map")
+	}
+	raw, _ := json.Marshal(sealed)
+	if out := string(maskedPayload(raw)); !strings.Contains(out, "110***2345") || strings.Contains(out, idNo) {
+		t.Fatalf("masked output wrong: %s", out)
+	}
+	opened, err := openPayload(sealed)
+	if err != nil || opened.Extra[extraContactIDNo] != idNo || opened.Extra["wx_contact_type"] != "SUPER" {
+		t.Fatalf("open: %v %v", opened.Extra, err)
+	}
+}
+
 // makePollDue 把下一次轮询时间拨到现在，模拟时间流逝。
 func makePollDue(t *testing.T, id string) {
 	t.Helper()

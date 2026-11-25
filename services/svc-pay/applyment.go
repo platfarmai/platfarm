@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -70,6 +71,24 @@ var pollingStates = []string{channel.ApplymentSubmitted, channel.ApplymentChanne
 
 // ── 密封 / 脱敏 ──────────────────────────────────────────────
 
+// extraContactIDNo Extra 里唯一的证件号（微信经办人身份证号），与 IDNo 同等密封/脱敏。
+const extraContactIDNo = "wx_contact_id_no"
+
+// mapExtraSecret 对 Extra 里的证件号做 f 变换。Extra 是 map，先拷贝再改，不动调用方手里的那份。
+func mapExtraSecret(a channel.Applyment, f func(string) (string, error)) (channel.Applyment, error) {
+	v := a.Extra[extraContactIDNo]
+	if v == "" {
+		return a, nil
+	}
+	out, err := f(v)
+	if err != nil {
+		return a, err
+	}
+	a.Extra = maps.Clone(a.Extra)
+	a.Extra[extraContactIDNo] = out
+	return a, nil
+}
+
 // sealPayload 落库前密封证件号与银行账号。
 func sealPayload(a channel.Applyment) (channel.Applyment, error) {
 	var err error
@@ -79,7 +98,7 @@ func sealPayload(a channel.Applyment) (channel.Applyment, error) {
 	if a.SettlementAccount.AccountNo, err = seal(a.SettlementAccount.AccountNo); err != nil {
 		return a, err
 	}
-	return a, nil
+	return mapExtraSecret(a, seal)
 }
 
 // openPayload 解封（提交渠道前）。
@@ -91,7 +110,12 @@ func openPayload(a channel.Applyment) (channel.Applyment, error) {
 	if a.SettlementAccount.AccountNo, err = open(a.SettlementAccount.AccountNo); err != nil {
 		return a, err
 	}
-	return a, nil
+	return mapExtraSecret(a, open)
+}
+
+// applymentProblems 归一校验 + 所选渠道的专属必填项。
+func applymentProblems(ifCode string, a channel.Applyment) []string {
+	return append(a.Problems(), channel.ChannelProblems(ifCode, a)...)
 }
 
 // maskedPayload 对外输出：证件号与账号脱敏，解密失败则整体打码。
@@ -109,6 +133,13 @@ func maskedPayload(raw json.RawMessage) json.RawMessage {
 		a.SettlementAccount.AccountNo = channel.MaskID(plain)
 	} else {
 		a.SettlementAccount.AccountNo = "******"
+	}
+	a, err := mapExtraSecret(a, func(v string) (string, error) {
+		plain, err := open(v)
+		return channel.MaskID(plain), err
+	})
+	if err != nil {
+		a.Extra[extraContactIDNo] = "******"
 	}
 	out, _ := json.Marshal(a)
 	return out
@@ -463,7 +494,7 @@ func handleCreateApplyment(c *gin.Context) {
 	if denyOtherTenant(c, claims, mch.TenantID, "商户") {
 		return
 	}
-	if problems := in.Payload.Problems(); len(problems) > 0 {
+	if problems := applymentProblems(in.IfCode, in.Payload); len(problems) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "资料不完整", "problems": problems})
 		return
 	}
@@ -511,7 +542,7 @@ func handleUpdateApplyment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "payload 必填"})
 		return
 	}
-	if problems := in.Payload.Problems(); len(problems) > 0 {
+	if problems := applymentProblems(a.IfCode, in.Payload); len(problems) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "资料不完整", "problems": problems})
 		return
 	}

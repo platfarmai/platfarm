@@ -17,13 +17,26 @@ const showJson = ref(false);
 const uploading = ref("");
 let writing = false;
 
-const imageKinds = [
-  ["license", "营业执照"],
-  ["id_front", "身份证人像面"],
-  ["id_back", "身份证国徽面"],
-  ["storefront", "门头照（线下场景）"],
-  ["interior", "店内环境照"],
-];
+// 证照槽位随主体 / 联系人身份 / 经营场景变化，只列微信要求的。
+const imageKinds = computed(() => {
+  const f = fields.value;
+  const types = f.business.scene.types;
+  const kinds = [
+    ["license", f.subject.type === "institution" ? "事业单位法人证书" : "营业执照"],
+    ["id_front", "法人证件人像面"],
+    ["id_back", "法人证件国徽面 / 反面"],
+  ];
+  if (f.extra.wx_contact_type === "SUPER") {
+    kinds.push(["contact_id_front", "经办人身份证人像面"], ["contact_id_back", "经办人身份证国徽面"]);
+  }
+  if (types.includes("offline")) kinds.push(["storefront", "门头照"], ["interior", "店内环境照"]);
+  if (types.includes("mp")) kinds.push(["mp_pic", "公众号页面截图"]);
+  if (types.includes("mini_program")) kinds.push(["mini_program_pic", "小程序截图（未上线时提供）"]);
+  if (types.includes("app")) {
+    kinds.push(["app_pic", "APP 首页截图"], ["app_pic_2", "APP 尾页截图"], ["app_pic_3", "APP 应用内截图"], ["app_pic_4", "APP 支付页截图"]);
+  }
+  return kinds;
+});
 const scenes = [
   ["offline", "线下门店"],
   ["mini_program", "小程序"],
@@ -42,8 +55,9 @@ const settlementRules = {
     ["719", "个体户 · 餐饮/零售/生活服务（0.6%，T+1）"],
     ["746", "个体户 · 互联网服务（1%，T+1）"],
   ],
+  // 725 是事业单位的规则；727 属于社会组织（SUBJECT_TYPE_OTHERS），本系统未开放该主体。
   institution: [
-    ["727", "事业单位/其他组织 · 咨询票务等（0.6%，T+1）"],
+    ["725", "事业单位 · 餐饮/零售/生活服务（0.6%，T+1）"],
   ],
 };
 const industries = {
@@ -51,7 +65,7 @@ const industries = {
   719: ["餐饮", "电商平台", "零售", "食品生鲜", "咨询/娱乐票务", "房产中介", "休闲娱乐/旅游服务", "居民生活服务", "景区/酒店", "停车缴费"],
   711: ["门户论坛/网络广告及推广/软件开发/其他互联网服务"],
   746: ["门户论坛/网络广告及推广/软件开发/其他互联网服务"],
-  727: ["咨询/娱乐票务/其他"],
+  725: ["餐饮", "电商平台", "零售", "居民生活服务", "停车缴费"],
 };
 const banks = ["工商银行", "交通银行", "招商银行", "民生银行", "中信银行", "浦发银行", "兴业银行", "光大银行", "广发银行", "平安银行", "北京银行", "华夏银行", "农业银行", "建设银行", "邮政储蓄银行", "中国银行", "宁波银行", "其他银行"];
 const ways = [
@@ -82,7 +96,7 @@ function blank() {
     settlement_account: { type: "corporate", bank: "", branch: "", account_name: "", account_no: "", address_code: "" },
     rates: [{ way_code: "WX_JSAPI", fee_rate_bps: 60, settle_cycle: "T1" }],
     images: {},
-    extra: { wx_qualification_type: "零售", wx_contact_type: "LEGAL", web_domain: "" },
+    extra: { wx_qualification_type: "零售", wx_contact_type: "LEGAL", wx_id_card_address: "", web_domain: "" },
   };
 }
 
@@ -153,6 +167,8 @@ function onSubjectType(ev) {
   fields.value.subject.type = type;
   const rules = settlementRules[type] || [];
   if (!rules.some(([id]) => id === fields.value.subject.mcc)) fields.value.subject.mcc = rules[0]?.[0] || "";
+  // 微信只允许个体户用对私卡结算。
+  if (type !== "individual") fields.value.settlement_account.type = "corporate";
   onRule();
 }
 
@@ -239,6 +255,7 @@ function startEdit() {
   const p = JSON.parse(JSON.stringify(a.payload));
   p.legal_person.id_no = "";
   p.settlement_account.account_no = "";
+  if (p.extra?.wx_contact_id_no) p.extra.wx_contact_id_no = "";
   form.value = { mchNo: a.mchNo, ifCode: a.ifCode, payloadText: "" };
   begin(p);
 }
@@ -376,10 +393,10 @@ onMounted(load);
         <label class="flex flex-col gap-1 text-[13px]">简称
           <input class="pf-input" :value="fields.subject.short_name" @input="onInput('subject.short_name', $event)">
         </label>
-        <label class="flex flex-col gap-1 text-[13px]">执照号
+        <label class="flex flex-col gap-1 text-[13px]">{{ fields.subject.type === "institution" ? "事业单位法人证书编号" : "执照号" }}
           <input class="pf-input" :value="fields.subject.license_no" @input="onInput('subject.license_no', $event)">
         </label>
-        <label class="flex flex-col gap-1 text-[13px]">执照有效期
+        <label class="flex flex-col gap-1 text-[13px]">{{ fields.subject.type === "institution" ? "证书有效期" : "执照有效期" }}
           <input class="pf-input" :value="fields.subject.license_valid" placeholder="2020-01-01,长期" @input="onInput('subject.license_valid', $event)">
         </label>
       </div>
@@ -407,6 +424,9 @@ onMounted(load);
         <label class="flex flex-col gap-1 text-[13px]">手机
           <input class="pf-input" :value="fields.legal_person.phone" @input="onInput('legal_person.phone', $event)">
         </label>
+        <label v-if="fields.subject.type === 'enterprise'" class="flex flex-col gap-1 text-[13px]">证件居住地址（企业必填）
+          <input class="pf-input" :value="fields.extra.wx_id_card_address" placeholder="按证件上的住址填写" @input="onInput('extra.wx_id_card_address', $event)">
+        </label>
       </div>
 
       <h3 class="m-0 text-[14px] font-semibold">联系人</h3>
@@ -423,10 +443,19 @@ onMounted(load);
         <label class="flex flex-col gap-1 text-[13px]">手机
           <input class="pf-input" :value="fields.contact.phone" @input="onInput('contact.phone', $event)">
         </label>
-        <label class="flex flex-col gap-1 text-[13px]">邮箱
+        <label class="flex flex-col gap-1 text-[13px]">邮箱（必填，接收开户邮件）
           <input class="pf-input" :value="fields.contact.email" @input="onInput('contact.email', $event)">
         </label>
+        <template v-if="fields.extra.wx_contact_type === 'SUPER'">
+          <label class="flex flex-col gap-1 text-[13px]">经办人身份证号
+            <input class="pf-input" :value="fields.extra.wx_contact_id_no || ''" @input="onInput('extra.wx_contact_id_no', $event)">
+          </label>
+          <label class="flex flex-col gap-1 text-[13px]">经办人证件有效期
+            <input class="pf-input" :value="fields.extra.wx_contact_id_valid || ''" placeholder="2020-01-01,长期" @input="onInput('extra.wx_contact_id_valid', $event)">
+          </label>
+        </template>
       </div>
+      <p v-if="fields.extra.wx_contact_type === 'SUPER'" class="pf-muted m-0">经办人需提供本人身份证号、有效期和正反面照片（在下方证照处上传）。</p>
 
       <h3 class="m-0 text-[14px] font-semibold">经营</h3>
       <div class="grid grid-cols-3 gap-3">
@@ -470,7 +499,7 @@ onMounted(load);
         <label class="flex flex-col gap-1 text-[13px]">账户类型
           <select class="pf-input" :value="fields.settlement_account.type" @change="onInput('settlement_account.type', $event)">
             <option value="corporate">对公</option>
-            <option value="personal">对私</option>
+            <option value="personal" :disabled="fields.subject.type !== 'individual'">对私（仅个体户）</option>
           </select>
         </label>
         <label class="flex flex-col gap-1 text-[13px]">开户银行
@@ -479,7 +508,7 @@ onMounted(load);
             <option v-for="bank in banks" :key="bank" :value="bank">{{ bank }}</option>
           </select>
         </label>
-        <label class="flex flex-col gap-1 text-[13px]">支行
+        <label class="flex flex-col gap-1 text-[13px]">开户行全称（含支行，选“其他银行”时必填）
           <input class="pf-input" :value="fields.settlement_account.branch" @input="onInput('settlement_account.branch', $event)">
         </label>
         <label class="flex flex-col gap-1 text-[13px]">户名
