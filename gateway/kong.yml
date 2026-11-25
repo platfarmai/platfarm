@@ -984,7 +984,7 @@ services:
           - name: rate-limiting
             config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: header, header_name: X-PF-App-Key }
       - name: svc-pay-open-1
-        paths: ["/api/pay/v1/orders/*"]
+        paths: ['~/api/pay/v1/orders/[^/]+$']
         methods: ["GET"]
         strip_path: false
         plugins:
@@ -1015,7 +1015,7 @@ services:
           - name: rate-limiting
             config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: header, header_name: X-PF-App-Key }
       - name: svc-pay-open-2
-        paths: ["/api/pay/v1/orders/*/close"]
+        paths: ['~/api/pay/v1/orders/[^/]+/close$']
         methods: ["POST"]
         strip_path: false
         plugins:
@@ -1108,7 +1108,7 @@ services:
           - name: rate-limiting
             config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: header, header_name: X-PF-App-Key }
       - name: svc-pay-open-5
-        paths: ["/api/pay/v1/divisions/*"]
+        paths: ['~/api/pay/v1/divisions/[^/]+$']
         methods: ["GET"]
         strip_path: false
         plugins:
@@ -1139,7 +1139,7 @@ services:
           - name: rate-limiting
             config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: header, header_name: X-PF-App-Key }
       - name: svc-pay-open-6
-        paths: ["/api/pay/v1/orders/*/settle"]
+        paths: ['~/api/pay/v1/orders/[^/]+/settle$']
         methods: ["POST"]
         strip_path: false
         plugins:
@@ -1201,7 +1201,7 @@ services:
           - name: rate-limiting
             config: { minute: 60, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: header, header_name: X-PF-App-Key }
       - name: svc-pay-open-8
-        paths: ["/api/pay/v1/withdrawals/*"]
+        paths: ['~/api/pay/v1/withdrawals/[^/]+$']
         methods: ["GET"]
         strip_path: false
         plugins:
