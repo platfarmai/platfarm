@@ -46,7 +46,7 @@ function batchTone(b) {
 async function load() {
   err.value = "";
   try {
-    const [isvRes, batchRes] = await Promise.all([api("GET", "/admin/isvs"), api("GET", "/admin/recon/batches")]);
+    const [isvRes, batchRes] = await Promise.all([api("GET", "/admin/isv"), api("GET", "/admin/recon/batches")]);
     isvs.value = isvRes.items || [];
     batches.value = batchRes.items || [];
     if (!form.value.isvNo && isvs.value.length) form.value.isvNo = isvs.value[0].isvNo;
