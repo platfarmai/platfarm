@@ -728,15 +728,23 @@ func handleSyncDivision(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"division": d})
 }
 
-// handleLedger GET /admin/ledger?mchNo=|isvNo=&kind=
+// handleLedger GET /admin/ledger?mchNo=|isvNo=|agentNo=&kind=
+// 代理商子账（分润 / 冲回 / 结算）符号以代理商为准，与商户、服务商的账混在一起合计没有意义：
+// 只有带 agentNo 才返回，其余查询一律不含。
 func handleLedger(c *gin.Context) {
 	claims, ok := requireRole(c, roleOperator)
 	if !ok {
 		return
 	}
 	scope, args := tenantScope(claims)
-	sql := `SELECT id, mch_no, isv_no, if_code, kind, ref_type, ref_id, ref_sub, amount, memo, tenant_id, created_at::text
+	sql := `SELECT id, mch_no, isv_no, if_code, kind, ref_type, ref_id, ref_sub, agent_no, amount, memo, tenant_id, created_at::text
 		FROM pay_ledger WHERE ` + scope
+	if a := c.Query("agentNo"); a != "" {
+		args = append(args, a)
+		sql += fmt.Sprintf(` AND agent_no=$%d`, len(args))
+	} else {
+		sql += ` AND agent_no=''`
+	}
 	if m := c.Query("mchNo"); m != "" {
 		args = append(args, m)
 		sql += fmt.Sprintf(` AND mch_no=$%d`, len(args))
@@ -760,7 +768,7 @@ func handleLedger(c *gin.Context) {
 	var total int64
 	for rows.Next() {
 		var e LedgerEntry
-		if rows.Scan(&e.ID, &e.MchNo, &e.IsvNo, &e.IfCode, &e.Kind, &e.RefType, &e.RefID, &e.RefSub, &e.Amount, &e.Memo, &e.TenantID, &e.CreatedAt) == nil {
+		if rows.Scan(&e.ID, &e.MchNo, &e.IsvNo, &e.IfCode, &e.Kind, &e.RefType, &e.RefID, &e.RefSub, &e.AgentNo, &e.Amount, &e.Memo, &e.TenantID, &e.CreatedAt) == nil {
 			items = append(items, e)
 			total += e.Amount
 		}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -102,6 +103,11 @@ type Order struct {
 	RebateRateBps  int        `json:"rebateRateBps"` // 服务商返佣费率快照（M3）
 	RebateAmount   int64      `json:"rebateAmount"`
 	SettleState    string     `json:"settleState"` // none|pending|done（M4 归集结算确认）
+	// 代理商分润快照（agents.go）。Order 会原样返回给开放 API 的商户，
+	// 服务商给代理商让了多少利不是商户该看到的，所以不进 JSON；管理端用 adminOrder 另行带出。
+	AgentNo     string       `json:"-"`
+	AgentAmount int64        `json:"-"`
+	AgentShares []AgentShare `json:"-"`
 }
 
 // Refund 退款订单。
@@ -134,6 +140,7 @@ type Merchant struct {
 	MchShortName string `json:"mchShortName"`
 	MchType      int    `json:"mchType"`
 	IsvNo        string `json:"isvNo"`
+	AgentNo      string `json:"agentNo"`
 	State        string `json:"state"`
 	TenantID     int    `json:"tenantId"`
 }
@@ -162,16 +169,21 @@ const orderCols = `pay_order_id, mch_no, isv_no, app_id, mch_type, mch_order_no,
 	amount, currency, fee_rate_bps, fee_amount, state, refund_state, refund_amount, subject, body,
 	client_ip, channel_extra, channel_user, channel_order_no, err_code, err_msg, notify_url, return_url,
 	notify_state, ext_param, expired_at, success_at, tenant_id, created_at,
-	division_state, rebate_rate_bps, rebate_amount, settle_state`
+	division_state, rebate_rate_bps, rebate_amount, settle_state, agent_no, agent_amount, agent_shares`
 
 func scanOrder(row pgx.Row) (Order, error) {
 	var o Order
+	var shares []byte
 	err := row.Scan(&o.PayOrderID, &o.MchNo, &o.IsvNo, &o.AppID, &o.MchType, &o.MchOrderNo,
 		&o.IfCode, &o.WayCode, &o.Amount, &o.Currency, &o.FeeRateBps, &o.FeeAmount, &o.State,
 		&o.RefundState, &o.RefundAmount, &o.Subject, &o.Body, &o.ClientIP, &o.ChannelExtra,
 		&o.ChannelUser, &o.ChannelOrderNo, &o.ErrCode, &o.ErrMsg, &o.NotifyURL, &o.ReturnURL,
 		&o.NotifyState, &o.ExtParam, &o.ExpiredAt, &o.SuccessAt, &o.TenantID, &o.CreatedAt,
-		&o.DivisionState, &o.RebateRateBps, &o.RebateAmount, &o.SettleState)
+		&o.DivisionState, &o.RebateRateBps, &o.RebateAmount, &o.SettleState,
+		&o.AgentNo, &o.AgentAmount, &shares)
+	if err == nil && len(shares) > 0 {
+		_ = json.Unmarshal(shares, &o.AgentShares)
+	}
 	return o, err
 }
 
@@ -199,15 +211,20 @@ func findOrder(ctx context.Context, payOrderID string) (Order, error) {
 
 // insertOrder 建单。撞上 (mch_no, mch_order_no) 唯一键时返回已存在的订单与 dup=true。
 func insertOrder(ctx context.Context, o Order) (Order, bool, error) {
+	shares := []byte("[]")
+	if len(o.AgentShares) > 0 {
+		shares, _ = json.Marshal(o.AgentShares)
+	}
 	row := db.QueryRow(ctx, `INSERT INTO pay_order
 		(pay_order_id, mch_no, isv_no, app_id, mch_type, mch_order_no, if_code, way_code, amount, currency,
 		 fee_rate_bps, fee_amount, subject, body, client_ip, channel_extra, notify_url, return_url,
-		 ext_param, expired_at, tenant_id, rebate_rate_bps, rebate_amount)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+		 ext_param, expired_at, tenant_id, rebate_rate_bps, rebate_amount, agent_no, agent_amount, agent_shares)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 		RETURNING `+orderCols,
 		o.PayOrderID, o.MchNo, o.IsvNo, o.AppID, o.MchType, o.MchOrderNo, o.IfCode, o.WayCode,
 		o.Amount, o.Currency, o.FeeRateBps, o.FeeAmount, o.Subject, o.Body, o.ClientIP, o.ChannelExtra,
-		o.NotifyURL, o.ReturnURL, o.ExtParam, o.ExpiredAt, o.TenantID, o.RebateRateBps, o.RebateAmount)
+		o.NotifyURL, o.ReturnURL, o.ExtParam, o.ExpiredAt, o.TenantID, o.RebateRateBps, o.RebateAmount,
+		o.AgentNo, o.AgentAmount, shares)
 	saved, err := scanOrder(row)
 	if isUniqueViolation(err) {
 		existing, ferr := findOrderByMch(ctx, o.MchNo, o.MchOrderNo)
@@ -407,9 +424,9 @@ func rollupRefund(ctx context.Context, q querier, payOrderID string, amount int6
 
 func loadMerchant(ctx context.Context, mchNo string) (Merchant, error) {
 	var m Merchant
-	err := db.QueryRow(ctx, `SELECT mch_no, mch_name, mch_short_name, mch_type, isv_no, state, tenant_id
+	err := db.QueryRow(ctx, `SELECT mch_no, mch_name, mch_short_name, mch_type, isv_no, agent_no, state, tenant_id
 		FROM pay_merchant WHERE mch_no=$1`, mchNo).
-		Scan(&m.MchNo, &m.MchName, &m.MchShortName, &m.MchType, &m.IsvNo, &m.State, &m.TenantID)
+		Scan(&m.MchNo, &m.MchName, &m.MchShortName, &m.MchType, &m.IsvNo, &m.AgentNo, &m.State, &m.TenantID)
 	return m, err
 }
 

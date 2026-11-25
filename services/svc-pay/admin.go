@@ -237,7 +237,7 @@ func handleListMerchants(c *gin.Context) {
 		return
 	}
 	scope, args := tenantScope(claims)
-	rows, err := db.Query(c.Request.Context(), `SELECT mch_no, mch_name, mch_short_name, mch_type, isv_no, state, tenant_id
+	rows, err := db.Query(c.Request.Context(), `SELECT mch_no, mch_name, mch_short_name, mch_type, isv_no, agent_no, state, tenant_id
 		FROM pay_merchant WHERE `+scope+` ORDER BY created_at DESC LIMIT 200`, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
@@ -247,7 +247,7 @@ func handleListMerchants(c *gin.Context) {
 	items := []Merchant{}
 	for rows.Next() {
 		var m Merchant
-		if rows.Scan(&m.MchNo, &m.MchName, &m.MchShortName, &m.MchType, &m.IsvNo, &m.State, &m.TenantID) == nil {
+		if rows.Scan(&m.MchNo, &m.MchName, &m.MchShortName, &m.MchType, &m.IsvNo, &m.AgentNo, &m.State, &m.TenantID) == nil {
 			items = append(items, m)
 		}
 	}
@@ -431,14 +431,28 @@ func handleListOrders(c *gin.Context) {
 		return
 	}
 	defer rows.Close()
-	items := []Order{}
+	items := []adminOrder{}
 	for rows.Next() {
 		o, serr := scanOrder(rows)
-		if serr == nil {
-			items = append(items, o)
+		if serr != nil {
+			continue
 		}
+		it := adminOrder{Order: o}
+		// 分润是服务商与代理商之间的账：只给服务商所在租户看（代理商的租户就是服务商的租户）。
+		if len(o.AgentShares) > 0 && inTenant(claims, o.AgentShares[0].TenantID) {
+			it.AgentNo, it.AgentAmount, it.AgentShares = o.AgentNo, o.AgentAmount, o.AgentShares
+		}
+		items = append(items, it)
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// adminOrder 管理端的订单视图：比开放 API 返回的 Order 多带代理商分润快照。
+type adminOrder struct {
+	Order
+	AgentNo     string       `json:"agentNo,omitempty"`
+	AgentAmount int64        `json:"agentAmount,omitempty"`
+	AgentShares []AgentShare `json:"agentShares,omitempty"`
 }
 
 func newSecret() string {

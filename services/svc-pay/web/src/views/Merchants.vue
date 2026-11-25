@@ -160,7 +160,7 @@ onMounted(load);
       <h2 class="m-0 mb-2 text-[14px] font-semibold">商户</h2>
       <table class="pf-table">
         <thead>
-          <tr><th>商户号</th><th>名称</th><th>类型</th><th>服务商</th><th>状态</th></tr>
+          <tr><th>商户号</th><th>名称</th><th>类型</th><th>服务商</th><th>代理商</th><th>状态</th></tr>
         </thead>
         <tbody>
           <tr v-for="m in merchants" :key="m.mchNo">
@@ -168,10 +168,11 @@ onMounted(load);
             <td>{{ m.mchName }}</td>
             <td>{{ m.mchType === 1 ? "普通" : "特约" }}</td>
             <td>{{ m.isvNo || "—" }}</td>
+            <td>{{ m.agentNo || "—" }}</td>
             <td>{{ m.state }}</td>
           </tr>
           <tr v-if="!merchants.length">
-            <td colspan="5"><span class="pf-muted">暂无商户</span></td>
+            <td colspan="6"><span class="pf-muted">暂无商户</span></td>
           </tr>
         </tbody>
       </table>

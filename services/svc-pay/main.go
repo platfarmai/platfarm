@@ -151,6 +151,7 @@ func registerAdminRoutes(admin *gin.RouterGroup) {
 	registerApplymentRoutes(admin)
 	registerDivisionReconRoutes(admin)
 	registerControlledRoutes(admin)
+	registerAgentRoutes(admin)
 }
 
 // dialRedis 防重放随机串的存储。PF_REDIS_URL 为空时返回 nil，随机串改用进程内缓存（只对单副本有效）。

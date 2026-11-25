@@ -177,6 +177,13 @@ func handleCreateOrder(c *gin.Context) {
 		ExtParam: in.ExtParam, ExpiredAt: &exp, TenantID: mch.TenantID,
 		RebateRateBps: rebateBps, RebateAmount: feeAmount(in.Amount, rebateBps),
 	}
+	// 代理商分润随订单快照；算不出来就不下单——漏记的分润事后补不回来。
+	order.AgentNo, order.AgentAmount, order.AgentShares, err = orderAgentPlan(ctx, mch, in.Amount, rebateBps)
+	if err != nil {
+		log.Printf("order agent plan %s: %v", mch.MchNo, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "建单失败"})
+		return
+	}
 	if len(in.ChannelExtra) > 0 {
 		extra, _ := json.Marshal(in.ChannelExtra)
 		order.ChannelExtra = string(extra)

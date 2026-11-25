@@ -14,6 +14,8 @@ async function load() {
     err.value = e.message || String(e);
   }
 }
+// 悬停看逐级明细（下单时的快照，支付成功后才入账）。
+const shares = (o) => (o.agentShares || []).map((s) => `${s.level} 级 ${s.agentNo}：${yuan(s.amount)}`).join("\n");
 onMounted(load);
 </script>
 
@@ -24,7 +26,7 @@ onMounted(load);
       <table class="pf-table">
         <thead>
           <tr>
-            <th>商户订单号</th><th>商户</th><th>金额</th><th>方式</th><th>状态</th><th>退款</th><th>创建时间</th>
+            <th>商户订单号</th><th>商户</th><th>金额</th><th>方式</th><th>状态</th><th>退款</th><th>代理分润</th><th>创建时间</th>
           </tr>
         </thead>
         <tbody>
@@ -35,10 +37,11 @@ onMounted(load);
             <td>{{ o.wayCode }}</td>
             <td>{{ o.state }}</td>
             <td>{{ o.refundState }}</td>
+            <td :title="shares(o)">{{ o.agentAmount ? yuan(o.agentAmount) : "—" }}</td>
             <td>{{ when(o.createdAt) }}</td>
           </tr>
           <tr v-if="!orders.length">
-            <td colspan="7"><span class="pf-muted">暂无订单</span></td>
+            <td colspan="8"><span class="pf-muted">暂无订单</span></td>
           </tr>
         </tbody>
       </table>

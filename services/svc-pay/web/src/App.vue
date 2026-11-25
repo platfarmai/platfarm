@@ -7,11 +7,13 @@ import Applyments from "./views/Applyments.vue";
 import Divisions from "./views/Divisions.vue";
 import Withdrawals from "./views/Withdrawals.vue";
 import Recon from "./views/Recon.vue";
+import Agents from "./views/Agents.vue";
 
-// hash 路由：#orders | #merchants | #apps | #applyments | #divisions | #withdrawals | #recon（docs/ui-frameworks.md：不用 browser history）
+// hash 路由：#orders | #merchants | #agents | #apps | #applyments | #divisions | #withdrawals | #recon（docs/ui-frameworks.md：不用 browser history）
 const tabs = [
   { key: "orders", label: "订单", comp: Orders },
   { key: "merchants", label: "商户", comp: Merchants },
+  { key: "agents", label: "代理商·分润", comp: Agents },
   { key: "apps", label: "应用·通道", comp: Apps },
   { key: "applyments", label: "进件审核", comp: Applyments },
   { key: "divisions", label: "分账·台账", comp: Divisions },
@@ -41,7 +43,7 @@ onUnmounted(() => window.removeEventListener("hashchange", onHash));
     </pf-topbar>
 
     <div class="pf-container flex flex-col gap-3">
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap">
         <pf-button v-for="t in tabs" :key="t.key" size="sm" :variant="tab === t.key ? 'primary' : 'default'" @click="show(t.key)">
           {{ t.label }}
         </pf-button>

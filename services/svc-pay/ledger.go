@@ -2,6 +2,7 @@
 // 同一事件重放不会记两次，所以可以在任何 CAS 成功路径上无脑调用。
 // 直清模式只记 fee / rebate 及其退款冲回；分账记 sharing；收付通再加可提现台账
 // settle / refund（结算后的退款）/ withdrawal（发起即预占）/ withdrawal_reversal。
+// 代理商分润另有一套子账 agent_share / agent_share_refund / agent_payout（agents.go）。
 package main
 
 import (
@@ -26,7 +27,8 @@ const (
 	ledgerWithdrawalReversal = "withdrawal_reversal"
 )
 
-// LedgerEntry 一条台账。Amount 以 MchNo 视角有符号。
+// LedgerEntry 一条台账。Amount 以 MchNo 视角有符号；代理商科目（AgentNo 非空）以代理商视角有符号，
+// 这些行的 MchNo 留空，所以任何按商户汇总的查询都不会把它们算进去。
 type LedgerEntry struct {
 	ID        int64  `json:"id"`
 	MchNo     string `json:"mchNo"`
@@ -36,6 +38,7 @@ type LedgerEntry struct {
 	RefType   string `json:"refType"`
 	RefID     string `json:"refId"`
 	RefSub    string `json:"refSub"`
+	AgentNo   string `json:"agentNo,omitempty"`
 	Amount    int64  `json:"amount"`
 	Memo      string `json:"memo"`
 	TenantID  int    `json:"tenantId"`
@@ -52,9 +55,9 @@ func postLedger(ctx context.Context, tx pgx.Tx, entries []LedgerEntry) (int, err
 		var tag interface{ RowsAffected() int64 }
 		var err error
 		if tx != nil {
-			tag, err = tx.Exec(ctx, ledgerInsertSQL, e.MchNo, e.IsvNo, e.IfCode, e.Kind, e.RefType, e.RefID, e.RefSub, e.Amount, e.Memo, e.TenantID)
+			tag, err = tx.Exec(ctx, ledgerInsertSQL, e.MchNo, e.IsvNo, e.IfCode, e.Kind, e.RefType, e.RefID, e.RefSub, e.Amount, e.Memo, e.TenantID, e.AgentNo)
 		} else {
-			tag, err = db.Exec(ctx, ledgerInsertSQL, e.MchNo, e.IsvNo, e.IfCode, e.Kind, e.RefType, e.RefID, e.RefSub, e.Amount, e.Memo, e.TenantID)
+			tag, err = db.Exec(ctx, ledgerInsertSQL, e.MchNo, e.IsvNo, e.IfCode, e.Kind, e.RefType, e.RefID, e.RefSub, e.Amount, e.Memo, e.TenantID, e.AgentNo)
 		}
 		if err != nil {
 			return n, err
@@ -64,8 +67,8 @@ func postLedger(ctx context.Context, tx pgx.Tx, entries []LedgerEntry) (int, err
 	return n, nil
 }
 
-const ledgerInsertSQL = `INSERT INTO pay_ledger (mch_no, isv_no, if_code, kind, ref_type, ref_id, ref_sub, amount, memo, tenant_id)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (kind, ref_type, ref_id, ref_sub) DO NOTHING`
+const ledgerInsertSQL = `INSERT INTO pay_ledger (mch_no, isv_no, if_code, kind, ref_type, ref_id, ref_sub, amount, memo, tenant_id, agent_no)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (kind, ref_type, ref_id, ref_sub) DO NOTHING`
 
 // orderSettledEntries 支付成功：商户手续费（借方）+ 服务商返佣（贷方，归属 isv）。
 func orderSettledEntries(o Order) []LedgerEntry {
@@ -108,7 +111,7 @@ func proportional(total, part, whole int64) int64 {
 // tx 非空时与状态推进在同一事务里（见 finishOrder），任何一步失败整体回滚。
 func orderTerminalEffects(ctx context.Context, tx pgx.Tx, o Order, to string) error {
 	if to == orderSuccess {
-		if _, err := postLedger(ctx, tx, orderSettledEntries(o)); err != nil {
+		if _, err := postLedger(ctx, tx, append(orderSettledEntries(o), agentShareEntries(o)...)); err != nil {
 			return fmt.Errorf("ledger order %s: %w", o.PayOrderID, err)
 		}
 	}
@@ -151,6 +154,11 @@ func refundTerminalEffects(ctx context.Context, tx pgx.Tx, r Refund, to string) 
 			entries = append(entries, LedgerEntry{MchNo: o.MchNo, IsvNo: o.IsvNo, IfCode: o.IfCode, Kind: ledgerRefund,
 				RefType: "refund", RefID: r.RefundOrderID, Amount: -r.RefundAmount, Memo: "结算后退款", TenantID: o.TenantID})
 		}
+		clawback, err := agentShareRefundEntries(ctx, q, o, r)
+		if err != nil {
+			return fmt.Errorf("agent clawback %s: %w", r.RefundOrderID, err)
+		}
+		entries = append(entries, clawback...)
 		if _, err := postLedger(ctx, tx, entries); err != nil {
 			return fmt.Errorf("ledger refund %s: %w", r.RefundOrderID, err)
 		}

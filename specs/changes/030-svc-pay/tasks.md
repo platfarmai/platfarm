@@ -54,3 +54,15 @@ Phasing per proposal. A phase starts only when the previous one is green. Do not
 - [x] withdrawal rule replaces the exact-equality invariant: per merchant+channel advisory lock, debit posted at creation (hold), reversal on failure or bank return; allowed amount = min(ledger, channel available − unconfirmed submissions); ledger/channel difference shown as drift, not blocking. Migration `007_controlled_money.sql`
 - [x] settle and withdrawal results applied atomically with their ledger rows; unknown settle/withdrawal resubmitted with the same number; succeeded withdrawals re-queried for 10 days (bank return); settle refuses while a refund is in flight, refund refuses while a settle is pending; refunds after settle debit the withdrawable ledger
 - [ ] sandbox / real-channel verification of the corrected ZFT settle → royalty flow and the ecommerce finish-order / withdrawal flow
+
+## M5 — partner capabilities (the agent hierarchy the proposal first listed as out of scope is now in)
+
+- [x] open API productised: self-service apps / passages / channel params, `sandbox` channel (registered only when `PAY_SANDBOX=on`; `POST /v1/orders/:mchOrderNo/mock` accepts sandbox orders only), refund query, integration guide `docs/pay-open-api.zh-CN.md`
+- [x] migration `009_agents.sql`: `pay_agent` (under an isv, tree via `parent_agent_no`, max 5 levels), `pay_merchant.agent_no`, `pay_order.agent_no/agent_amount/agent_shares`, `pay_ledger.agent_no`
+- [x] tiered commission: `rate_bps` is the rate ceded to the agent's whole line, `isv rebate >= level 1 >= level 2 >= … >= 0`; a level keeps its amount minus the next level's amount, so the total equals the level-1 amount and never exceeds the rebate. Snapshotted at order creation; later rate or assignment changes leave existing orders alone
+- [x] ledger: `agent_share` on payment success, `agent_share_refund` clawed back from the cumulative refunded amount (partial refunds add up to exactly the full share, never more), `agent_payout` recorded after offline settlement (capped at the unpaid balance, idempotent per payout number). Commission is ledger-only, never moved through a channel; agent sub-accounts stay out of merchant / isv ledger totals
+- [x] admin API: `/admin/agents` (create, update, list with totals), `/admin/agents/:agentNo/payouts`, `/admin/merchants/:mchNo/agent`; rates and assignment belong to the isv's tenant. Open-API orders carry no commission fields; admin orders show the breakdown only to the tenant that owns it
+- [x] console page 「代理商·分润」: tree, per-level take, unpaid balance, payout registration, commission entries, merchant assignment
+- [x] QA (real Postgres + sandbox channel): split and capping, hierarchy and rate validation, order → pay → three partial refunds → payout end to end, terminal replays post nothing twice, tenant isolation
+- [ ] agents signing in to see their own commission (today only isv / platform operators can)
+- [ ] automatic commission payout (today settled offline and registered by hand)

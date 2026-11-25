@@ -203,6 +203,6 @@ Each phase gets its own tasks checklist in `tasks.md` and lands behind the previ
 
 ## Out of scope
 
-- Agent/分销 hierarchy (代理商) — revisit when a second tenant tier is needed.
+- ~~Agent/分销 hierarchy (代理商) — revisit when a second tenant tier is needed.~~ Now in scope, see M5 in `tasks.md`: agents sit under an isv, tiered commission is ledger-only and settled offline, never moved through a channel.
 - Risk control beyond per-passage limits (jeepay's `risk_config`) — add when volume warrants.
 - Holding custody of funds outside the two channel products above. No internal wallet, no float.
