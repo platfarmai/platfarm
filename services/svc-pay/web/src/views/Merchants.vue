@@ -64,7 +64,7 @@ onMounted(load);
 <template>
   <div class="flex flex-col gap-3">
     <pf-alert v-if="err" tone="danger">{{ err }}</pf-alert>
-    <pf-alert v-if="msg" tone="success">{{ msg }}</pf-alert>
+    <pf-alert v-if="msg" tone="ok">{{ msg }}</pf-alert>
 
     <div class="flex gap-2">
       <pf-button size="sm" variant="primary" @click="showMch = !showMch; showISV = false">新建商户</pf-button>

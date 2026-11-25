@@ -51,6 +51,10 @@ const extraKeys = computed(() => {
 });
 const isWx = computed(() => owner.value.ifCode.startsWith("wxpay_"));
 const passWays = computed(() => channels.value.find((c) => c.ifCode === passForm.value.ifCode)?.ways || []);
+// 沙箱渠道只在服务端 PAY_SANDBOX=on 时才会出现在渠道列表里。
+const SANDBOX = "sandbox";
+const sandboxOn = computed(() => channels.value.some((c) => c.ifCode === SANDBOX));
+const channelLabel = (c) => (c.ifCode === SANDBOX ? "sandbox（沙箱，不收真钱）" : `${c.ifCode}（${c.fundMode === "controlled" ? "归集" : "直清"}）`);
 
 function fillParamForm() {
   const next = {};
@@ -219,7 +223,7 @@ onMounted(load);
 <template>
   <div class="flex flex-col gap-3">
     <pf-alert v-if="err" tone="danger">{{ err }}</pf-alert>
-    <pf-alert v-if="msg" tone="success">{{ msg }}</pf-alert>
+    <pf-alert v-if="msg" tone="ok">{{ msg }}</pf-alert>
 
     <div v-if="newSecret" class="pf-card flex flex-col gap-2">
       <h2 class="m-0 text-[16px] font-semibold">应用签名密钥</h2>
@@ -234,6 +238,10 @@ onMounted(load);
         ① 服务商和商户各自的渠道参数（下面第一块）；② 给商户建一个应用，拿到 App-Id 和签名密钥；③ 给应用配支付通道：哪种支付方式走哪个渠道、收多少手续费。
         另外下游调用开放 API 还需要平台的 app token，在「开放平台」控制台创建 app 并勾选 pay.* scope 获得。
       </p>
+      <pf-alert v-if="sandboxOn" tone="warn">
+        沙箱渠道已启用（PAY_SANDBOX=on）。把联调应用的支付通道指向 sandbox 即可不动真钱地走通下单、退款与回调，无需配置渠道参数。
+        走 sandbox 的订单会显示支付成功但没有任何资金入账，不要把正式应用的通道指向它。
+      </pf-alert>
     </div>
 
     <div class="pf-card flex flex-col gap-3">
@@ -306,7 +314,7 @@ onMounted(load);
               <td>{{ mchName(a.mchNo) }}</td>
               <td>
                 <div class="flex flex-col gap-1">
-                  <span v-for="p in a.passages" :key="p.wayCode" class="pf-dot" :data-tone="p.state === 'active' ? 'ok' : 'neutral'">
+                  <span v-for="p in a.passages" :key="p.wayCode" class="pf-dot" :data-tone="p.state !== 'active' ? 'neutral' : p.ifCode === SANDBOX ? 'warn' : 'ok'">
                     {{ p.wayCode }} → {{ p.ifCode }} · {{ pct(p.rateBps) }}{{ p.state === "active" ? "" : "（已停用）" }}
                   </span>
                   <span v-if="!a.passages.length" class="pf-muted">未配置，不能下单</span>
@@ -328,7 +336,7 @@ onMounted(load);
                 <div class="flex flex-col gap-2">
                   <div class="flex gap-2 items-center flex-wrap">
                     <select v-model="passForm.ifCode" class="pf-input" @change="onPassChannel">
-                      <option v-for="c in channels" :key="c.ifCode" :value="c.ifCode">{{ c.ifCode }}（{{ c.fundMode === "controlled" ? "归集" : "直清" }}）</option>
+                      <option v-for="c in channels" :key="c.ifCode" :value="c.ifCode">{{ channelLabel(c) }}</option>
                     </select>
                     <select v-model="passForm.wayCode" class="pf-input">
                       <option v-for="w in passWays" :key="w" :value="w">{{ w }}</option>

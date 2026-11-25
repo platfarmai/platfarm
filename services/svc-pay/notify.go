@@ -197,7 +197,7 @@ func expireOrder(ctx context.Context, o Order) error {
 	if err != nil {
 		return err
 	}
-	ref := channel.OrderRef{PayOrderID: o.PayOrderID, ChannelOrderNo: o.ChannelOrderNo, WayCode: o.WayCode}
+	ref := orderRef(o, nil, nil)
 	mch, err := loadMerchant(ctx, o.MchNo)
 	if err == nil {
 		ref.Provider, ref.Sub, err = resolveParams(ctx, mch, o.IfCode)

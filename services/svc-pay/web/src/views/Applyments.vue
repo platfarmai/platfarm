@@ -319,7 +319,7 @@ onMounted(load);
 <template>
   <div class="flex flex-col gap-3">
     <pf-alert v-if="err" tone="danger">{{ err }}</pf-alert>
-    <pf-alert v-if="msg" tone="warning">{{ msg }}</pf-alert>
+    <pf-alert v-if="msg" tone="warn">{{ msg }}</pf-alert>
 
     <div class="flex gap-2 items-center">
       <select v-model="filter" class="pf-input" @change="load">
@@ -571,7 +571,7 @@ onMounted(load);
         <span class="pf-muted">{{ current.applyment.ifCode }} · {{ current.applyment.mchNo }}</span>
       </div>
       <pf-alert v-if="current.applyment.rejectReason" tone="danger">驳回原因：{{ current.applyment.rejectReason }}</pf-alert>
-      <pf-alert v-if="current.applyment.channelMsg" tone="warning">渠道：{{ current.applyment.channelState }} {{ current.applyment.channelMsg }}</pf-alert>
+      <pf-alert v-if="current.applyment.channelMsg" tone="warn">渠道：{{ current.applyment.channelState }} {{ current.applyment.channelMsg }}</pf-alert>
       <p v-if="current.applyment.signUrl" class="m-0">签约链接：<a :href="current.applyment.signUrl" target="_blank" rel="noopener">{{ current.applyment.signUrl }}</a></p>
       <p v-if="current.applyment.subMchid" class="m-0">子商户号：<span class="pf-code">{{ current.applyment.subMchid }}</span></p>
       <p v-if="current.applyment.unexpressed" class="m-0 pf-muted">渠道未表达字段：{{ current.applyment.unexpressed }}</p>

@@ -54,11 +54,14 @@ type PayIn struct {
 	Sub      map[string]string
 }
 
-// OrderRef 查单/关单定位。
+// OrderRef 查单/关单定位。Amount / CreatedAt 是本地单据的快照，真实渠道不用；
+// 沙箱渠道没有上游可查，靠它们无状态地算出结果。
 type OrderRef struct {
 	PayOrderID     string
 	ChannelOrderNo string
 	WayCode        string
+	Amount         int64
+	CreatedAt      time.Time
 	Provider       map[string]string
 	Sub            map[string]string
 }
@@ -134,6 +137,19 @@ func Get(ifCode string) (PayChannel, error) {
 		return nil, fmt.Errorf("unknown channel %q", ifCode)
 	}
 	return c, nil
+}
+
+// paramless 不需要任何渠道参数就能工作的渠道（可选能力，目前只有沙箱）。
+type paramless interface {
+	ParamsOptional() bool
+}
+
+// ParamsOptional 渠道是否可以没有渠道参数配置：是的话业务层把缺失的配置按空参数处理。
+func ParamsOptional(ifCode string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	p, ok := registry[ifCode].(paramless)
+	return ok && p.ParamsOptional()
 }
 
 // Ways 返回某渠道支持的支付方式；渠道不存在返回 nil。

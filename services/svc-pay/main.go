@@ -17,7 +17,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	_ "platfarm/svc-pay/channel/alipay" // 注册 alipay_zft
-	_ "platfarm/svc-pay/channel/wxpay"  // 注册 wxpay_partner、wxpay_ecommerce
+	"platfarm/svc-pay/channel/sandbox"
+	_ "platfarm/svc-pay/channel/wxpay" // 注册 wxpay_partner、wxpay_ecommerce
 )
 
 const mount = "/api/pay"
@@ -31,6 +32,10 @@ var (
 func main() {
 	mustLoadPub()
 	mustInitSecret()
+	if os.Getenv("PAY_SANDBOX") == "on" {
+		sandbox.Enable()
+		log.Println("sandbox 渠道已启用（PAY_SANDBOX=on）")
+	}
 	ctx := context.Background()
 
 	pool, err := pgxpool.New(ctx, mustEnv("PAY_DATABASE_URL"))
@@ -82,7 +87,9 @@ func main() {
 	v1.POST("/orders", handleCreateOrder)
 	v1.GET("/orders/:mchOrderNo", handleQueryOrder)
 	v1.POST("/orders/:mchOrderNo/close", handleCloseOrder)
+	v1.POST("/orders/:mchOrderNo/mock", handleMockOrder)
 	v1.POST("/refunds", handleCreateRefund)
+	v1.GET("/refunds/:mchRefundNo", handleQueryRefund)
 	v1.POST("/divisions", handleCreateDivision)
 	v1.GET("/divisions/:mchOrderNo", handleQueryDivision)
 	v1.POST("/orders/:mchOrderNo/settle", handleSettleOrder)

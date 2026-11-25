@@ -33,6 +33,7 @@ exposes:
     - { name: pay.order.create, desc: 创建支付订单（开放 API） }
     - { name: pay.order.query, desc: 查询支付订单（开放 API） }
     - { name: pay.refund.create, desc: 发起退款（开放 API） }
+    - { name: pay.refund.query, desc: 查询退款单（开放 API） }
     - { name: pay.division.create, desc: 对已支付订单发起分账（开放 API） }
     - { name: pay.division.query, desc: 查询分账单（开放 API） }
     - { name: pay.settle.confirm, desc: 归集模式确认结算（开放 API） }
@@ -43,7 +44,9 @@ open_api:
   - { route: "POST /api/pay/v1/orders", scope: pay.order.create }
   - { route: "GET /api/pay/v1/orders/*", scope: pay.order.query }
   - { route: "POST /api/pay/v1/orders/*/close", scope: pay.order.create }
+  - { route: "POST /api/pay/v1/orders/*/mock", scope: pay.order.create }
   - { route: "POST /api/pay/v1/refunds", scope: pay.refund.create }
+  - { route: "GET /api/pay/v1/refunds/*", scope: pay.refund.query }
   - { route: "POST /api/pay/v1/divisions", scope: pay.division.create }
   - { route: "GET /api/pay/v1/divisions/*", scope: pay.division.query }
   - { route: "POST /api/pay/v1/orders/*/settle", scope: pay.settle.confirm }
@@ -63,6 +66,7 @@ runtime:
     - PAY_DATABASE_URL
     - PAY_SECRET_KEY
     - PAY_ENV
+    - PAY_SANDBOX # 设为 on 注册 sandbox 沙箱渠道（联调专用，默认不启用）
     - PAY_PUBLIC_BASE
     - WXPAY_API_BASE
     - ALIPAY_GATEWAY # 默认 https://openapi.alipay.com/gateway.do（直付通）

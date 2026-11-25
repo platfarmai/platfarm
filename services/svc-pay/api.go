@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"platfarm/svc-pay/channel"
+	"platfarm/svc-pay/channel/sandbox"
 )
 
 const (
@@ -190,12 +191,12 @@ func handleCreateOrder(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"order": saved, "idempotent": true})
 		return
 	}
-	if dup {
-		order = saved
-		if order.ExpiredAt != nil && order.ExpiredAt.Before(time.Now()) {
-			c.JSON(http.StatusConflict, gin.H{"error": "订单已过期，请换商户订单号重新下单", "order": saved})
-			return
-		}
+	// 之后一律用库里的那一行：状态推进是 CAS，必须从落库后的 created 出发
+	// （用本地还没有 state 的结构体去推进，渠道结果会被静默丢掉）。
+	order = saved
+	if dup && order.ExpiredAt != nil && order.ExpiredAt.Before(time.Now()) {
+		c.JSON(http.StatusConflict, gin.H{"error": "订单已过期，请换商户订单号重新下单", "order": saved})
+		return
 	}
 	var expireAt time.Time
 	if order.ExpiredAt != nil {
@@ -269,10 +270,7 @@ func handleCloseOrder(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "渠道参数未配置"})
 		return
 	}
-	ref := channel.OrderRef{
-		PayOrderID: order.PayOrderID, ChannelOrderNo: order.ChannelOrderNo, WayCode: order.WayCode,
-		Provider: provider, Sub: sub,
-	}
+	ref := orderRef(order, provider, sub)
 	if err := ch.Close(ctx, ref); err != nil {
 		// 关单失败最常见的原因是已经付了：查一次，已支付就如实推进并告诉商户。
 		if res, qerr := ch.Query(ctx, ref); qerr == nil && res.State == channel.StateSuccess {
@@ -292,6 +290,71 @@ func handleCloseOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"order": order})
 }
 
+// handleMockOrder POST /v1/orders/:mchOrderNo/mock（scope pay.order.create）。
+// 仅在 PAY_SANDBOX=on 且订单归属 sandbox 渠道时生效，供合作方联调立即推进支付终态与下游通知，
+// 绝不允许作用于任何真实渠道订单。
+func handleMockOrder(c *gin.Context) {
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBodyByte))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求失败"})
+		return
+	}
+	app, _, ok := signedApp(c, body)
+	if !ok {
+		return
+	}
+	if _, err := channel.Get(sandbox.IfCode); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "沙箱渠道未启用"})
+		return
+	}
+	var in struct {
+		State string `json:"state"`
+	}
+	if len(body) > 0 && json.Unmarshal(body, &in) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体必须是合法 JSON"})
+		return
+	}
+	if in.State == "" {
+		in.State = orderSuccess
+	}
+	if in.State != orderSuccess && in.State != orderFailed {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "state 只能是 success 或 failed"})
+		return
+	}
+	ctx := c.Request.Context()
+	order, err := findOrderByMch(ctx, app.MchNo, c.Param("mchOrderNo"))
+	if notFound(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "订单不存在"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	if order.IfCode != sandbox.IfCode {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "仅 sandbox 渠道订单可模拟支付结果"})
+		return
+	}
+	if order.State == in.State {
+		c.JSON(http.StatusOK, gin.H{"order": order, "idempotent": true})
+		return
+	}
+	if order.State != orderCreated && order.State != orderPaying {
+		c.JSON(http.StatusConflict, gin.H{"error": "订单状态 " + order.State + " 不可模拟支付"})
+		return
+	}
+	res := sandbox.Paid(order.PayOrderID, order.Amount)
+	if in.State == orderFailed {
+		res = sandbox.Failed(order.PayOrderID)
+	}
+	saved, err := applyOrderResult(ctx, order, res)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新订单失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"order": saved})
+}
+
 // reconcileOrder 向渠道查一次未终态订单，按确定结果推进（见 applyOrderResult）。
 func reconcileOrder(ctx context.Context, order Order) (Order, error) {
 	if order.State != orderCreated && order.State != orderPaying {
@@ -309,14 +372,19 @@ func reconcileOrder(ctx context.Context, order Order) (Order, error) {
 	if err != nil {
 		return order, err
 	}
-	res, err := ch.Query(ctx, channel.OrderRef{
-		PayOrderID: order.PayOrderID, ChannelOrderNo: order.ChannelOrderNo, WayCode: order.WayCode,
-		Provider: provider, Sub: sub,
-	})
+	res, err := ch.Query(ctx, orderRef(order, provider, sub))
 	if err != nil {
 		return order, err
 	}
 	return applyOrderResult(ctx, order, res)
+}
+
+// orderRef 查单 / 关单时交给渠道的定位信息。
+func orderRef(o Order, provider, sub map[string]string) channel.OrderRef {
+	return channel.OrderRef{
+		PayOrderID: o.PayOrderID, ChannelOrderNo: o.ChannelOrderNo, WayCode: o.WayCode,
+		Amount: o.Amount, CreatedAt: o.CreatedAt, Provider: provider, Sub: sub,
+	}
 }
 
 var errAmountMismatch = errors.New("渠道金额与本地单据不一致")
@@ -400,6 +468,25 @@ func handleQueryOrder(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"order": o})
+}
+
+// handleQueryRefund GET /v1/refunds/:mchRefundNo（scope pay.refund.query）。
+// 只读本地状态：处理中的退款由 refundWorker 每分钟向渠道查询推进，这里不替商户打渠道。
+func handleQueryRefund(c *gin.Context) {
+	app, _, ok := signedApp(c, nil)
+	if !ok {
+		return
+	}
+	r, err := findRefundByMch(c.Request.Context(), app.MchNo, c.Param("mchRefundNo"))
+	if notFound(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "退款单不存在"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"refund": r})
 }
 
 type createRefundIn struct {
@@ -519,9 +606,13 @@ func foldRefundState(res channel.Result) string {
 	}
 }
 
-// resolveParams 拼出服务商参数与子商户参数。
+// resolveParams 拼出服务商参数与子商户参数。不需要参数的渠道（沙箱）没有配置行时按空参数处理。
 func resolveParams(ctx context.Context, mch Merchant, ifCode string) (map[string]string, map[string]string, error) {
+	optional := channel.ParamsOptional(ifCode)
 	sub, err := loadChannelParams(ctx, "merchant", mch.MchNo, ifCode)
+	if optional && notFound(err) {
+		sub, err = map[string]string{}, nil
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("商户 %s", mch.MchNo)
 	}
@@ -529,6 +620,9 @@ func resolveParams(ctx context.Context, mch Merchant, ifCode string) (map[string
 		return sub, map[string]string{}, nil
 	}
 	provider, err := loadChannelParams(ctx, "isv", mch.IsvNo, ifCode)
+	if optional && notFound(err) {
+		provider, err = map[string]string{}, nil
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("服务商 %s", mch.IsvNo)
 	}
