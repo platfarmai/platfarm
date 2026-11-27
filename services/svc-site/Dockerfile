@@ -1,6 +1,7 @@
 FROM golang:1.26.10-alpine AS build
 WORKDIR /src
 ENV GOTOOLCHAIN=auto
+ENV GOPROXY="https://goproxy.cn|https://proxy.golang.org|direct"
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/server .
 

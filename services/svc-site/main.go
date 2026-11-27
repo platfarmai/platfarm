@@ -1,5 +1,6 @@
 // svc-site — 支付中心根站点首页（mount.website）。
 // 仅承载公开静态资产与探活端点；登录直走同源 /auth/login（Cookie pf_access）。
+// 另外给浏览器渲染 /docs（支付开放 API 接入指南）和 /platform/info（平台接口索引说明）。
 package main
 
 import (
@@ -77,6 +78,34 @@ func newHandler() http.Handler {
 	logo108Handler := serveAsset(logo108, "image/png", "public, max-age=3600")
 	mux.HandleFunc("GET /logo-108.png", logo108Handler)
 	mux.HandleFunc("HEAD /logo-108.png", logo108Handler)
+
+	pagesJSHandler := serveAsset(mustRead("pages.js"), "application/javascript; charset=utf-8", "public, max-age=300")
+	mux.HandleFunc("GET /pages.js", pagesJSHandler)
+	mux.HandleFunc("HEAD /pages.js", pagesJSHandler)
+
+	// /docs 与 /platform/info：网关只把浏览器请求（Accept 含 text/html）转到这里
+	// （service.yaml 的 mount.browser_pages），程序请求仍由 auth 返回 JSON。
+	g, err := renderGuide(payGuideMD)
+	if err != nil {
+		panic(err)
+	}
+	// 同一个地址按 Accept 返回页面或 JSON，告诉缓存两者不能混用。
+	varyAccept := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Vary", "Accept")
+			next(w, r)
+		}
+	}
+	docsHandler := varyAccept(serveAsset(docsPage(mustRead("docs.html"), g), "text/html; charset=utf-8", "no-cache"))
+	infoHandler := varyAccept(serveAsset(mustRead("info.html"), "text/html; charset=utf-8", "no-cache"))
+	for _, p := range []string{"/docs", "/docs/{$}"} {
+		mux.HandleFunc("GET "+p, docsHandler)
+		mux.HandleFunc("HEAD "+p, docsHandler)
+	}
+	for _, p := range []string{"/platform/info", "/platform/info/{$}"} {
+		mux.HandleFunc("GET "+p, infoHandler)
+		mux.HandleFunc("HEAD "+p, infoHandler)
+	}
 
 	logo28Handler := serveAsset(logo28, "image/png", "public, max-age=3600")
 	mux.HandleFunc("GET /logo-28.png", logo28Handler)

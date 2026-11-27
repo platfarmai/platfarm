@@ -1429,6 +1429,20 @@ services:
         plugins:
           - name: rate-limiting
             config: { minute: 300, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
+      - name: svc-site-page-0
+        paths: ["/docs"]
+        headers: { accept: ['~*text/html'] }
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config: { minute: 300, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
+      - name: svc-site-page-1
+        paths: ["/platform/info"]
+        headers: { accept: ['~*text/html'] }
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config: { minute: 300, policy: redis, redis: { host: redis, port: 6379, timeout: 2000, database: 0 }, limit_by: ip }
 
   - name: svc-users
     url: http://svc-users:8080

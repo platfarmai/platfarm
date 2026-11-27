@@ -279,7 +279,196 @@
   flex-wrap: wrap;
 }
 
+/* ---------- 文档页（/docs、/platform/info）：Markdown 渲染结果的排版 ---------- */
+
+.site-doc-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.site-toc {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius-lg);
+}
+
+.site-toc-title {
+  margin: 0 0 4px;
+  padding: 0 8px;
+  font-size: var(--pf-fs-12);
+  font-weight: 600;
+  color: var(--pf-text-muted);
+}
+
+.site-toc-item {
+  display: block;
+  padding: 4px 8px;
+  border-radius: var(--pf-radius);
+  font-size: var(--pf-fs-13);
+  line-height: 1.45;
+  color: var(--pf-text);
+  text-decoration: none;
+}
+
+.site-toc-item:hover {
+  background: var(--pf-accent-weak);
+}
+
+.site-toc-sub {
+  padding-left: 20px;
+  font-size: var(--pf-fs-12);
+  color: var(--pf-text-muted);
+}
+
+.site-doc-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.site-doc {
+  min-width: 0;
+  font-size: var(--pf-fs-14);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.site-doc > :first-child {
+  margin-top: 0;
+}
+
+.site-doc > :last-child {
+  margin-bottom: 0;
+}
+
+.site-doc h1 {
+  margin: 0 0 12px;
+  font-size: var(--pf-fs-20);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.site-doc h2 {
+  margin: 32px 0 12px;
+  padding-top: 20px;
+  border-top: 1px solid var(--pf-border);
+  font-size: var(--pf-fs-16);
+  font-weight: 600;
+  line-height: 1.4;
+  scroll-margin-top: 16px;
+}
+
+.site-doc h3 {
+  margin: 24px 0 8px;
+  font-size: var(--pf-fs-14);
+  font-weight: 600;
+  scroll-margin-top: 16px;
+}
+
+.site-doc p,
+.site-doc ul,
+.site-doc ol {
+  margin: 0 0 12px;
+}
+
+.site-doc ul,
+.site-doc ol {
+  padding-left: 20px;
+}
+
+.site-doc li {
+  margin-bottom: 4px;
+}
+
+.site-doc hr {
+  display: none;
+}
+
+.site-doc a {
+  color: var(--pf-info);
+}
+
+.site-doc code {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-fs-12);
+  background: var(--pf-surface-2);
+  border: 1px solid var(--pf-border);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.site-doc pre {
+  margin: 0 0 12px;
+  padding: 12px;
+  overflow-x: auto;
+  background: var(--pf-surface-2);
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius);
+  line-height: 1.55;
+  overflow-wrap: normal;
+}
+
+.site-doc pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+.site-table-wrap {
+  margin: 0 0 12px;
+  overflow-x: auto;
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius);
+}
+
+.site-doc table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--pf-fs-13);
+  line-height: 1.55;
+  overflow-wrap: normal;
+}
+
+.site-doc th,
+.site-doc td {
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--pf-border);
+}
+
+.site-doc th {
+  background: var(--pf-surface-2);
+  font-size: var(--pf-fs-12);
+  font-weight: 600;
+  color: var(--pf-text-muted);
+  white-space: nowrap;
+}
+
+.site-doc tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 @media (max-width: 860px) {
+  .site-doc-layout {
+    grid-template-columns: 1fr;
+  }
+  .site-toc {
+    position: static;
+    max-height: none;
+  }
   .site-hero {
     grid-template-columns: 1fr;
   }

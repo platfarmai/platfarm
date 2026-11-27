@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}} · 三润支付中心</title>
+<meta name="description" content="三润支付中心开放 API 接入指南：凭据、签名、接口列表、结果通知与沙箱联调。">
+<link rel="icon" type="image/png" href="/logo-28.png">
+<link rel="stylesheet" href="/platform/ui/v1/pf-ui.css">
+<link rel="stylesheet" href="/platform/ui/v1/tw.css">
+<link rel="stylesheet" href="/style.css">
+<script src="/platform/ui/v1/pf-ui.js" defer></script>
+<script src="/pages.js" defer></script>
+</head>
+<body class="pf-body">
+<div class="site-shell">
+
+  <header class="site-header">
+    <a class="site-brand" href="/">
+      <img class="site-logo" src="/logo-108.png" alt="三润支付中心">
+      <div>
+        <p class="site-brand-title">三润支付中心</p>
+        <p class="site-brand-sub">开放 API 接入指南</p>
+      </div>
+    </a>
+    <nav class="site-footer-links">
+      <a class="pf-link" href="/">首页</a>
+      <a class="pf-link" href="/platform/info">平台接口索引</a>
+      <a class="pf-link" href="/api/pay/console/">支付中心</a>
+    </nav>
+  </header>
+
+  <div class="site-doc-layout">
+    <aside class="site-toc" aria-label="目录">
+      <p class="site-toc-title">目录</p>
+{{TOC}}
+    </aside>
+
+    <main class="pf-card site-doc-card">
+      <pf-alert tone="info">本站网关地址（下文的 <code class="pf-code">{base}</code>）：<code class="pf-code js-origin">https://apipay.sanrun.fun</code>。凭据由平台运营方发放，联调可先走沙箱通道。</pf-alert>
+      <article class="site-doc">
+{{BODY}}
+      </article>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <span>© 2026 三润支付中心 · 本页给人看；程序请求 <code class="pf-code">GET /docs</code> 得到的是各服务 OpenAPI 文档索引（JSON）</span>
+    <div class="site-footer-links">
+      <a class="pf-link" href="/">返回首页</a>
+      <a class="pf-link" href="#top">回到顶部</a>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

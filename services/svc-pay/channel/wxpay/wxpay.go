@@ -47,7 +47,7 @@ func paramFields(directSettle bool) (provider, sub []channel.ParamField) {
 		{Key: "sp_mchid", Label: "服务商商户号", Required: true,
 			Hint: "你自己的微信支付服务商商户号，10 位数字。登录微信支付服务商平台（pay.weixin.qq.com）→ 账户中心 → 商户信息 查看。注意是服务商号，不是下面某个特约商户的号。"},
 		{Key: "sp_appid", Label: "服务商 AppID", Required: true,
-			Hint: "与服务商商户号绑定的公众号或小程序 AppID，wx 开头共 18 位。服务商平台 → 产品中心 → AppID 账号管理 里“已关联”的那个；没关联过要先在那里发起关联并到公众平台确认。"},
+			Hint: "与服务商商户号关联的 AppID，wx 开头共 18 位。只能是已认证的服务号、小程序或开放平台的移动应用，主体要与服务商一致；开放平台「网站应用」的 AppID 不能用。在 服务商平台 → 产品中心 → AppID 账号管理 →「我关联的 AppID 账号」里查看；没关联过先在那里点「关联 AppID」发起，再到公众平台 / 小程序后台确认。做公众号或小程序内支付（WX_JSAPI）时，下单传的 sp_openid 必须是用户在这个 AppID 下的 openid。"},
 		{Key: "mch_serial_no", Label: "商户 API 证书序列号", Required: true,
 			Hint: "40 位十六进制。服务商平台 → 账户中心 → API 安全 → 商户 API 证书 →「管理证书」里能看到。必须和下面的私钥是同一张证书，重新申请证书后两项要一起换。"},
 		{Key: "private_key", Label: "商户 API 私钥", Secret: true, Required: true, Multiline: true,

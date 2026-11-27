@@ -2,7 +2,7 @@
 
 面向接入方（渠道商 / 下游业务系统）的对接文档：怎么拿凭据、怎么签名、有哪些接口、回调长什么样、怎么在沙箱里联调。
 
-实现见 `services/svc-pay`（`api.go` / `params.go` / `notify.go`），路由与 scope 的权威来源是 `services/svc-pay/service.yaml`。
+<!-- 维护者：实现见 services/svc-pay（api.go / params.go / notify.go），路由与 scope 的权威来源是 services/svc-pay/service.yaml。本文件由 svc-site 发布到 /docs，改完后同步 services/svc-site/content/ 下的副本（svc-site 的测试会校验两份一致）。 -->
 
 ---
 

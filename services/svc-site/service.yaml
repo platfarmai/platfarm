@@ -8,6 +8,10 @@ lang: go
 mount:
   path: /
   website: true
+  # 浏览器打开这两个地址时由本站渲染成页面；程序请求（Accept 不含 text/html）仍由平台返回 JSON
+  browser_pages:
+    - /docs
+    - /platform/info
 
 auth:
   required: false
