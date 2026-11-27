@@ -524,7 +524,7 @@ func handleCreateApplyment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"applyment": a.masked()})
 }
 
-// handleUpdateApplyment PUT /admin/applyments/:id：draft|rejected 改资料 → draft。
+// handleUpdateApplyment PUT /admin/applyments/:id：draft|rejected（或提交渠道失败、尚无渠道单号的 approved）改资料 → draft。
 func handleUpdateApplyment(c *gin.Context) {
 	claims, ok := requireRole(c, roleOperator)
 	if !ok {
@@ -534,7 +534,9 @@ func handleUpdateApplyment(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if a.State != channel.ApplymentDraft && a.State != channel.ApplymentRejected {
+	canEdit := a.State == channel.ApplymentDraft || a.State == channel.ApplymentRejected ||
+		(a.State == channel.ApplymentApproved && a.ChannelApplymentID == "")
+	if !canEdit {
 		c.JSON(http.StatusConflict, gin.H{"error": "状态 " + a.State + " 不可修改资料"})
 		return
 	}
@@ -561,7 +563,8 @@ func handleUpdateApplyment(c *gin.Context) {
 		return
 	}
 	tag, err := db.Exec(ctx, `UPDATE pay_applyment SET payload=$3, state='draft', reject_reason='', channel_msg='',
-		edited_by=$4, updated_at=now() WHERE applyment_id=$1 AND state=$2`, a.ApplymentID, a.State, raw, claims.Username)
+		edited_by=$4, updated_at=now() WHERE applyment_id=$1 AND state=$2 AND (state <> 'approved' OR channel_applyment_id = '')`,
+		a.ApplymentID, a.State, raw, claims.Username)
 	if err != nil || tag.RowsAffected() == 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "状态已变化，请刷新"})
 		return

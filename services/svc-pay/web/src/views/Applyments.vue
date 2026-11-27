@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { api } from "../api.js";
 import { when, applymentStates, stateTone } from "../utils.js";
+import { WX_REGIONS, findRegionByCode, isProvinceOnlyCode, formatRegionLabel } from "../regions.js";
 import Field from "../components/Field.vue";
 
 const DRAFT_KEY = "svc_pay_applyment_draft_v1";
@@ -112,22 +113,13 @@ const ways = [
   ["WX_JSAPI", "微信 JSAPI / 小程序"],
   ["WX_NATIVE", "微信 Native 扫码"],
 ];
-const regions = [
-  ["110000", "北京市"], ["120000", "天津市"], ["130000", "河北省"], ["140000", "山西省"],
-  ["150000", "内蒙古自治区"], ["210000", "辽宁省"], ["220000", "吉林省"], ["230000", "黑龙江省"],
-  ["310000", "上海市"], ["320000", "江苏省"], ["330000", "浙江省"], ["340000", "安徽省"],
-  ["350000", "福建省"], ["360000", "江西省"], ["370000", "山东省"], ["410000", "河南省"],
-  ["420000", "湖北省"], ["430000", "湖南省"], ["440000", "广东省"], ["450000", "广西壮族自治区"],
-  ["460000", "海南省"], ["500000", "重庆市"], ["510000", "四川省"], ["520000", "贵州省"],
-  ["530000", "云南省"], ["540000", "西藏自治区"], ["610000", "陕西省"], ["620000", "甘肃省"],
-  ["630000", "青海省"], ["640000", "宁夏回族自治区"], ["650000", "新疆维吾尔自治区"],
-];
+const bankSeparateRegion = ref(false);
 
 // 每个状态现在该谁做什么。
 const stateGuide = {
   draft: "草稿：资料已保存，还没有人审核。检查无误后点「提交审核」；要改资料点「修改资料」。",
   reviewing: "等待内部审核：需要一位有「审核员」角色的同事打开这张申请单，点「通过并提交渠道」或「驳回」。录入或修改过这份资料的人不能自己审核自己（平台管理员除外）。",
-  approved: "内部审核已通过，但提交给微信时失败了（原因见上面的黄色提示）。常见原因是服务商渠道参数没配齐或证书不对；处理好后点「重新提交渠道」。",
+  approved: "内部审核已通过，但提交给微信时失败了（原因见上面的黄色提示）。若是本单资料填写有误（如域名格式、地区编码、银行账号等），点「修改资料」改好保存后再重新提交审核；若是服务商渠道参数或证书问题，处理好后直接点「重新提交渠道」。",
   submitted: "已提交给微信，等待微信开始审核。系统每分钟自动查询一次结果，也可以点「同步渠道状态」立即查。",
   channel_auditing: "微信审核中，通常 1–2 个工作日。系统每分钟自动查询一次，不用一直守着；也可以点「同步渠道状态」立即查。",
   need_verify: "微信要求账户验证：把下面的「签约链接」发给联系人（超级管理员），由他用自己的微信打开，按页面指引完成验证（通常是往指定账户汇一笔小额款，或法人扫码确认）。完成后状态会自动往下走。",
@@ -141,6 +133,7 @@ const stateGuide = {
 const pathLabels = [
   ["settlement_account.account_name", "结算账户·户名"],
   ["settlement_account.account_no", "结算账户·账号"],
+  ["settlement_account.address_code", "结算账户·开户行省市编码"],
   ["settlement_account.branch", "结算账户·开户行全称"],
   ["settlement_account.bank", "结算账户·开户银行"],
   ["settlement_account.type", "结算账户·账户类型"],
@@ -289,6 +282,7 @@ function restoreLocalDraft() {
     };
     current.value = null;
     fields.value = fill(saved.fields);
+    syncBankSeparate();
     const restored = {};
     for (const [k, u] of Object.entries(saved.uploads || {})) {
       restored[k] = { previewUrl: "", blob: false, filename: u.filename || "", size: u.size || 0, fileId: u.fileId || "", url: u.url || "", error: "", broken: false };
@@ -326,17 +320,91 @@ const needsWeb = computed(() => fields.value.business.scene.types.includes("web"
 const isOffline = computed(() => fields.value.business.scene.types.includes("offline"));
 const ruleOptions = computed(() => settlementRules[fields.value.subject.type] || settlementRules.enterprise);
 const industryOptions = computed(() => industries[fields.value.subject.mcc] || []);
-const regionValue = computed(() => {
-  const code = fields.value.business.address.code || "";
-  const hit = regions.find(([c]) => c === code || c.slice(0, 2) === code.slice(0, 2));
-  return hit ? hit[0] : "";
+const bizCodeTrimmed = computed(() => String(fields.value.business.address.code || "").trim());
+const bizRegionHit = computed(() => findRegionByCode(bizCodeTrimmed.value));
+const bizInvalidCode = computed(() => Boolean(bizCodeTrimmed.value && !bizRegionHit.value));
+const bizProvinceOnly = computed(() => isProvinceOnlyCode(bizCodeTrimmed.value));
+const bizProvCode = computed(() => bizRegionHit.value?.provCode || "");
+const bizProvEntry = computed(() => WX_REGIONS.find(([c]) => c === bizProvCode.value) || null);
+const bizCities = computed(() => (bizProvEntry.value ? bizProvEntry.value[2] : []));
+const bizCityCode = computed(() => bizRegionHit.value?.cityCode || "");
+const bizCityEntry = computed(() => bizCities.value.find(([c]) => c === bizCityCode.value) || null);
+const bizDistricts = computed(() => (bizCityEntry.value ? bizCityEntry.value[2] : []));
+const bizDistCode = computed(() => bizRegionHit.value?.distCode || "");
+// 手写的省/市/区文字没能对上对照表时给出提示（文字仍会原样拼进地址）。
+const bizAddressNote = computed(() => {
+  const addr = fields.value.business.address;
+  const text = (v) => String(v || "").trim();
+  if (bizInvalidCode.value) {
+    return `原来填写的地区编码「${bizCodeTrimmed.value}」不在微信省市区编号对照表里（常见原因是填成了邮政编码），请在上面重新选择省、市、区县。`;
+  }
+  if (!bizRegionHit.value) {
+    const old = [addr.province, addr.city, addr.district].map(text).filter(Boolean).join(" ");
+    return old ? `原来填写的「${old}」没能对应上微信的地区编码，请在上面重新选择省、市、区县。` : "";
+  }
+  if (text(addr.city) && !bizCityCode.value) {
+    return `原来填写的城市「${text(addr.city)}」没能对应上微信对照表，请在「市」下拉里重新选择。`;
+  }
+  if (text(addr.district) && !bizDistCode.value && bizDistricts.value.length) {
+    return `原来填写的区县「${text(addr.district)}」不在微信对照表里（可能是近年改过名的区县）。现在地区编码用的是市级 ${bizCodeTrimmed.value}，地址文字仍按「${text(addr.district)}」上报；也可以在「区 / 县」下拉里改选对照表里的名称。`;
+  }
+  return "";
 });
+const bizSingleCity = computed(() => bizCities.value.length === 1 && bizCities.value[0][0] === bizProvCode.value);
+const bankSingleCity = computed(() => bankCities.value.length === 1 && bankCities.value[0][0] === bankProvCode.value);
+
+const bankCodeTrimmed = computed(() => String(fields.value.settlement_account.address_code || "").trim());
+const bankRegionHit = computed(() => findRegionByCode(bankCodeTrimmed.value));
+const bankInvalidCode = computed(() => Boolean(bankCodeTrimmed.value && !bankRegionHit.value));
+const bankProvinceOnly = computed(() => isProvinceOnlyCode(bankCodeTrimmed.value));
+const bankProvCode = computed(() => bankRegionHit.value?.provCode || "");
+const bankProvEntry = computed(() => WX_REGIONS.find(([c]) => c === bankProvCode.value) || null);
+const bankCities = computed(() => (bankProvEntry.value ? bankProvEntry.value[2] : []));
+const bankCityCode = computed(() => bankRegionHit.value?.cityCode || "");
+const bankCityEntry = computed(() => bankCities.value.find(([c]) => c === bankCityCode.value) || null);
+const bankDistricts = computed(() => (bankCityEntry.value ? bankCityEntry.value[2] : []));
+const bankDistCode = computed(() => bankRegionHit.value?.distCode || "");
 const personWord = computed(() => (fields.value.subject.type === "individual" ? "经营者" : "法定代表人"));
 const feePct = computed(() => (Number(fields.value.rates[0].fee_rate_bps || 0) / 100).toFixed(2));
+
+// 旧资料的地区编码可能只到省级或没填，而省/市/区是手写文字：能按名称对上对照表的，把编码补到最细一级。
+// 编码本身无效（如邮政编码）时不动它，由界面提示重新选择。
+function upgradeAddressCode(addr) {
+  const code = String(addr.code || "").trim();
+  const hit = findRegionByCode(code);
+  if (code && !hit) return;
+  if (hit?.level === "district") return;
+  const text = (v) => String(v || "").trim();
+  const prov = hit
+    ? WX_REGIONS.find(([c]) => c === hit.provCode)
+    : WX_REGIONS.find(([, name]) => name === text(addr.province));
+  if (!prov) return;
+  const [pcode, pname, cities] = prov;
+  let city = hit?.cityCode ? cities.find(([c]) => c === hit.cityCode) : null;
+  if (!city) city = cities.find(([, name]) => name === text(addr.city));
+  if (!city && cities.length === 1 && cities[0][0] === pcode) city = cities[0];
+  if (!addr.province) addr.province = pname;
+  if (!city) {
+    if (!code) addr.code = pcode;
+    return;
+  }
+  // 直辖市的旧写法是把区名填在「市」里，所以区名两处都试一下。
+  const dist = city[2].find(([, name]) => name === text(addr.district)) || city[2].find(([, name]) => name === text(addr.city));
+  addr.code = dist ? dist[0] : city[0];
+  if (!addr.city) addr.city = city[1];
+}
+
+function syncBankSeparate() {
+  const bankCode = String(fields.value.settlement_account.address_code || "").trim();
+  const bizCode = String(fields.value.business.address.code || "").trim();
+  bankSeparateRegion.value = Boolean(bankCode && bankCode !== bizCode);
+}
 
 function fill(payload) {
   const base = blank();
   const src = payload && typeof payload === "object" ? payload : {};
+  const rawBizCode = String(src.business?.address?.code || "").trim();
+  const rawBankCode = String(src.settlement_account?.address_code || "").trim();
   for (const key of ["subject", "legal_person", "contact", "settlement_account", "extra"]) {
     base[key] = { ...base[key], ...(src[key] || {}) };
   }
@@ -348,6 +416,10 @@ function fill(payload) {
       appid: src.business?.scene?.appid || "",
     },
   };
+  upgradeAddressCode(base.business.address);
+  if (rawBankCode && rawBankCode === rawBizCode) {
+    base.settlement_account.address_code = "";
+  }
   base.rates = Array.isArray(src.rates) && src.rates.length
     ? src.rates.map((r) => ({ way_code: r.way_code || "", fee_rate_bps: Number(r.fee_rate_bps) || 0, settle_cycle: r.settle_cycle || "T1" }))
     : base.rates;
@@ -367,6 +439,7 @@ function readJson() {
   if (writing) return;
   try {
     fields.value = fill(JSON.parse(form.value.payloadText));
+    syncBankSeparate();
     jsonError.value = "";
     saveLocalDraft();
   } catch (e) {
@@ -402,13 +475,67 @@ function onRule() {
   writeJson();
 }
 
-function onRegion(ev) {
-  const code = ev.target.value;
-  const name = regions.find(([c]) => c === code)?.[1] || "";
-  fields.value.business.address.province = name;
-  fields.value.business.address.code = code;
-  if (!fields.value.settlement_account.address_code) fields.value.settlement_account.address_code = code;
+// 经营地址省市区联动：三个下拉都由 address.code 反推，选哪一级就把编码和省/市/区名称一起写回。
+function setBizRegion(code) {
+  const addr = fields.value.business.address;
+  const hit = findRegionByCode(code);
+  addr.province = hit?.provName || "";
+  addr.city = hit?.cityName || "";
+  addr.district = hit?.distName || "";
+  addr.code = hit ? String(code).trim() : "";
+  // 对照表里这个省下面没有可选城市时，城市沿用省名，保证地址完整。
+  if (hit && !addr.city) {
+    const prov = WX_REGIONS.find(([c]) => c === hit.provCode);
+    if (prov && prov[2].length === 0) addr.city = hit.provName;
+  }
   writeJson();
+}
+
+function onBizProvince(ev) {
+  setBizRegion(ev.target.value);
+}
+
+function onBizCity(ev) {
+  setBizRegion(ev.target.value || bizProvCode.value);
+}
+
+function onBizDistrict(ev) {
+  setBizRegion(ev.target.value || bizCityCode.value);
+}
+
+// 开户行所在地：默认跟随经营地址（address_code 留空，由后端回落）；单独选择时写入所选编码。
+function setBankCode(code) {
+  fields.value.settlement_account.address_code = String(code || "").trim();
+  writeJson();
+}
+
+function onBankMode(ev) {
+  const separate = ev.target.value === "separate";
+  bankSeparateRegion.value = separate;
+  if (!separate) setBankCode("");
+}
+
+function onBankProvince(ev) {
+  setBankCode(ev.target.value);
+}
+
+function onBankCity(ev) {
+  setBankCode(ev.target.value || bankProvCode.value);
+}
+
+function onBankDistrict(ev) {
+  setBankCode(ev.target.value || bankCityCode.value);
+}
+
+// 微信要求网站域名带协议头；漏写时按 https:// 补齐。
+function normalizeWebDomain(raw) {
+  const d = String(raw || "").trim();
+  if (!d || /^https?:\/\//i.test(d) || d.includes("://")) return d;
+  return "https://" + d;
+}
+
+function onWebDomainChange(ev) {
+  set("extra.web_domain", normalizeWebDomain(ev.target.value));
 }
 
 function toggleScene(key, on) {
@@ -462,6 +589,7 @@ function reject() {
 
 function begin(payload) {
   fields.value = fill(payload);
+  syncBankSeparate();
   err.value = "";
   jsonError.value = "";
   showJson.value = false;
@@ -599,6 +727,7 @@ async function upload(kind, ev) {
 async function save() {
   const payload = parsePayload();
   if (!payload) return;
+  if (payload.extra?.web_domain) payload.extra.web_domain = normalizeWebDomain(payload.extra.web_domain);
   for (const [kind, val] of Object.entries(payload.images || {})) {
     const s = String(val ?? "").trim();
     if (s && !isNumericId(s)) {
@@ -824,29 +953,33 @@ onUnmounted(revokeAllUploads);
         <Field label="客服电话" required hint="顾客在微信账单里能看到并拨打的客服电话，必须真实、能打通。格式：11 位手机号；或带区号的座机 028-12345678；400 电话要加横线写成 400-1234567。">
           <input class="pf-input" :value="fields.business.service_phone" placeholder="例如 028-12345678" @input="onInput('business.service_phone', $event)">
         </Field>
-        <Field label="省 / 直辖市" required hint="实际经营地址（门店或办公地）所在的省份。选了以后会自动带出右边的「微信地区编码」（省级）。">
-          <select class="pf-input" :value="regionValue" @change="onRegion">
+        <Field label="省 / 直辖市" required hint="实际经营地址（门店或办公地）所在的省份。选了以后，右边的「市」和「区 / 县」会列出这个省下面的选项。">
+          <select class="pf-input" :value="bizProvCode" @change="onBizProvince">
             <option value="">请选择</option>
-            <option v-for="[code, name] in regions" :key="code" :value="code">{{ name }}</option>
+            <option v-for="[code, name] in WX_REGIONS" :key="code" :value="code">{{ name }}</option>
           </select>
         </Field>
-        <Field label="市" required hint="经营地址所在的城市，带上「市」字，例如「成都市」。北京、上海、天津、重庆四个直辖市，这里直接填区名（例如「浦东新区」），下面的「区」留空。">
-          <input class="pf-input" :value="fields.business.address.city" placeholder="例如 成都市" @input="onInput('business.address.city', $event)">
+        <Field label="市" required hint="经营地址所在的城市。北京、上海、天津、重庆四个直辖市这里只有一项，区在右边选。">
+          <select class="pf-input" :value="bizCityCode" :disabled="!bizCities.length" @change="onBizCity">
+            <option v-if="!bizSingleCity" value="">{{ bizProvCode ? "请选择" : "请先选择省份" }}</option>
+            <option v-for="[code, name] in bizCities" :key="code" :value="code">{{ name }}</option>
+          </select>
         </Field>
-        <Field label="区" hint="选填。区或县的名称，例如「武侯区」。">
-          <input class="pf-input" :value="fields.business.address.district" placeholder="例如 武侯区" @input="onInput('business.address.district', $event)">
+        <Field label="区 / 县" hint="建议选到区县，微信审核更容易通过。列表来自微信的省市区对照表；找不到现在的区县名称（近年改过名）时可以不选，只选到市。">
+          <select class="pf-input" :value="bizDistCode" :disabled="!bizDistricts.length" @change="onBizDistrict">
+            <option value="">{{ !bizCityCode ? "请先选择城市" : bizDistricts.length ? "请选择（可不选）" : "这个城市不分区县" }}</option>
+            <option v-for="[code, name] in bizDistricts" :key="code" :value="code">{{ name }}</option>
+          </select>
         </Field>
         <Field label="详细地址" required hint="街道、门牌号、楼层房号，不要再重复写省市区，例如「天府大道北段 1700 号 1 栋 101 号」。系统会把省、市、区和这里拼成完整地址报给微信；线下门店要和门头照拍的实际位置一致。">
           <input class="pf-input" :value="fields.business.address.detail" placeholder="例如 天府大道北段 1700 号 1 栋 101 号" @input="onInput('business.address.detail', $event)">
         </Field>
-        <Field label="微信地区编码" :required="isOffline">
-          <input class="pf-input" :value="fields.business.address.code" placeholder="例如 510107" @input="onInput('business.address.code', $event)">
-          <template #hint>
-            勾了「线下门店」时必填。6 位数字的行政区划代码（和身份证号前 6 位是同一套编码）。选省后自动填省级编码（如四川 510000），
-            <b>建议改成门店所在市或区县的编码</b>（如成都市 510100、成都市武侯区 510107），只填到省可能被微信退回。查不到可以搜索「行政区划代码 + 区县名」。
-          </template>
+        <Field label="微信地区编码" :required="isOffline" hint="不用手填：按上面选的省、市、区县自动生成，取自微信官方的省市区编号对照表。勾了「线下门店」时必须有，并且至少选到市。">
+          <input class="pf-input" :value="bizCodeTrimmed ? bizCodeTrimmed + '　' + (formatRegionLabel(bizCodeTrimmed) || '无效编码') : ''" placeholder="选择省市区后自动生成" readonly>
         </Field>
       </div>
+      <pf-alert v-if="bizAddressNote" :key="'biz-region-' + bizAddressNote" tone="warn">{{ bizAddressNote }}</pf-alert>
+      <pf-alert v-else-if="bizProvinceOnly" key="biz-region-prov" tone="warn">地区编码目前只到省级（{{ bizCodeTrimmed }}），微信要求至少精确到市，请继续选择「市」。</pf-alert>
       <div class="flex flex-col gap-1 text-[13px]">
         <span>经营场景<span class="text-danger" title="必填"> *</span></span>
         <div class="flex flex-wrap gap-3">
@@ -863,8 +996,8 @@ onUnmounted(revokeAllUploads);
       <Field v-if="needsAppID" label="小程序 / 公众号 / APP 的 AppID" required hint="商户用来收款的那个小程序、公众号或 APP 的 AppID，wx 开头共 18 位，在微信公众平台 / 开放平台的「开发设置」里能看到。这个 AppID 的认证主体要和进件主体是同一家。同时勾了多个线上场景时，它们共用这一个 AppID。">
         <input class="pf-input" :value="fields.business.scene.appid" placeholder="例如 wx1234567890abcdef" @input="onInput('business.scene.appid', $event)">
       </Field>
-      <Field v-if="needsWeb" label="网站域名" required hint="勾了「网站」时必填。商户收款网站的域名，不带 http:// 和路径，例如 shop.example.com。网站要能正常打开，并且已经做了 ICP 备案，备案主体应是这家商户。">
-        <input class="pf-input" :value="fields.extra.web_domain" placeholder="例如 shop.example.com" @input="onInput('extra.web_domain', $event)">
+      <Field v-if="needsWeb" label="网站域名" required hint="勾了「网站」时必填。商户收款网站的网址，微信要求必须以 https:// 或 http:// 开头，例如 https://shop.example.com（漏写开头时系统会自动补上 https://）。网站要能正常打开，并且已经做了 ICP 备案，备案主体应是这家商户。">
+        <input class="pf-input" :value="fields.extra.web_domain" placeholder="例如 https://shop.example.com" @input="onInput('extra.web_domain', $event)" @change="onWebDomainChange">
       </Field>
 
       <h3 class="m-0 text-[14px] font-semibold">五、结算账户（微信把钱打到哪张卡）</h3>
@@ -894,8 +1027,28 @@ onUnmounted(revokeAllUploads);
         <Field label="账号" required hint="对公账号或银行卡号，只填数字，不要带空格和横线。保存后只显示前 3 后 4 位，所以每次「修改资料」都要重新填完整账号。填错会导致微信打款验证失败或结算不到账，请对着开户许可证 / 银行卡核对。">
           <input class="pf-input" :value="fields.settlement_account.account_no" autocomplete="off" @input="onInput('settlement_account.account_no', $event)">
         </Field>
-        <Field label="开户行省市编码" hint="开户支行所在城市的 6 位行政区划代码（如成都市 510100）。选省时会自动带出省级编码；留空则用上面经营地址的地区编码。开户行和门店不在同一个城市时，请改成开户行所在城市的编码。">
-          <input class="pf-input" :value="fields.settlement_account.address_code" placeholder="例如 510100" @input="onInput('settlement_account.address_code', $event)">
+        <Field class="col-span-2" tag="div" label="开户行所在地" hint="开户支行在哪个城市。绝大多数情况和经营地址在同一个城市，保持默认即可；开户行在别的城市时改成「单独选择」，再选到市（或区县）。">
+          <select class="pf-input" :value="bankSeparateRegion ? 'separate' : 'same'" @change="onBankMode">
+            <option value="same">和经营地址相同（推荐）</option>
+            <option value="separate">开户行在其他城市，单独选择</option>
+          </select>
+          <div v-if="bankSeparateRegion" class="grid grid-cols-3 gap-3">
+            <select class="pf-input" :value="bankProvCode" @change="onBankProvince">
+              <option value="">请选择省 / 直辖市</option>
+              <option v-for="[code, name] in WX_REGIONS" :key="code" :value="code">{{ name }}</option>
+            </select>
+            <select class="pf-input" :value="bankCityCode" :disabled="!bankCities.length" @change="onBankCity">
+              <option v-if="!bankSingleCity" value="">{{ bankProvCode ? "请选择市" : "请先选择省份" }}</option>
+              <option v-for="[code, name] in bankCities" :key="code" :value="code">{{ name }}</option>
+            </select>
+            <select class="pf-input" :value="bankDistCode" :disabled="!bankDistricts.length" @change="onBankDistrict">
+              <option value="">{{ !bankCityCode ? "请先选择城市" : bankDistricts.length ? "区 / 县（可不选）" : "这个城市不分区县" }}</option>
+              <option v-for="[code, name] in bankDistricts" :key="code" :value="code">{{ name }}</option>
+            </select>
+          </div>
+          <span v-if="bankInvalidCode" class="text-danger">原来填写的开户行编码「{{ bankCodeTrimmed }}」不在微信省市区编号对照表里（常见原因是填成了邮政编码）。请重新选择开户行所在的省、市，或改回「和经营地址相同」。</span>
+          <span v-else-if="bankSeparateRegion && bankProvinceOnly" class="text-danger">开户行所在地目前只选到省，微信要求至少精确到市，请继续选择「市」。</span>
+          <span v-else-if="bankSeparateRegion && bankCodeTrimmed" class="pf-muted">开户行地区编码：{{ bankCodeTrimmed }}　{{ formatRegionLabel(bankCodeTrimmed) }}</span>
         </Field>
       </div>
 
@@ -1016,6 +1169,7 @@ onUnmounted(revokeAllUploads);
         </template>
         <template v-if="current.applyment.state === 'approved'">
           <pf-button size="sm" variant="primary" @click="act('submit')">重新提交渠道</pf-button>
+          <pf-button v-if="!current.applyment.channelApplymentId" size="sm" @click="startEdit">修改资料</pf-button>
           <pf-button size="sm" variant="ghost" @click="act('cancel')">取消申请</pf-button>
         </template>
         <template v-if="pollable">

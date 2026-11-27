@@ -258,6 +258,50 @@ func TestApplyment_ChannelSubmitErrorKeepsApproved(t *testing.T) {
 	if res.Body["applyment"].(map[string]any)["state"] != channel.ApplymentSubmitted {
 		t.Fatalf("%v", res.Body)
 	}
+	// 已提交渠道后不可再直接 PUT 修改资料。
+	mustCode(t, call(t, r, "op", http.MethodPut, "/api/pay/admin/applyments/"+id, map[string]any{"payload": samplePayload()}), 409)
+}
+
+func TestApplyment_ApprovedWithoutChannelIDCanEdit(t *testing.T) {
+	requireDB(t)
+	fetchFile = stubFetchFile
+	seedISVAndMerchant(t, "ISV1", "M-AP-EDIT", "stub_channel")
+	r := testRouter()
+
+	res := call(t, r, "op", http.MethodPost, "/api/pay/admin/applyments",
+		map[string]any{"mchNo": "M-AP-EDIT", "ifCode": "stub_channel", "payload": samplePayload()})
+	mustCode(t, res, 200)
+	id := res.Body["applyment"].(map[string]any)["applymentId"].(string)
+	mustCode(t, call(t, r, "op", http.MethodPost, "/api/pay/admin/applyments/"+id+"/submit-review", nil), 200)
+
+	stub.mu.Lock()
+	stub.submitErr = fmt.Errorf("applyment submit: PARAM_ERROR 互联网网站域名取值有误")
+	stub.mu.Unlock()
+	res = call(t, r, "reviewer", http.MethodPost, "/api/pay/admin/applyments/"+id+"/approve", nil)
+	mustCode(t, res, 200)
+	if res.Body["applyment"].(map[string]any)["state"] != channel.ApplymentApproved {
+		t.Fatalf("expected approved, got %v", res.Body)
+	}
+
+	// 提交渠道报 PARAM_ERROR（尚无 channel_applyment_id）时允许修改资料回到草稿，再重走审核提交。
+	fixed := samplePayload()
+	fixed["extra"] = map[string]string{"web_domain": "https://lab.example.com"}
+	res = call(t, r, "op", http.MethodPut, "/api/pay/admin/applyments/"+id, map[string]any{"payload": fixed})
+	mustCode(t, res, 200)
+	ap := res.Body["applyment"].(map[string]any)
+	if ap["state"] != channel.ApplymentDraft || ap["channelMsg"] != "" {
+		t.Fatalf("after edit from approved: %v", ap)
+	}
+
+	stub.mu.Lock()
+	stub.submitErr = nil
+	stub.mu.Unlock()
+	mustCode(t, call(t, r, "op", http.MethodPost, "/api/pay/admin/applyments/"+id+"/submit-review", nil), 200)
+	res = call(t, r, "reviewer", http.MethodPost, "/api/pay/admin/applyments/"+id+"/approve", nil)
+	mustCode(t, res, 200)
+	if res.Body["applyment"].(map[string]any)["state"] != channel.ApplymentSubmitted {
+		t.Fatalf("expected submitted after fix: %v", res.Body)
+	}
 }
 
 func TestApplyment_ValidationAndGuards(t *testing.T) {

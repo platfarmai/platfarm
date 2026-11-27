@@ -389,6 +389,73 @@ func TestEncryptKeyPreference(t *testing.T) {
 	}
 }
 
+func TestApplyment_WebDomainSchemeAndNormalization(t *testing.T) {
+	a := sampleApplyment()
+	a.Business.Scene.Types = []string{"web"}
+	a.Business.Address.Code = ""
+	a.SettlementAccount.AddressCode = ""
+
+	for _, bad := range []string{"lab.scyytc.com", "ftp://lab.scyytc.com", "https://", "https://bad host.com"} {
+		a.Extra["web_domain"] = bad
+		p := strings.Join((&partner{}).ApplymentProblems(a), "\n")
+		if !strings.Contains(p, "extra.web_domain") {
+			t.Errorf("expected web_domain problem for %q, got %q", bad, p)
+		}
+	}
+	for _, ok := range []string{"https://lab.scyytc.com", "http://shop.example.com", "https://shop.example.com/pay"} {
+		a.Extra["web_domain"] = ok
+		if p := (&partner{}).ApplymentProblems(a); len(p) != 0 {
+			t.Errorf("unexpected problems for %q: %v", ok, p)
+		}
+	}
+
+	// 历史存量记录若漏了协议前缀，提交渠道时自动补齐 https://，且不改动入参 map；两个编码都为空时不传空串 bank_address_code。
+	a.Extra["web_domain"] = "  lab.scyytc.com  "
+	body := submitCapture(t, a, sampleMedia)
+	if a.Extra["web_domain"] != "  lab.scyytc.com  " {
+		t.Fatalf("SubmitApplyment mutated caller Extra: %q", a.Extra["web_domain"])
+	}
+	web := body["business_info"].(map[string]any)["sales_info"].(map[string]any)["web_info"].(map[string]any)
+	if web["domain"] != "https://lab.scyytc.com" {
+		t.Fatalf("web_info.domain = %v, want https://lab.scyytc.com", web["domain"])
+	}
+	bank := body["bank_account_info"].(map[string]any)
+	if _, has := bank["bank_address_code"]; has {
+		t.Fatalf("empty bank_address_code must be omitted, got %v", bank["bank_address_code"])
+	}
+
+	// 仅填省级编码（如 510000）时 bank_address_code 不下发，避免触发微信“至少精确到市”报错。
+	a.Business.Address.Code = "510000"
+	body = submitCapture(t, a, sampleMedia)
+	if _, has := body["bank_account_info"].(map[string]any)["bank_address_code"]; has {
+		t.Fatalf("province-only bank_address_code must be omitted")
+	}
+}
+
+func TestApplyment_RegionCodeValidation(t *testing.T) {
+	for _, ok := range []string{"110000", "110108", "510100", "510132", "441900", "429004", "810000", "820104"} {
+		if !IsValidRegionCode(ok) {
+			t.Errorf("expected valid region code %s", ok)
+		}
+	}
+	for _, bad := range []string{"", "611100", "510118", "999999", "abc"} {
+		if IsValidRegionCode(bad) {
+			t.Errorf("expected invalid region code %q", bad)
+		}
+	}
+	if !isProvinceOnlyRegionCode("510000") || isProvinceOnlyRegionCode("110000") || isProvinceOnlyRegionCode("810000") {
+		t.Fatal("province-only classification mismatch")
+	}
+
+	a := sampleApplyment()
+	a.Business.Address.Code = "510118"        // 微信对照表未收录的新津区代码（表中仍为 510132 新津县）
+	a.SettlementAccount.AddressCode = "611100" // 邮政编码
+	p := strings.Join((&partner{}).ApplymentProblems(a), "\n")
+	if !strings.Contains(p, "business.address.code") || !strings.Contains(p, "settlement_account.address_code") {
+		t.Fatalf("expected both region code problems, got:\n%s", p)
+	}
+}
+
 func decryptOAEP(t *testing.T, priv *rsa.PrivateKey, b64 string) string {
 	t.Helper()
 	ct, err := base64.StdEncoding.DecodeString(b64)

@@ -58,10 +58,16 @@ func (p *partner) ApplymentProblems(a channel.Applyment) []string {
 		need(a.Images["contact_id_front"] != "", "images.contact_id_front（经办人身份证人像面）必填")
 		need(a.Images["contact_id_back"] != "", "images.contact_id_back（经办人身份证国徽面）必填")
 	}
+	if code := strings.TrimSpace(a.Business.Address.Code); code != "" {
+		need(IsValidRegionCode(code), "business.address.code（省市编码）不在微信省市区编号对照表中，请通过省市区下拉选择（不要填邮政编码）")
+	}
+	if bankCode := strings.TrimSpace(a.SettlementAccount.AddressCode); bankCode != "" {
+		need(IsValidRegionCode(bankCode), "settlement_account.address_code（开户行省市编码）不在微信省市区编号对照表中，请通过省市区下拉选择或留空（不要填邮政编码）")
+	}
 	for _, t := range a.Business.Scene.Types {
 		switch t {
 		case "offline":
-			need(a.Business.Address.Code != "", "business.address.code（省市编码）线下场景必填")
+			need(strings.TrimSpace(a.Business.Address.Code) != "", "business.address.code（省市编码）线下场景必填")
 			need(a.Images["storefront"] != "", "images.storefront（门头照）线下场景必填")
 			need(a.Images["interior"] != "", "images.interior（店内环境照）线下场景必填")
 		case "mp":
@@ -69,10 +75,52 @@ func (p *partner) ApplymentProblems(a channel.Applyment) []string {
 		case "app":
 			need(a.Images["app_pic"] != "", "images.app_pic（APP 截图）APP 场景必填")
 		case "web":
-			need(a.Extra["web_domain"] != "", "extra.web_domain（网站域名）网站场景必填")
+			d := strings.TrimSpace(a.Extra["web_domain"])
+			if d == "" {
+				out = append(out, "extra.web_domain（网站域名）网站场景必填")
+			} else {
+				need(hasValidWebDomain(d), "extra.web_domain（网站域名）必须以 https:// 或 http:// 开头（例如 https://shop.example.com）")
+			}
 		}
 	}
 	return out
+}
+
+func normalizeWebDomain(raw string) string {
+	d := strings.TrimSpace(raw)
+	if d == "" {
+		return ""
+	}
+	lower := strings.ToLower(d)
+	if strings.HasPrefix(lower, "https://") {
+		return "https://" + strings.TrimSpace(d[8:])
+	}
+	if strings.HasPrefix(lower, "http://") {
+		return "http://" + strings.TrimSpace(d[7:])
+	}
+	if !strings.Contains(d, "://") {
+		return "https://" + d
+	}
+	return d
+}
+
+func hasValidWebDomain(raw string) bool {
+	d := strings.TrimSpace(raw)
+	if d == "" || strings.ContainsAny(d, " \t\r\n") {
+		return false
+	}
+	lower := strings.ToLower(d)
+	var rest string
+	switch {
+	case strings.HasPrefix(lower, "https://"):
+		rest = d[8:]
+	case strings.HasPrefix(lower, "http://"):
+		rest = d[7:]
+	default:
+		return false
+	}
+	host, _, _ := strings.Cut(rest, "/")
+	return strings.Contains(host, ".") && !strings.HasPrefix(host, ".") && !strings.HasSuffix(host, ".")
 }
 
 // pics 收集同一类截图的 media_id：kind、kind_2 … kind_5，按序取已上传的。
@@ -146,7 +194,18 @@ func mimeOf(filename string) string {
 
 // SubmitApplyment 把归一资料映射成 applyment4sub 请求。微信不接受自定义费率，rates 永远报为无法表达。
 func (p *partner) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (channel.ApplymentResult, error) {
-	if probs := p.ApplymentProblems(in.Payload); len(probs) > 0 {
+	a := in.Payload
+	if d := strings.TrimSpace(a.Extra["web_domain"]); d != "" {
+		if nd := normalizeWebDomain(d); nd != a.Extra["web_domain"] {
+			extra := make(map[string]string, len(a.Extra))
+			for k, v := range a.Extra {
+				extra[k] = v
+			}
+			extra["web_domain"] = nd
+			a.Extra = extra
+		}
+	}
+	if probs := p.ApplymentProblems(a); len(probs) > 0 {
 		return channel.ApplymentResult{}, fmt.Errorf("资料不满足微信进件要求：%s", strings.Join(probs, "；"))
 	}
 	serial, pubPEM, err := encryptKey(in.Provider)
@@ -155,7 +214,6 @@ func (p *partner) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (
 	}
 	enc := func(s string) (string, error) { return encryptSensitive(pubPEM, s) }
 
-	a := in.Payload
 	unexpressed := []string{"rates"}
 	body := map[string]any{"business_code": in.BusinessCode}
 
@@ -238,7 +296,7 @@ func (p *partner) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (
 		case "offline":
 			scenes = append(scenes, "SALES_SCENES_STORE")
 			sales["biz_store_info"] = map[string]any{
-				"biz_store_name": a.Subject.ShortName, "biz_address_code": a.Business.Address.Code,
+				"biz_store_name": a.Subject.ShortName, "biz_address_code": strings.TrimSpace(a.Business.Address.Code),
 				"biz_store_address":  address,
 				"store_entrance_pic": []string{in.Media["storefront"]}, "indoor_pic": []string{in.Media["interior"]},
 			}
@@ -257,7 +315,7 @@ func (p *partner) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (
 			sales["app_info"] = map[string]any{"app_appid": a.Business.Scene.AppID, "app_pics": pics(in.Media, "app_pic")}
 		case "web":
 			scenes = append(scenes, "SALES_SCENES_WEB")
-			sales["web_info"] = map[string]any{"domain": a.Extra["web_domain"]}
+			sales["web_info"] = map[string]any{"domain": strings.TrimSpace(a.Extra["web_domain"])}
 		}
 	}
 	sales["sales_scenes_type"] = scenes
@@ -273,8 +331,10 @@ func (p *partner) SubmitApplyment(ctx context.Context, in channel.ApplymentIn) (
 	bank := map[string]any{
 		"bank_account_type": bankAccountType(a.SettlementAccount.Type),
 		"account_name":      acctName, "account_bank": a.SettlementAccount.Bank,
-		"bank_address_code": orDefault(a.SettlementAccount.AddressCode, a.Business.Address.Code),
 		"account_number":    acctNo,
+	}
+	if addrCode := strings.TrimSpace(orDefault(a.SettlementAccount.AddressCode, a.Business.Address.Code)); addrCode != "" && !isProvinceOnlyRegionCode(addrCode) {
+		bank["bank_address_code"] = addrCode
 	}
 	if a.SettlementAccount.Branch != "" {
 		bank["bank_name"] = a.SettlementAccount.Branch
