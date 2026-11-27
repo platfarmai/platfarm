@@ -96,6 +96,8 @@ func main() {
 	v1.POST("/withdrawals", handleCreateWithdrawal)
 	v1.GET("/withdrawals/:mchWithdrawNo", handleQueryWithdrawal)
 	v1.GET("/balance", handleBalance)
+	v1.GET("/bills/transactions", handleBillTransactions)
+	v1.GET("/bills/summary", handleBillSummary)
 
 	// 内部回调：svc-jobs cron（服务 token）触发每日对账。
 	r.POST(mount+"/internal/recon/daily", handleDailyRecon)

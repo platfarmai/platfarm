@@ -39,6 +39,7 @@ exposes:
     - { name: pay.settle.confirm, desc: 归集模式确认结算（开放 API） }
     - { name: pay.withdrawal.create, desc: 归集模式发起提现（开放 API） }
     - { name: pay.withdrawal.query, desc: 查询提现单与余额（开放 API） }
+    - { name: pay.bill.query, desc: 查询交易流水与按日汇总（开放 API） }
 
 open_api:
   - { route: "POST /api/pay/v1/orders", scope: pay.order.create }
@@ -53,6 +54,8 @@ open_api:
   - { route: "POST /api/pay/v1/withdrawals", scope: pay.withdrawal.create }
   - { route: "GET /api/pay/v1/withdrawals/*", scope: pay.withdrawal.query }
   - { route: "GET /api/pay/v1/balance", scope: pay.withdrawal.query }
+  - { route: "GET /api/pay/v1/bills/transactions", scope: pay.bill.query }
+  - { route: "GET /api/pay/v1/bills/summary", scope: pay.bill.query }
 
 admin_ui:
   path: /console
