@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>平台接口索引 · 三润支付中心</title>
-<meta name="description" content="三润支付中心网关的公共入口：登录、令牌、支付开放 API 与各控制台地址。">
+<meta name="description" content="三润支付中心网关的公共入口：登录、令牌、支付开放 API、商户与服务商指南及各控制台地址。">
 <link rel="icon" type="image/png" href="/logo-28.png">
 <link rel="stylesheet" href="/platform/ui/v1/pf-ui.css">
 <link rel="stylesheet" href="/platform/ui/v1/tw.css">
@@ -25,7 +25,8 @@
     </a>
     <nav class="site-footer-links">
       <a class="pf-link" href="/">首页</a>
-      <a class="pf-link" href="/docs">接口文档</a>
+      <a class="pf-link" href="/docs">商户接入指南</a>
+      <a class="pf-link" href="/guide/isv">服务商入驻指南</a>
       <a class="pf-link" href="/api/pay/console/">支付中心</a>
     </nav>
   </header>
@@ -35,25 +36,26 @@
       <h1>平台接口索引</h1>
       <p>这个地址是给程序探测网关用的：程序直接请求返回一段 JSON，用浏览器打开看到的是本页说明。下面是网关对外的公共入口，网关地址是 <code class="js-origin">https://apipay.sanrun.fun</code>。</p>
 
-      <h2>接入方用到的接口</h2>
+      <h2>商户接入用到的入口</h2>
       <div class="site-table-wrap"><table>
         <thead><tr><th>入口</th><th>用途</th></tr></thead>
         <tbody>
           <tr><td><code>POST /oauth/token</code></td><td>用开放平台分配的 <code>appKey</code> / <code>appSecret</code> 换访问令牌，有效期 1 小时</td></tr>
-          <tr><td><code>/api/pay/v1/…</code></td><td>支付开放 API：下单、查单、关单、退款、分账、提现。字段与签名规则见 <a class="pf-link" href="/docs">接口文档</a></td></tr>
+          <tr><td><code>/api/pay/v1/…</code></td><td>商户支付开放 API：下单、查单、关单、退款、分账、提现、交易流水与按日账单汇总。字段与签名规则见 <a class="pf-link" href="/docs">商户接入指南</a></td></tr>
           <tr><td><code>GET /auth/.well-known/jwks.json</code></td><td>平台签发令牌用的公钥（JWKS，RS256）</td></tr>
-          <tr><td><code>GET /docs</code></td><td>浏览器打开是接入指南；程序请求返回各服务 OpenAPI 文档索引（JSON）</td></tr>
+          <tr><td><code>GET /docs</code></td><td>浏览器打开是《商户支付开放 API 接入指南》；程序请求返回各服务 OpenAPI 文档索引（JSON）</td></tr>
+          <tr><td><code>GET /guide/isv</code></td><td>《服务商入驻与运营指南》：服务商渠道参数、商户进件、通道配置、代理分润与对账说明</td></tr>
           <tr><td><code>GET /platform/info</code></td><td>本索引。程序请求返回 JSON，可用来探测网关是否在线</td></tr>
         </tbody>
       </table></div>
 
-      <h2>控制台</h2>
+      <h2>服务商与管理员控制台</h2>
       <div class="site-table-wrap"><table>
         <thead><tr><th>地址</th><th>谁用</th><th>做什么</th></tr></thead>
         <tbody>
-          <tr><td><a class="pf-link" href="/api/pay/console/">/api/pay/console/</a></td><td>运营人员</td><td>支付中心工作台：服务商、商户、应用、进件、订单、分账、对账</td></tr>
-          <tr><td><a class="pf-link" href="/api/openapi/console/">/api/openapi/console/</a></td><td>管理员</td><td>开放平台：为接入方创建 appKey / appSecret、分配接口权限</td></tr>
-          <tr><td><a class="pf-link" href="/platform/console/">/platform/console/</a></td><td>管理员</td><td>平台控制台：账号、服务状态</td></tr>
+          <tr><td><a class="pf-link" href="/api/pay/console/">/api/pay/console/</a></td><td>服务商 / 运营审核</td><td>支付中心工作台：服务商、商户、应用·通道、进件审核、订单、分账、提现、代理分润、对账（详见 <a class="pf-link" href="/guide/isv">服务商入驻指南</a>）</td></tr>
+          <tr><td><a class="pf-link" href="/api/openapi/console/">/api/openapi/console/</a></td><td>管理员</td><td>开放平台：为商户业务系统创建 <code>appKey</code> / <code>appSecret</code>、分配 <code>pay.*</code> 接口权限</td></tr>
+          <tr><td><a class="pf-link" href="/platform/console/">/platform/console/</a></td><td>管理员</td><td>平台控制台：后台登录账号、服务状态</td></tr>
         </tbody>
       </table></div>
       <p>控制台都要先登录。在 <a class="pf-link" href="/">首页</a> 点「登录」，账号由平台管理员分配。</p>
@@ -69,7 +71,8 @@
     <span>© 2026 三润支付中心</span>
     <div class="site-footer-links">
       <a class="pf-link" href="/">返回首页</a>
-      <a class="pf-link" href="/docs">接口文档</a>
+      <a class="pf-link" href="/docs">商户接入指南</a>
+      <a class="pf-link" href="/guide/isv">服务商入驻指南</a>
     </div>
   </footer>
 </div>

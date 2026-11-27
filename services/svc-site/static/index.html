@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>三润支付中心 · 聚合支付与商户进件平台</title>
-<meta name="description" content="三润支付中心：微信支付服务商、支付宝直付通聚合收款，商户进件、分账、提现与对账一站式管理。">
+<title>三润支付中心 · 聚合收款、特约商户进件与查账对账平台</title>
+<meta name="description" content="三润支付中心：面向商户提供统一下单、退款、分账与每日流水查账开放 API；面向微信支付服务商与支付宝 ISV 提供进件审核、通道管理、代理分润与自动对账工作台。">
 <link rel="icon" type="image/png" href="/logo-28.png">
 <link rel="stylesheet" href="/platform/ui/v1/pf-ui.css">
 <link rel="stylesheet" href="/platform/ui/v1/tw.css">
@@ -20,7 +20,7 @@
       <img class="site-logo" src="/logo-108.png" alt="三润支付中心">
       <div>
         <p class="site-brand-title">三润支付中心</p>
-        <p class="site-brand-sub">聚合支付 · 商户进件 · 分账对账</p>
+        <p class="site-brand-sub">聚合支付 · 商户进件 · 查账对账</p>
       </div>
     </a>
     <div class="site-actions">
@@ -40,110 +40,115 @@
 
   <section class="site-hero">
     <div class="site-hero-main">
-      <h1 class="site-hero-title">一个后台，管好微信支付与支付宝收款</h1>
+      <h1 class="site-hero-title">一套开放 API 帮商户收款查账，一个工作台帮服务商进件管通道</h1>
       <p class="site-hero-desc">
-        以微信支付服务商、支付宝直付通身份为下级商户提供进件开户、统一下单、退款、分账、提现和每日对账。
-        业务系统只需对接一套开放 API，不用分别适配两家渠道。
+        商户业务系统只需对接一套开放接口即可接入微信支付与支付宝收款、退款、分账及每日流水查账；
+        服务商与运营人员在控制台完成渠道证书配置、商户进件复核、应用通道分配、代理分润记账与每日渠道对账。
       </p>
       <div class="site-hero-cta">
         <pf-button id="btnHeroPrimary" variant="primary">登录并进入支付中心</pf-button>
-        <a class="pf-link" href="#flow">先看看怎么开通 →</a>
+        <a class="pf-link" href="/docs">商户接入指南 →</a>
+        <a class="pf-link" href="/guide/isv">服务商入驻指南 →</a>
       </div>
-      <p class="pf-muted m-0 site-small">账号由平台管理员分配；忘记密码请联系管理员在平台控制台重置。</p>
+      <p class="pf-muted m-0 site-small">后台登录账号由平台管理员分配；商户研发无需登录后台，凭发放的两套密钥即可调用开放 API。</p>
     </div>
     <div class="site-hero-side">
-      <p class="site-hero-side-title">常用入口</p>
+      <p class="site-hero-side-title">按角色快速进入</p>
+      <a class="site-entry-item" href="/docs">
+        <span><span class="site-entry-name">商户支付开放 API 接入指南</span><br><span class="site-entry-desc">商户研发：签名鉴权、下单、退款、交易流水与按日账单汇总</span></span>
+        <span>→</span>
+      </a>
+      <a class="site-entry-item" href="/guide/isv">
+        <span><span class="site-entry-name">服务商入驻与运营指南</span><br><span class="site-entry-desc">服务商与运营：渠道证书、双人进件、通道费率、分润与对账</span></span>
+        <span>→</span>
+      </a>
       <a id="entryPayConsole" class="site-entry-item" href="/api/pay/console/">
-        <span><span class="site-entry-name">支付中心工作台</span><br><span class="site-entry-desc">服务商、商户、应用、进件、订单、分账、对账</span></span>
+        <span><span class="site-entry-name">支付中心工作台</span><br><span class="site-entry-desc">服务商、商户、应用·通道、进件审核、订单、分账、对账</span></span>
         <span>→</span>
       </a>
       <a class="site-entry-item" href="/api/openapi/console/">
-        <span><span class="site-entry-name">开放平台控制台</span><br><span class="site-entry-desc">为接入方创建 appKey / appSecret、分配接口权限（管理员）</span></span>
-        <span>→</span>
-      </a>
-      <a class="site-entry-item" href="/docs">
-        <span><span class="site-entry-name">接口文档</span><br><span class="site-entry-desc">开放 API 接入指南：凭据、签名、接口、回调、沙箱联调</span></span>
+        <span><span class="site-entry-name">开放平台控制台</span><br><span class="site-entry-desc">签发 appKey / appSecret 与勾选 pay.* 接口权限（管理员）</span></span>
         <span>→</span>
       </a>
       <a class="site-entry-item" href="/platform/info">
-        <span><span class="site-entry-name">平台接口索引</span><br><span class="site-entry-desc">网关对外入口一览；程序请求该地址返回 JSON</span></span>
+        <span><span class="site-entry-name">平台接口索引</span><br><span class="site-entry-desc">网关公共入口一览；程序请求返回 JSON</span></span>
         <span>→</span>
       </a>
+    </div>
+  </section>
+
+  <section id="roles">
+    <div class="site-section-head">
+      <h2 class="site-section-title">你是哪一方？按身份查看对应指南</h2>
+      <span class="pf-muted site-small">商户对接走开放 API，服务商入驻与日常运营走后台控制台</span>
+    </div>
+    <div class="site-grid-2">
+      <div class="pf-card site-role-card">
+        <div class="site-role-head">
+          <h3 class="site-step-title">我是商户 / 研发团队</h3>
+          <pf-badge tone="info">开放 API 对接</pf-badge>
+        </div>
+        <p class="pf-muted m-0 site-small">适合已由服务商开好户的商家商城、小程序、门店收银、SaaS 或财务系统。</p>
+        <ul class="site-list">
+          <li><strong>获取凭据</strong>：向服务商领取开放平台 <code class="pf-code">appKey</code> / <code class="pf-code">appSecret</code>（换取 1 小时有效的 <code class="pf-code">accessToken</code>）以及应用的 <code class="pf-code">App-Id</code> / 签名密钥。</li>
+          <li><strong>下单与退款</strong>：请求 <code class="pf-code"><span class="js-origin">https://apipay.sanrun.fun</span>/api/pay/v1/orders</code> 统一下单（支持 <code class="pf-code">WX_JSAPI</code>、<code class="pf-code">WX_NATIVE</code>、<code class="pf-code">ALI_QR</code> 等），接收异步通知验签履约，支持全额或多次部分退款。</li>
+          <li><strong>查账与核账</strong>：通过 <code class="pf-code">GET /api/pay/v1/bills/transactions</code> 拉取支付与退款成功流水明细，通过 <code class="pf-code">GET /api/pay/v1/bills/summary</code> 获取北京时间按日汇总（含记账手续费、退款手续费冲回与入账净额）。</li>
+          <li><strong>沙箱联调</strong>：联调期可走 <code class="pf-code">sandbox</code> 通道不动真钱测通下单、回调、异常重试与查账，切正式通道无需改代码。</li>
+        </ul>
+        <div class="site-role-foot">
+          <a class="pf-link" href="/docs">阅读《商户支付开放 API 接入指南》 →</a>
+        </div>
+      </div>
+
+      <div class="pf-card site-role-card">
+        <div class="site-role-head">
+          <h3 class="site-step-title">我是服务商 / 运营与审核人员</h3>
+          <pf-badge tone="ok">控制台操作</pf-badge>
+        </div>
+        <p class="pf-muted m-0 site-small">适合微信支付服务商、支付宝直付通 ISV、进件录单员、审核员与平台管理员。</p>
+        <ul class="site-list">
+          <li><strong>服务商证书配置</strong>：登记服务商档案，在「应用·通道」一次性配齐微信服务商商户号、APIv3 密钥、API 证书私钥与微信支付公钥（或支付宝直付通密钥），名下特约商户共用。</li>
+          <li><strong>商户进件与签约</strong>：上传营业执照、法人身份证、结算银行卡与门店场景照片，经提交人与审核员双人复核加密报送微信；签约完成后特约商户号自动写入商户渠道配置。</li>
+          <li><strong>应用通道与权限发放</strong>：为商户创建应用、按支付方式配置通道费率（随时可编辑或启停），配合开放平台签发 <code class="pf-code">pay.order.*</code>、<code class="pf-code">pay.bill.query</code> 等权限。</li>
+          <li><strong>代理分润与每日对账</strong>：支持最多 3 级代理商差额分润台账；一键开启每日自动下载微信/支付宝官方账单逐笔核对差异。</li>
+        </ul>
+        <div class="site-role-foot">
+          <a class="pf-link" href="/guide/isv">阅读《服务商入驻与运营指南》 →</a>
+          <a class="pf-link" href="/api/pay/console/">进入支付中心工作台 →</a>
+        </div>
+      </div>
     </div>
   </section>
 
   <section>
-    <div class="site-section-head"><h2 class="site-section-title">能做什么</h2></div>
+    <div class="site-section-head"><h2 class="site-section-title">核心能力</h2></div>
     <div class="site-grid-4">
       <div class="site-stat-card">
-        <p class="site-stat-title">商户进件</p>
-        <p class="pf-muted m-0 site-small">在线填写营业执照、法人、结算账户等资料，提交到微信支付 / 支付宝审核，实时跟踪签约与验证状态。</p>
+        <p class="site-stat-title">特约商户进件</p>
+        <p class="pf-muted m-0 site-small">证件与银行卡号全程加密落库，支持双人复核、驳回免重填敏感号段、签约后子商户号自动回写。</p>
       </div>
       <div class="site-stat-card">
-        <p class="site-stat-title">聚合收款</p>
-        <p class="pf-muted m-0 site-small">JSAPI、小程序、扫码、H5、APP、电脑网站等支付方式统一下单，异步通知统一格式回调。</p>
+        <p class="site-stat-title">聚合收款与退款</p>
+        <p class="pf-muted m-0 site-small">公众号、小程序、扫码、H5、网站、App 统一下单与部分退款，统一签名回调与后台自动补单。</p>
       </div>
       <div class="site-stat-card">
-        <p class="site-stat-title">分账与提现</p>
-        <p class="pf-muted m-0 site-small">按订单把资金分给代理、合作方等接收方；归集模式下商户余额可申请提现。</p>
+        <p class="site-stat-title">商户查账与渠道对账</p>
+        <p class="pf-muted m-0 site-small">商户通过 API 实时拉取交易流水与按日汇总；服务商每日自动比对渠道官方账单排查长短款。</p>
       </div>
       <div class="site-stat-card">
-        <p class="site-stat-title">每日对账</p>
-        <p class="pf-muted m-0 site-small">每天自动下载渠道账单与本地订单逐笔核对，长短款、金额不符一目了然。</p>
+        <p class="site-stat-title">分账、提现与代理分润</p>
+        <p class="pf-muted m-0 site-small">支持订单分账、归集模式结算提现，以及最多 3 级代理商按成交与退款自动核算差额分润。</p>
       </div>
-    </div>
-  </section>
-
-  <section id="flow">
-    <div class="site-section-head">
-      <h2 class="site-section-title">开通流程</h2>
-      <span class="pf-muted site-small">登录支付中心后按左侧菜单从上到下操作即可</span>
-    </div>
-    <div class="site-grid-3">
-      <div class="site-step-card">
-        <div class="site-step-head"><span class="site-step-num">1</span><h3 class="site-step-title">配置服务商</h3></div>
-        <p class="site-step-body">在「服务商」页填写渠道参数：微信支付服务商商户号、APIv3 密钥、商户证书序列号与私钥、平台公钥；支付宝填应用 AppID、应用私钥、支付宝公钥。每个输入框下都有填写说明。</p>
-      </div>
-      <div class="site-step-card">
-        <div class="site-step-head"><span class="site-step-num">2</span><h3 class="site-step-title">创建商户并进件</h3></div>
-        <p class="site-step-body">在「商户」页新建商户（名称仅作内部标识），然后到「进件」页提交资料。主体名称必须与营业执照完全一致，审核通过后按提示让法人完成签约。</p>
-      </div>
-      <div class="site-step-card">
-        <div class="site-step-head"><span class="site-step-num">3</span><h3 class="site-step-title">创建应用并联调</h3></div>
-        <p class="site-step-body">在「应用」页为商户创建应用、选择支付方式和通道，拿到 AppID 与签名密钥，交给业务系统对接下单接口；可先用沙箱通道走通全流程。</p>
-      </div>
-    </div>
-  </section>
-
-  <section class="site-grid-2">
-    <div class="pf-card">
-      <h2 class="site-section-title mb-3">进件前准备好这些资料</h2>
-      <ul class="site-list">
-        <li><strong>营业执照</strong>：清晰彩色照片或扫描件，统一社会信用代码、名称与执照一致；个体户同样需要。</li>
-        <li><strong>法人身份证</strong>：正反面照片，在有效期内；经营者需与执照上的法定代表人一致。</li>
-        <li><strong>结算账户</strong>：企业填对公账户（开户名 = 执照名称）；个体户可填法人本人银行卡。需要开户银行与支行信息。</li>
-        <li><strong>超级管理员</strong>：负责签约和接收渠道通知的人，需要姓名、手机号、邮箱，非法人时还需身份证号。</li>
-        <li><strong>经营场景</strong>：门店照片、公众号 / 小程序 AppID 或网站域名，按实际售卖的商品选择经营类目。</li>
-      </ul>
-    </div>
-    <div class="pf-card">
-      <h2 class="site-section-title mb-3">接入方怎么对接</h2>
-      <ul class="site-list">
-        <li>接口地址：<code class="pf-code"><span class="js-origin">https://apipay.sanrun.fun</span>/api/pay/v1/…</code></li>
-        <li>获取访问令牌：<code class="pf-code">POST <span class="js-origin">https://apipay.sanrun.fun</span>/oauth/token</code>，请求体传开放平台分配的 <code class="pf-code">appKey</code> / <code class="pf-code">appSecret</code>，令牌有效期 1 小时。</li>
-        <li>调用支付接口时带上 <code class="pf-code">Authorization: Bearer 令牌</code>，并按应用签名密钥对请求签名（网关校验令牌与权限，支付服务再校验商户签名）。</li>
-        <li>下单时传应用 AppID、商户订单号、金额（单位：分）和支付方式代码，例如 <code class="pf-code">WX_JSAPI</code>、<code class="pf-code">ALI_QR</code>。</li>
-        <li>支付结果以异步通知为准：收到通知后验签并返回成功，未确认前可调用查单接口兜底。</li>
-        <li>完整字段说明见 <a class="pf-link" href="/docs">接口文档</a>；联调期间可让管理员开启沙箱通道，不产生真实扣款。</li>
-      </ul>
     </div>
   </section>
 
   <footer class="site-footer">
     <span>© 2026 三润支付中心 · 资金由微信支付、支付宝持牌机构清算</span>
     <div class="site-footer-links">
+      <a class="pf-link" href="/docs">商户接入指南</a>
+      <a class="pf-link" href="/guide/isv">服务商入驻指南</a>
+      <a class="pf-link" href="/platform/info">平台接口索引</a>
       <a class="pf-link" href="/api/pay/console/">支付中心</a>
-      <a class="pf-link" href="/docs">接口文档</a>
     </div>
   </footer>
 </div>

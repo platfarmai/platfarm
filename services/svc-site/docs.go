@@ -14,11 +14,14 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// payGuideMD 是仓库 docs/pay-open-api.zh-CN.md 的副本：go:embed 够不到模块目录之外，
+// payGuideMD 与 isvGuideMD 是仓库 docs/ 下两份指南的副本：go:embed 够不到模块目录之外，
 // 镜像构建上下文也只有本目录。两份是否一致由 TestGuideCopyMatchesRepoDoc 把关。
 //
 //go:embed content/pay-open-api.zh-CN.md
 var payGuideMD []byte
+
+//go:embed content/pay-isv-guide.zh-CN.md
+var isvGuideMD []byte
 
 type tocEntry struct {
 	Level int
@@ -99,8 +102,15 @@ func nodeText(n ast.Node, src []byte) string {
 	return b.String()
 }
 
+type docMeta struct {
+	Subtitle   string
+	MetaDesc   string
+	BannerHTML string
+	FooterNote string
+}
+
 // docsPage 把渲染结果填进 static/docs.html 模板。
-func docsPage(tmpl []byte, g guide) []byte {
+func docsPage(tmpl []byte, g guide, m docMeta) []byte {
 	var toc strings.Builder
 	for _, e := range g.TOC {
 		class := "site-toc-item"
@@ -111,10 +121,14 @@ func docsPage(tmpl []byte, g guide) []byte {
 	}
 	title := g.Title
 	if title == "" {
-		title = "接口文档"
+		title = "接入指南"
 	}
 	return []byte(strings.NewReplacer(
 		"{{TITLE}}", html.EscapeString(title),
+		"{{SUBTITLE}}", html.EscapeString(m.Subtitle),
+		"{{META_DESC}}", html.EscapeString(m.MetaDesc),
+		"{{BANNER}}", m.BannerHTML,
+		"{{FOOTER_NOTE}}", m.FooterNote,
 		"{{TOC}}", toc.String(),
 		"{{BODY}}", g.Body,
 	).Replace(string(tmpl)))

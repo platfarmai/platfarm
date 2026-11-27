@@ -24,13 +24,17 @@ func TestSiteRoutes(t *testing.T) {
 		{http.MethodGet, "/healthz", "", 200, "application/json", `"ok":true`},
 		{http.MethodGet, "/readyz", "", 200, "application/json", `"ok":true`},
 		{http.MethodGet, "/", "text/html", 200, "text/html", "三润支付中心"},
+		{http.MethodGet, "/", "text/html", 200, "text/html", "/guide/isv"},
 		{http.MethodGet, "/style.css", "", 200, "text/css", "--pf-"},
 		{http.MethodGet, "/app.js", "", 200, "application/javascript", "/auth/login"},
 		{http.MethodGet, "/logo-108.png", "", 200, "image/png", ""},
 		{http.MethodGet, "/favicon.ico", "", 200, "image/png", ""},
 		{http.MethodGet, "/pages.js", "", 200, "application/javascript", "/platform/info"},
-		{http.MethodGet, "/docs", "text/html,application/xhtml+xml", 200, "text/html", "支付开放 API 接入指南"},
+		{http.MethodGet, "/docs", "text/html,application/xhtml+xml", 200, "text/html", "商户支付开放 API 接入指南"},
 		{http.MethodGet, "/docs/", "text/html", 200, "text/html", "X-Pay-Signature"},
+		{http.MethodGet, "/guide/isv", "", 200, "text/html", "服务商入驻与运营指南"},
+		{http.MethodGet, "/guide/isv/", "text/html", 200, "text/html", "sp_mchid"},
+		{http.MethodGet, "/docs/isv", "text/html", 200, "text/html", "服务商入驻与运营指南"},
 		{http.MethodGet, "/platform/info", "text/html", 200, "text/html", "平台接口索引"},
 		{http.MethodGet, "/platform/info", "text/html", 200, "text/html", "/oauth/token"},
 		{http.MethodGet, "/docs/nope", "text/html", 404, "text/html", "404"},
@@ -66,24 +70,30 @@ func TestSiteRoutes(t *testing.T) {
 	}
 }
 
-func TestDocsPage_rendersGuideWithAnchorsAndTables(t *testing.T) {
+func TestDocsPage_rendersMerchantAndISVGuides(t *testing.T) {
+	h := newHandler()
+
+	// 1) 商户开放 API 接入指南（/docs）
 	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
 	rec := httptest.NewRecorder()
-	newHandler().ServeHTTP(rec, req)
+	h.ServeHTTP(rec, req)
 	body := rec.Body.String()
 
 	for _, want := range []string{
 		`<h2 id="s-1">`,                         // "## 1. 接入前要拿到什么"
 		`<h3 id="s-2-1">`,                       // "### 2.1 平台 app token"
 		`<a class="site-toc-item" href="#s-6">`, // 目录指向同一批锚点
-		`<a class="site-toc-item site-toc-sub" href="#s-4-5">`,
+		`<a class="site-toc-item site-toc-sub" href="#s-4-6">`,
 		`<div class="site-table-wrap"><table>`,
 		`<code>POST /api/pay/v1/orders</code>`,
+		`<code>GET /api/pay/v1/bills/transactions</code>`,
+		`<code>GET /api/pay/v1/bills/summary</code>`,
 		`<pre><code class="language-json">`,
 		"Bearer &lt;accessToken&gt;", // 代码里的尖括号要转义，不能变成标签
+		`href="/guide/isv"`,          // 能切到服务商入驻指南
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("docs page missing %q", want)
+			t.Errorf("merchant docs page missing %q", want)
 		}
 	}
 	for _, reject := range []string{
@@ -93,11 +103,43 @@ func TestDocsPage_rendersGuideWithAnchorsAndTables(t *testing.T) {
 		"no docs index", // 不应再是那段空的 JSON
 	} {
 		if strings.Contains(body, reject) {
-			t.Errorf("docs page must not contain %q", reject)
+			t.Errorf("merchant docs page must not contain %q", reject)
 		}
 	}
 	if n := strings.Count(body, `id="s-`); n < 10 {
-		t.Errorf("expected at least 10 section anchors, got %d", n)
+		t.Errorf("expected at least 10 section anchors on /docs, got %d", n)
+	}
+
+	// 2) 服务商入驻与运营指南（/guide/isv）
+	isvReq := httptest.NewRequest(http.MethodGet, "/guide/isv", nil)
+	isvRec := httptest.NewRecorder()
+	h.ServeHTTP(isvRec, isvReq)
+	isvBody := isvRec.Body.String()
+
+	for _, want := range []string{
+		`<h2 id="s-1">`,
+		`<h3 id="s-2-2">`,
+		`<div class="site-table-wrap"><table>`,
+		`sp_mchid`,
+		`sub_mchid`,
+		`pay.bill.query`,
+		`href="/docs"`, // 能切回商户接入指南
+	} {
+		if !strings.Contains(isvBody, want) {
+			t.Errorf("isv guide page missing %q", want)
+		}
+	}
+	for _, reject := range []string{
+		"{{",
+		"维护者",
+		"*.vue",
+	} {
+		if strings.Contains(isvBody, reject) {
+			t.Errorf("isv guide page must not contain %q", reject)
+		}
+	}
+	if n := strings.Count(isvBody, `id="s-`); n < 10 {
+		t.Errorf("expected at least 10 section anchors on /guide/isv, got %d", n)
 	}
 }
 
@@ -119,15 +161,24 @@ func TestRenderGuide_headingIDs(t *testing.T) {
 	}
 }
 
-// 发布出去的指南是仓库 docs/ 下那份的副本（go:embed 够不到模块外）。改了一份忘了另一份时在这里失败。
+// 发布出去的指南是仓库 docs/ 下那两份的副本（go:embed 够不到模块外）。改了一份忘了另一份时在这里失败。
 // 镜像内 / 单独拷出本目录构建时没有仓库文档，跳过。
 func TestGuideCopyMatchesRepoDoc(t *testing.T) {
-	repoDoc, err := os.ReadFile(filepath.Join("..", "..", "docs", "pay-open-api.zh-CN.md"))
-	if err != nil {
-		t.Skipf("repo doc not available: %v", err)
-	}
 	norm := func(b []byte) string { return strings.ReplaceAll(string(b), "\r\n", "\n") }
-	if norm(repoDoc) != norm(payGuideMD) {
-		t.Fatal("services/svc-site/content/pay-open-api.zh-CN.md 与 docs/pay-open-api.zh-CN.md 不一致：改完文档后把它复制到 svc-site/content/")
+	pairs := []struct {
+		name  string
+		embed []byte
+	}{
+		{"pay-open-api.zh-CN.md", payGuideMD},
+		{"pay-isv-guide.zh-CN.md", isvGuideMD},
+	}
+	for _, p := range pairs {
+		repoDoc, err := os.ReadFile(filepath.Join("..", "..", "docs", p.name))
+		if err != nil {
+			t.Skipf("repo doc %s not available: %v", p.name, err)
+		}
+		if norm(repoDoc) != norm(p.embed) {
+			t.Fatalf("services/svc-site/content/%s 与 docs/%s 不一致：改完文档后把它复制到 svc-site/content/", p.name, p.name)
+		}
 	}
 }

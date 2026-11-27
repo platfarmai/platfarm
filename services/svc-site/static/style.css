@@ -242,6 +242,31 @@
   color: var(--pf-text);
 }
 
+.site-role-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.site-role-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.site-role-foot {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--pf-border);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: var(--pf-fs-13);
+}
+
 .site-list {
   margin: 0;
   padding-left: 16px;
@@ -372,6 +397,13 @@
 .site-doc h3 {
   margin: 24px 0 8px;
   font-size: var(--pf-fs-14);
+  font-weight: 600;
+  scroll-margin-top: 16px;
+}
+
+.site-doc h4 {
+  margin: 16px 0 8px;
+  font-size: var(--pf-fs-13);
   font-weight: 600;
   scroll-margin-top: 16px;
 }
