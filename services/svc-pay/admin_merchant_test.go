@@ -43,6 +43,26 @@ func TestUpdateMerchant_editsLedgerFieldsAndState(t *testing.T) {
 		t.Fatalf("list does not carry contact fields: %v", list.Body)
 	}
 
+	// 列表带回各渠道的子商户号（进件完成后写入的特约商户号），没有配置的商户给空数组。
+	seedMerchantParams(t, "M-MED", "stub_channel", map[string]string{"sub_mchid": "1900000777"})
+	list = call(t, r, "op", http.MethodGet, "/api/pay/admin/merchants", nil)
+	mustCode(t, list, 200)
+	subOK := false
+	for _, it := range list.Body["items"].([]any) {
+		row := it.(map[string]any)
+		subs, isList := row["subAccounts"].([]any)
+		if !isList {
+			t.Fatalf("subAccounts must always be an array: %v", row)
+		}
+		if row["mchNo"] == "M-MED" && len(subs) == 1 {
+			s := subs[0].(map[string]any)
+			subOK = s["ifCode"] == "stub_channel" && s["subMchid"] == "1900000777"
+		}
+	}
+	if !subOK {
+		t.Fatalf("list does not carry sub merchant id: %v", list.Body)
+	}
+
 	mustCode(t, put("op", "M-MED", map[string]any{"state": stateDisabled}), 200)
 	if m, _ := loadMerchant(ctx, "M-MED"); m.State != stateDisabled || m.MchName != "成都某某商贸有限公司" {
 		t.Fatalf("after disable: %+v", m)

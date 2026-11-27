@@ -134,6 +134,8 @@ async function saveParams() {
       ? "已保存。还缺必填项：" + missing.map((f) => f.label).join("、") + "，补齐前该渠道不能下单。"
       : "渠道参数已保存";
     await loadConfigs();
+    // 商户一层保存的可能是子商户号，刷新商户列表让下面的应用表同步显示。
+    if (owner.value.type === "merchant") merchants.value = (await api("GET", "/admin/merchants")).items || [];
   } catch (e) {
     fail(e);
   }
@@ -219,18 +221,40 @@ function onPassChannel() {
   passForm.value.wayCode = passWays.value[0] || "";
 }
 
-async function savePassage(a) {
-  reset();
-  const rateBps = Math.round(Number(passForm.value.ratePct) * 100);
-  if (!Number.isFinite(rateBps) || rateBps < 0 || rateBps > 10000) return fail(new Error("费率须在 0%–100% 之间"));
+// 同一应用同一支付方式只有一条通道：PUT 即覆盖，已停用的会重新启用。
+async function putPassage(a, ifCode, wayCode, rateBps) {
   try {
-    await api("PUT", "/admin/passages", { appId: a.appId, ifCode: passForm.value.ifCode, wayCode: passForm.value.wayCode, rateBps });
-    msg.value = `${a.appId} 的 ${passForm.value.wayCode} 已走 ${passForm.value.ifCode}，费率 ${pct(rateBps)}`;
+    await api("PUT", "/admin/passages", { appId: a.appId, ifCode, wayCode, rateBps });
+    msg.value = `${a.appId} 的 ${wayCode} 已走 ${ifCode}，费率 ${pct(rateBps)}`;
     await loadApps();
   } catch (e) {
     fail(e);
   }
 }
+
+async function savePassage(a) {
+  reset();
+  const rateBps = Math.round(Number(passForm.value.ratePct) * 100);
+  if (!Number.isFinite(rateBps) || rateBps < 0 || rateBps > 10000) return fail(new Error("费率须在 0%–100% 之间"));
+  if (!passForm.value.ifCode || !passForm.value.wayCode) return fail(new Error("先选择渠道和支付方式"));
+  await putPassage(a, passForm.value.ifCode, passForm.value.wayCode, rateBps);
+}
+
+// 把已有通道的渠道、支付方式、费率填回上面的表单，改完点「保存通道」覆盖。
+function editPassage(p) {
+  reset();
+  passForm.value = { ifCode: p.ifCode, wayCode: p.wayCode, ratePct: (Number(p.rateBps || 0) / 100).toFixed(2) };
+}
+
+async function enablePassage(a, p) {
+  reset();
+  await putPassage(a, p.ifCode, p.wayCode, p.rateBps);
+}
+
+const passEditing = (a) => a.passages.find((p) => p.wayCode === passForm.value.wayCode);
+const subMchid = (mchNo, ifCode) =>
+  (merchants.value.find((m) => m.mchNo === mchNo)?.subAccounts || []).find((s) => s.ifCode === ifCode)?.subMchid || "";
+const subAccounts = (mchNo) => merchants.value.find((m) => m.mchNo === mchNo)?.subAccounts || [];
 
 async function disablePassage(a, p) {
   reset();
@@ -377,7 +401,12 @@ onMounted(load);
             <tr>
               <td><span class="pf-code">{{ a.appId }}</span></td>
               <td>{{ a.appName || "—" }}</td>
-              <td>{{ mchName(a.mchNo) }}</td>
+              <td>
+                <div class="flex flex-col gap-1">
+                  <span>{{ mchName(a.mchNo) }}</span>
+                  <span v-for="s in subAccounts(a.mchNo)" :key="s.ifCode" class="pf-muted">{{ channelNames[s.ifCode] || s.ifCode }}：<span class="pf-code">{{ s.subMchid }}</span></span>
+                </div>
+              </td>
               <td>
                 <div class="flex flex-col gap-1">
                   <span v-for="p in a.passages" :key="p.wayCode" class="pf-dot" :data-tone="p.state !== 'active' ? 'neutral' : p.ifCode === SANDBOX ? 'warn' : 'ok'">
@@ -419,13 +448,40 @@ onMounted(load);
                       <input v-model="passForm.ratePct" class="pf-input" type="number" min="0" max="100" step="0.01">
                     </Field>
                   </div>
-                  <div><pf-button size="sm" variant="primary" @click="savePassage(a)">保存通道</pf-button></div>
-                  <span class="pf-muted">同一种支付方式只能有一条通道，再次保存即覆盖原来那条（已停用的会重新启用）。改费率只影响之后新建的订单，已有订单不变。</span>
-                  <div v-for="p in a.passages.filter((x) => x.state === 'active')" :key="p.wayCode" class="flex gap-2 items-center">
-                    <span>{{ wayLabel(p.wayCode) }} → {{ channelName(p.ifCode) }} · {{ pct(p.rateBps) }}</span>
-                    <pf-button size="sm" variant="ghost" @click="disablePassage(a, p)">停用</pf-button>
+                  <div class="flex gap-2 items-center flex-wrap">
+                    <pf-button size="sm" variant="primary" @click="savePassage(a)">{{ passEditing(a) ? "保存修改" : "保存通道" }}</pf-button>
+                    <span v-if="passEditing(a)" class="pf-dot" data-tone="warn">{{ passForm.wayCode }} 已有一条通道，保存会覆盖它{{ passEditing(a).state === "active" ? "" : "并重新启用" }}</span>
                   </div>
-                  <span v-if="a.passages.some((x) => x.state === 'active')" class="pf-muted">停用某条通道后，该应用再用这种支付方式下单会被拒绝；已支付订单的退款、回调不受影响。</span>
+                  <span class="pf-muted">同一种支付方式只能有一条通道，再次保存即覆盖原来那条（已停用的会重新启用）。改费率只影响之后新建的订单，已有订单不变。</span>
+                  <table v-if="a.passages.length" class="pf-table">
+                    <thead>
+                      <tr><th>支付方式</th><th>渠道</th><th>费率</th><th>渠道子商户号</th><th>状态</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="p in a.passages" :key="p.wayCode">
+                        <td>{{ wayLabel(p.wayCode) }}</td>
+                        <td>{{ channelName(p.ifCode) }}</td>
+                        <td>{{ pct(p.rateBps) }}</td>
+                        <td>
+                          <span v-if="p.ifCode === SANDBOX" class="pf-muted">沙箱不需要</span>
+                          <span v-else-if="subMchid(a.mchNo, p.ifCode)" class="pf-code">{{ subMchid(a.mchNo, p.ifCode) }}</span>
+                          <span v-else class="pf-dot" data-tone="danger">未配置，下单会失败</span>
+                        </td>
+                        <td><span class="pf-dot" :data-tone="p.state === 'active' ? 'ok' : 'neutral'">{{ p.state === "active" ? "启用" : "已停用" }}</span></td>
+                        <td>
+                          <div class="flex gap-2 flex-wrap">
+                            <pf-button size="sm" @click="editPassage(p)">编辑</pf-button>
+                            <pf-button v-if="p.state === 'active'" size="sm" variant="ghost" @click="disablePassage(a, p)">停用</pf-button>
+                            <pf-button v-else size="sm" variant="ghost" @click="enablePassage(a, p)">启用</pf-button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <span v-if="a.passages.length" class="pf-muted">
+                    「编辑」把这条通道的渠道、支付方式和费率填回上面的表单，改完点「保存修改」；「停用」后该应用再用这种支付方式下单会被拒绝，已支付订单的退款、回调不受影响，随时可以「启用」恢复。
+                    「渠道子商户号」是这个商户在该渠道的特约 / 二级商户号，进件完成后自动写入，也可以在上面「渠道参数」里把「给谁配置」切到商户后手工填写。
+                  </span>
                 </div>
               </td>
             </tr>

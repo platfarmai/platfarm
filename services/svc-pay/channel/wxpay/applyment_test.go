@@ -456,6 +456,19 @@ func TestApplyment_RegionCodeValidation(t *testing.T) {
 	}
 }
 
+func TestApplyment_SuperContactRejectsMaskedID(t *testing.T) {
+	a := sampleApplyment()
+	a.Extra["wx_contact_type"] = "SUPER"
+	a.Extra["wx_contact_id_no"] = "110***2345"
+	a.Extra["wx_contact_id_valid"] = "2020-01-01,长期"
+	a.Images["contact_id_front"] = "21"
+	a.Images["contact_id_back"] = "22"
+	p := strings.Join((&partner{}).ApplymentProblems(a), "\n")
+	if !strings.Contains(p, "extra.wx_contact_id_no（经办人身份证号）不能包含脱敏星号 *") {
+		t.Fatalf("expected masked wx_contact_id_no rejection, got:\n%s", p)
+	}
+}
+
 func decryptOAEP(t *testing.T, priv *rsa.PrivateKey, b64 string) string {
 	t.Helper()
 	ct, err := base64.StdEncoding.DecodeString(b64)

@@ -106,6 +106,19 @@ func TestApplymentProblems_RejectsNonNumericImageID(t *testing.T) {
 	}
 }
 
+func TestApplymentProblems_RejectsMaskedSecrets(t *testing.T) {
+	a := validApplyment()
+	a.LegalPerson.IDNo = "110***1234"
+	a.SettlementAccount.AccountNo = "622***7890"
+	p := strings.Join(a.Problems(), "\n")
+	if !strings.Contains(p, "legal_person.id_no 不能包含脱敏星号 *") {
+		t.Fatalf("expected id_no mask rejection, got %s", p)
+	}
+	if !strings.Contains(p, "settlement_account.account_no 不能包含脱敏星号 *") {
+		t.Fatalf("expected account_no mask rejection, got %s", p)
+	}
+}
+
 func TestMaskID(t *testing.T) {
 	if got := MaskID("110101199001011234"); got != "110***1234" {
 		t.Fatalf("got %s", got)

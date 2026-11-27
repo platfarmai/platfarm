@@ -120,7 +120,11 @@ func (a Applyment) Problems() []string {
 	l := a.LegalPerson
 	need(l.Name != "", "legal_person.name 必填")
 	need(l.IDType != "", "legal_person.id_type 必填")
-	need(l.IDNo != "", "legal_person.id_no 必填")
+	if strings.TrimSpace(l.IDNo) == "" {
+		p = append(p, "legal_person.id_no 必填")
+	} else if strings.Contains(l.IDNo, "*") {
+		p = append(p, "legal_person.id_no 不能包含脱敏星号 *，请填写完整证件号（修改资料时不改可留空）")
+	}
 	need(validRe.MatchString(l.IDValid), "legal_person.id_valid 格式须为 YYYY-MM-DD,YYYY-MM-DD 或 YYYY-MM-DD,长期")
 	need(l.Phone == "" || phoneRe.MatchString(l.Phone), "legal_person.phone 格式非法")
 
@@ -148,7 +152,11 @@ func (a Applyment) Problems() []string {
 	need(sa.Type == "corporate" || sa.Type == "personal", "settlement_account.type 必须是 corporate|personal")
 	need(sa.Bank != "", "settlement_account.bank 必填")
 	need(sa.AccountName != "", "settlement_account.account_name 必填")
-	need(sa.AccountNo != "", "settlement_account.account_no 必填")
+	if strings.TrimSpace(sa.AccountNo) == "" {
+		p = append(p, "settlement_account.account_no 必填")
+	} else if strings.Contains(sa.AccountNo, "*") {
+		p = append(p, "settlement_account.account_no 不能包含脱敏星号 *，请填写完整账号（修改资料时不改可留空）")
+	}
 	if sa.Type == "corporate" {
 		need(sa.AccountName == s.Name, "对公账户 account_name 必须与 subject.name 一致")
 	} else {

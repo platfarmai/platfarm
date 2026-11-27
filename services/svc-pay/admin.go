@@ -243,15 +243,66 @@ func handleListMerchants(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
 	}
-	defer rows.Close()
-	items := []Merchant{}
+	items := []*merchantItem{}
+	byNo := map[string]*merchantItem{}
+	nos := []string{}
 	for rows.Next() {
-		var m Merchant
+		m := &merchantItem{SubAccounts: []subAccount{}}
 		if rows.Scan(m.scanDest()...) == nil {
 			items = append(items, m)
+			byNo[m.MchNo] = m
+			nos = append(nos, m.MchNo)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	if len(nos) > 0 {
+		crows, err := db.Query(c.Request.Context(), `SELECT owner_id, if_code, if_params FROM pay_channel_config
+			WHERE owner_type='merchant' AND state='active' AND owner_id = ANY($1) ORDER BY if_code`, nos)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+			return
+		}
+		defer crows.Close()
+		for crows.Next() {
+			var ownerID, ifCode, sealed string
+			if crows.Scan(&ownerID, &ifCode, &sealed) != nil {
+				continue
+			}
+			plain, err := open(sealed)
+			if err != nil {
+				continue
+			}
+			if no := subAccountNo(parseParams(plain)); no != "" {
+				byNo[ownerID].SubAccounts = append(byNo[ownerID].SubAccounts, subAccount{IfCode: ifCode, SubMchID: no})
+			}
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// subAccount 商户在某个渠道的子商户号（微信特约 / 二级商户号 sub_mchid，支付宝直付通 smid）。
+type subAccount struct {
+	IfCode   string `json:"ifCode"`
+	SubMchID string `json:"subMchid"`
+}
+
+// merchantItem 商户列表行：台账字段 + 各渠道的子商户号。子商户号不是密钥，可以回显。
+type merchantItem struct {
+	Merchant
+	SubAccounts []subAccount `json:"subAccounts"`
+}
+
+func subAccountNo(params map[string]string) string {
+	for _, k := range []string{"sub_mchid", "smid"} {
+		if v := params[k]; v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // ── 应用 ────────────────────────────────────────────────────

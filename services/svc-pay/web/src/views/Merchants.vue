@@ -14,6 +14,7 @@ const mchForm = ref({ mchNo: "", mchName: "", mchShortName: "", mchType: 2, isvN
 const editing = ref(null); // 正在编辑的商户：{ mchNo, mchName, mchShortName, mchType, isvNo, contactName, contactPhone }
 
 const isvName = (no) => isvs.value.find((i) => i.isvNo === no)?.isvName || "";
+const channelShort = { wxpay_partner: "微信特约", wxpay_ecommerce: "微信收付通", alipay_zft: "支付宝直付通" };
 const rebatePct = computed(() => (Number(isvForm.value.rebateRateBps || 0) / 100).toFixed(2));
 
 function reset() {
@@ -292,13 +293,19 @@ onMounted(load);
       <h2 class="m-0 mb-2 text-[14px] font-semibold">商户</h2>
       <table class="pf-table">
         <thead>
-          <tr><th>商户号</th><th>名称</th><th>类型</th><th>服务商</th><th>代理商</th><th>联系人</th><th>状态</th><th></th></tr>
+          <tr><th>商户号</th><th>名称</th><th>类型</th><th>渠道子商户号</th><th>服务商</th><th>代理商</th><th>联系人</th><th>状态</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="m in merchants" :key="m.mchNo">
             <td><span class="pf-code">{{ m.mchNo }}</span></td>
             <td>{{ m.mchName }}<span v-if="m.mchShortName" class="pf-muted">　{{ m.mchShortName }}</span></td>
             <td>{{ m.mchType === 1 ? "普通" : "特约" }}</td>
+            <td>
+              <div class="flex flex-col gap-1">
+                <span v-for="s in m.subAccounts || []" :key="s.ifCode"><span class="pf-code">{{ s.subMchid }}</span><span class="pf-muted">　{{ channelShort[s.ifCode] || s.ifCode }}</span></span>
+                <span v-if="!(m.subAccounts || []).length" class="pf-muted">未开通</span>
+              </div>
+            </td>
             <td>{{ m.isvNo ? (isvName(m.isvNo) || m.isvNo) : "—" }}</td>
             <td>{{ m.agentNo || "—" }}</td>
             <td>{{ m.contactName || "—" }}<span v-if="m.contactPhone" class="pf-muted">　{{ m.contactPhone }}</span></td>
@@ -312,11 +319,14 @@ onMounted(load);
             </td>
           </tr>
           <tr v-if="!merchants.length">
-            <td colspan="8"><span class="pf-muted">暂无商户</span></td>
+            <td colspan="9"><span class="pf-muted">暂无商户</span></td>
           </tr>
         </tbody>
       </table>
-      <p class="pf-muted m-0 mt-2">代理商归属在「代理商·分润」页设置；商户的微信特约商户号在「应用·通道 → 渠道参数」里查看。</p>
+      <p class="pf-muted m-0 mt-2">
+        「商户号」是本系统内部的编号；「渠道子商户号」是微信 / 支付宝给这个商户开的号（微信叫特约商户号），进件完成后自动写入，
+        显示「未开通」说明还没进件完成，这时不能用真实渠道下单。要手工填写或修改它，到「应用·通道 → 渠道参数」把「给谁配置」切到商户。代理商归属在「代理商·分润」页设置。
+      </p>
     </div>
   </div>
 </template>

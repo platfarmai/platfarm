@@ -92,13 +92,57 @@ func mapExtraSecret(a channel.Applyment, f func(string) (string, error)) (channe
 // sealPayload 落库前密封证件号与银行账号。
 func sealPayload(a channel.Applyment) (channel.Applyment, error) {
 	var err error
-	if a.LegalPerson.IDNo, err = seal(a.LegalPerson.IDNo); err != nil {
+	if a.LegalPerson.IDNo, err = seal(strings.TrimSpace(a.LegalPerson.IDNo)); err != nil {
 		return a, err
 	}
-	if a.SettlementAccount.AccountNo, err = seal(a.SettlementAccount.AccountNo); err != nil {
+	if a.SettlementAccount.AccountNo, err = seal(strings.TrimSpace(a.SettlementAccount.AccountNo)); err != nil {
 		return a, err
 	}
-	return mapExtraSecret(a, seal)
+	return mapExtraSecret(a, func(v string) (string, error) { return seal(strings.TrimSpace(v)) })
+}
+
+// keepSecret 修改资料时，脱敏字段留空或原样回传当前掩码则沿用已存明文；填了新值则采用新值。
+func keepSecret(next, prevSealed string) string {
+	v := strings.TrimSpace(next)
+	if prevSealed == "" {
+		return v
+	}
+	if v == "" {
+		if prevPlain, err := open(prevSealed); err == nil {
+			return prevPlain
+		}
+		return ""
+	}
+	if strings.Contains(v, "*") {
+		if prevPlain, err := open(prevSealed); err == nil && v == channel.MaskID(prevPlain) {
+			return prevPlain
+		}
+	}
+	return v
+}
+
+// mergePrevSecrets 修改资料时回填未改动的敏感字段（法人证件号、结算账号、经办人身份证号）。
+func mergePrevSecrets(next channel.Applyment, prevRaw json.RawMessage) channel.Applyment {
+	var prev channel.Applyment
+	if json.Unmarshal(prevRaw, &prev) != nil {
+		return next
+	}
+	next.LegalPerson.IDNo = keepSecret(next.LegalPerson.IDNo, prev.LegalPerson.IDNo)
+	next.SettlementAccount.AccountNo = keepSecret(next.SettlementAccount.AccountNo, prev.SettlementAccount.AccountNo)
+	nextContact := strings.TrimSpace(next.Extra[extraContactIDNo])
+	if next.Extra["wx_contact_type"] == "SUPER" {
+		if kept := keepSecret(nextContact, prev.Extra[extraContactIDNo]); kept != next.Extra[extraContactIDNo] {
+			next.Extra = maps.Clone(next.Extra)
+			if next.Extra == nil {
+				next.Extra = map[string]string{}
+			}
+			next.Extra[extraContactIDNo] = kept
+		}
+	} else if strings.Contains(nextContact, "*") {
+		next.Extra = maps.Clone(next.Extra)
+		delete(next.Extra, extraContactIDNo)
+	}
+	return next
 }
 
 // openPayload 解封（提交渠道前）。
@@ -547,6 +591,7 @@ func handleUpdateApplyment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "payload 必填"})
 		return
 	}
+	in.Payload = mergePrevSecrets(in.Payload, a.Payload)
 	if problems := applymentProblems(a.IfCode, in.Payload); len(problems) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "资料不完整", "problems": problems})
 		return

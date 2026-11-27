@@ -304,6 +304,115 @@ func TestApplyment_ApprovedWithoutChannelIDCanEdit(t *testing.T) {
 	}
 }
 
+func TestApplyment_UpdateBlankOrMaskKeepsSecrets(t *testing.T) {
+	requireDB(t)
+	fetchFile = stubFetchFile
+	seedISVAndMerchant(t, "ISV1", "M-KEEP", "wxpay_partner")
+	r := testRouter()
+	ctx := context.Background()
+
+	mkPayload := func(idNo, acctNo, contactType, contactIDNo string) map[string]any {
+		p := samplePayload()
+		p["legal_person"].(map[string]any)["id_no"] = idNo
+		p["settlement_account"].(map[string]any)["account_no"] = acctNo
+		p["contact"].(map[string]any)["email"] = "mch@example.com"
+		p["business"].(map[string]any)["scene"] = map[string]any{"types": []string{"web"}}
+		p["images"] = map[string]string{
+			"license": "101", "id_front": "102", "id_back": "103",
+			"contact_id_front": "104", "contact_id_back": "105",
+		}
+		p["extra"] = map[string]string{
+			"wx_qualification_type": "门户论坛/网络广告及推广/软件开发/其他互联网服务",
+			"web_domain":            "https://shop.example.com",
+			"wx_contact_type":       contactType,
+			"wx_contact_id_valid":   "2020-01-01,长期",
+			extraContactIDNo:        contactIDNo,
+		}
+		return p
+	}
+
+	// 新建时不能留空，也不能传掩码。
+	mustCode(t, call(t, r, "op", http.MethodPost, "/api/pay/admin/applyments",
+		map[string]any{"mchNo": "M-KEEP", "ifCode": "wxpay_partner", "payload": mkPayload("", "6225881234567890", "LEGAL", "")}), 400)
+	mustCode(t, call(t, r, "op", http.MethodPost, "/api/pay/admin/applyments",
+		map[string]any{"mchNo": "M-KEEP", "ifCode": "wxpay_partner", "payload": mkPayload("110***1234", "6225881234567890", "LEGAL", "")}), 400)
+
+	// 新建草稿（含经办人 SUPER 身份证号）。
+	const (
+		origID      = "110101199001011234"
+		origAcct    = "6225881234567890"
+		origContact = "110101199202022345"
+	)
+	res := call(t, r, "op", http.MethodPost, "/api/pay/admin/applyments",
+		map[string]any{"mchNo": "M-KEEP", "ifCode": "wxpay_partner", "payload": mkPayload(origID, origAcct, "SUPER", origContact)})
+	mustCode(t, res, 200)
+	id := res.Body["applyment"].(map[string]any)["applymentId"].(string)
+
+	assertStored := func(wantID, wantAcct, wantContact string) {
+		t.Helper()
+		row, err := findApplyment(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sealed channel.Applyment
+		if err := json.Unmarshal(row.Payload, &sealed); err != nil {
+			t.Fatal(err)
+		}
+		opened, err := openPayload(sealed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opened.LegalPerson.IDNo != wantID || opened.SettlementAccount.AccountNo != wantAcct || opened.Extra[extraContactIDNo] != wantContact {
+			t.Fatalf("opened secrets mismatch: id=%q acct=%q contact=%q",
+				opened.LegalPerson.IDNo, opened.SettlementAccount.AccountNo, opened.Extra[extraContactIDNo])
+		}
+	}
+	assertStored(origID, origAcct, origContact)
+
+	// 1. 修改资料时三个敏感字段全部留空 → 沿用已存明文。
+	res = call(t, r, "op", http.MethodPut, "/api/pay/admin/applyments/"+id,
+		map[string]any{"payload": mkPayload("", "   ", "SUPER", "")})
+	mustCode(t, res, 200)
+	assertStored(origID, origAcct, origContact)
+
+	// 2. 原样回传当前掩码 → 同样沿用已存明文。
+	res = call(t, r, "op", http.MethodPut, "/api/pay/admin/applyments/"+id,
+		map[string]any{"payload": mkPayload("110***1234", "622***7890", "SUPER", "110***2345")})
+	mustCode(t, res, 200)
+	assertStored(origID, origAcct, origContact)
+
+	// 3. 传入不匹配的掩码 → 400 拒绝，防止把星号密文落库。
+	res = call(t, r, "op", http.MethodPut, "/api/pay/admin/applyments/"+id,
+		map[string]any{"payload": mkPayload("999***9999", "", "SUPER", "")})
+	mustCode(t, res, 400)
+	if !strings.Contains(fmt.Sprint(res.Body["problems"]), "不能包含脱敏星号 *") {
+		t.Fatalf("expected mask rejection problem, got %v", res.Body)
+	}
+
+	// 4. 填入新明文 → 覆盖保存并返回新掩码。
+	const (
+		newID      = "310101198808088888"
+		newAcct    = "6214830011223344"
+		newContact = "310101199505056789"
+	)
+	res = call(t, r, "op", http.MethodPut, "/api/pay/admin/applyments/"+id,
+		map[string]any{"payload": mkPayload(newID, newAcct, "SUPER", newContact)})
+	mustCode(t, res, 200)
+	assertStored(newID, newAcct, newContact)
+	masked := res.Body["applyment"].(map[string]any)["payload"].(map[string]any)
+	if masked["legal_person"].(map[string]any)["id_no"] != "310***8888" ||
+		masked["settlement_account"].(map[string]any)["account_no"] != "621***3344" ||
+		masked["extra"].(map[string]any)[extraContactIDNo] != "310***6789" {
+		t.Fatalf("unexpected masked payload after override: %v", masked)
+	}
+
+	// 5. 切回法人本人（LEGAL）且 extra 里残留掩码时，自动清理经办人身份证号，不报错也不把掩码密封入库。
+	res = call(t, r, "op", http.MethodPut, "/api/pay/admin/applyments/"+id,
+		map[string]any{"payload": mkPayload("", "", "LEGAL", "310***6789")})
+	mustCode(t, res, 200)
+	assertStored(newID, newAcct, "")
+}
+
 func TestApplyment_ValidationAndGuards(t *testing.T) {
 	requireDB(t)
 	fetchFile = stubFetchFile

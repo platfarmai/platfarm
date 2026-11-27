@@ -22,6 +22,7 @@ const showJson = ref(false);
 const uploading = ref("");
 const uploadProgressName = ref("");
 const uploads = ref({}); // kind -> { previewUrl, blob, filename, size, fileId, url, error, broken }
+const savedMask = ref({ id_no: "", account_no: "", wx_contact_id_no: "" });
 const fileInputs = {};
 let writing = false;
 
@@ -281,6 +282,7 @@ function restoreLocalDraft() {
       payloadText: "",
     };
     current.value = null;
+    savedMask.value = { id_no: "", account_no: "", wx_contact_id_no: "" };
     fields.value = fill(saved.fields);
     syncBankSeparate();
     const restored = {};
@@ -609,6 +611,7 @@ function resetNewDraft() {
   const first = merchants.value.find((m) => m.isvNo) || merchants.value[0];
   form.value = { mchNo: first?.mchNo || "", ifCode: "wxpay_partner", payloadText: "" };
   current.value = null;
+  savedMask.value = { id_no: "", account_no: "", wx_contact_id_no: "" };
   begin(blank());
 }
 
@@ -622,8 +625,13 @@ function cancelEdit() {
 function startEdit() {
   const a = current.value.applyment;
   revokeAllUploads();
-  // 脱敏字段需重新填写：后端只回传掩码。
+  // 后端只回传掩码：输入框清空，掩码留作提示。留空保存时后端沿用已存的完整号码。
   const p = JSON.parse(JSON.stringify(a.payload));
+  savedMask.value = {
+    id_no: p.legal_person?.id_no || "",
+    account_no: p.settlement_account?.account_no || "",
+    wx_contact_id_no: p.extra?.wx_contact_id_no || "",
+  };
   p.legal_person.id_no = "";
   p.settlement_account.account_no = "";
   if (p.extra?.wx_contact_id_no) p.extra.wx_contact_id_no = "";
@@ -894,8 +902,12 @@ onUnmounted(revokeAllUploads);
             <option value="foreign_residence">外国人居留证</option>
           </select>
         </Field>
-        <Field label="证件号" required hint="证件上的号码，照着原件填；身份证是 18 位，末位是 X 的写大写 X。保存后只显示前 3 后 4 位，中间打码；所以每次点「修改资料」都要把完整号码重新填一遍。发给微信时是加密传输的。">
-          <input class="pf-input" :value="fields.legal_person.id_no" placeholder="例如 51010019900101123X" autocomplete="off" @input="onInput('legal_person.id_no', $event)">
+        <Field label="证件号" :required="!savedMask.id_no">
+          <input class="pf-input" :value="fields.legal_person.id_no" :placeholder="savedMask.id_no ? `已保存 ${savedMask.id_no}，不改请留空` : '例如 51010019900101123X'" autocomplete="off" @input="onInput('legal_person.id_no', $event)">
+          <template #hint>
+            证件上的号码，照着原件填；身份证是 18 位，末位是 X 的写大写 X。保存后只显示前 3 后 4 位，中间打码；发给微信时是加密传输的。
+            <b v-if="savedMask.id_no">已保存的号码是 {{ savedMask.id_no }}：不用改就留空，系统会沿用原来的完整号码；要改就填新的完整号码。</b>
+          </template>
         </Field>
         <Field label="证件有效期" required>
           <input class="pf-input" :value="fields.legal_person.id_valid" placeholder="2020-01-01,长期" @input="onInput('legal_person.id_valid', $event)">
@@ -938,8 +950,12 @@ onUnmounted(revokeAllUploads);
           <input class="pf-input" :value="fields.contact.email" placeholder="例如 zhangsan@example.com" @input="onInput('contact.email', $event)">
         </Field>
         <template v-if="fields.extra.wx_contact_type === 'SUPER'">
-          <Field label="经办人身份证号" required hint="经办人本人的 18 位身份证号（不是法人的）。保存后同样只显示掩码，修改资料时要重新填。">
-            <input class="pf-input" :value="fields.extra.wx_contact_id_no || ''" autocomplete="off" @input="onInput('extra.wx_contact_id_no', $event)">
+          <Field label="经办人身份证号" :required="!savedMask.wx_contact_id_no">
+            <input class="pf-input" :value="fields.extra.wx_contact_id_no || ''" :placeholder="savedMask.wx_contact_id_no ? `已保存 ${savedMask.wx_contact_id_no}，不改请留空` : ''" autocomplete="off" @input="onInput('extra.wx_contact_id_no', $event)">
+            <template #hint>
+              经办人本人的 18 位身份证号（不是法人的）。保存后同样只显示前 3 后 4 位。
+              <b v-if="savedMask.wx_contact_id_no">已保存的号码是 {{ savedMask.wx_contact_id_no }}：不用改就留空；要改就填新的完整号码。</b>
+            </template>
           </Field>
           <Field label="经办人证件有效期" required hint="经办人身份证国徽面的有效期限，格式同上：2015-06-01,2035-06-01 或 2015-06-01,长期（英文逗号）。">
             <input class="pf-input" :value="fields.extra.wx_contact_id_valid || ''" placeholder="2020-01-01,长期" @input="onInput('extra.wx_contact_id_valid', $event)">
@@ -1024,8 +1040,12 @@ onUnmounted(revokeAllUploads);
         <Field label="户名" required :hint="fields.settlement_account.type === 'corporate' ? '对公账户的户名。必须和上面「商户名称」一字不差（系统保存时会核对，不一致会直接报错）。' : '对私银行卡的持卡人姓名。必须和上面「法人 / 经营者」的姓名一字不差（系统保存时会核对，不一致会直接报错）。'">
           <input class="pf-input" :value="fields.settlement_account.account_name" @input="onInput('settlement_account.account_name', $event)">
         </Field>
-        <Field label="账号" required hint="对公账号或银行卡号，只填数字，不要带空格和横线。保存后只显示前 3 后 4 位，所以每次「修改资料」都要重新填完整账号。填错会导致微信打款验证失败或结算不到账，请对着开户许可证 / 银行卡核对。">
-          <input class="pf-input" :value="fields.settlement_account.account_no" autocomplete="off" @input="onInput('settlement_account.account_no', $event)">
+        <Field label="账号" :required="!savedMask.account_no">
+          <input class="pf-input" :value="fields.settlement_account.account_no" :placeholder="savedMask.account_no ? `已保存 ${savedMask.account_no}，不改请留空` : ''" autocomplete="off" @input="onInput('settlement_account.account_no', $event)">
+          <template #hint>
+            对公账号或银行卡号，只填数字，不要带空格和横线。保存后只显示前 3 后 4 位。填错会导致微信打款验证失败或结算不到账，请对着开户许可证 / 银行卡核对。
+            <b v-if="savedMask.account_no">已保存的账号是 {{ savedMask.account_no }}：不用改就留空，系统会沿用原来的完整账号；要改就填新的完整账号。</b>
+          </template>
         </Field>
         <Field class="col-span-2" tag="div" label="开户行所在地" hint="开户支行在哪个城市。绝大多数情况和经营地址在同一个城市，保持默认即可；开户行在别的城市时改成「单独选择」，再选到市（或区县）。">
           <select class="pf-input" :value="bankSeparateRegion ? 'separate' : 'same'" @change="onBankMode">

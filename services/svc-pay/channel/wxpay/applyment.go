@@ -53,7 +53,11 @@ func (p *partner) ApplymentProblems(a channel.Applyment) []string {
 		need(a.SettlementAccount.Branch != "", "开户银行为“其他银行”时 settlement_account.branch（开户行全称含支行）必填")
 	}
 	if a.Extra["wx_contact_type"] == "SUPER" {
-		need(a.Extra["wx_contact_id_no"] != "", "extra.wx_contact_id_no（经办人身份证号）必填")
+		if strings.TrimSpace(a.Extra["wx_contact_id_no"]) == "" {
+			out = append(out, "extra.wx_contact_id_no（经办人身份证号）必填")
+		} else if strings.Contains(a.Extra["wx_contact_id_no"], "*") {
+			out = append(out, "extra.wx_contact_id_no（经办人身份证号）不能包含脱敏星号 *，请填写完整身份证号（修改资料时不改可留空）")
+		}
 		need(channel.ValidPeriod(a.Extra["wx_contact_id_valid"]), "extra.wx_contact_id_valid（经办人证件有效期）格式须为 YYYY-MM-DD,YYYY-MM-DD 或 YYYY-MM-DD,长期")
 		need(a.Images["contact_id_front"] != "", "images.contact_id_front（经办人身份证人像面）必填")
 		need(a.Images["contact_id_back"] != "", "images.contact_id_back（经办人身份证国徽面）必填")
