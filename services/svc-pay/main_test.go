@@ -115,6 +115,16 @@ func call(t *testing.T, r *gin.Engine, user, method, path string, body any) resp
 	return out
 }
 
+func callRaw(t *testing.T, r *gin.Engine, user, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("X-Test-User", user)
+	req.Header.Set("Authorization", "Bearer test-"+user)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
 func mustCode(t *testing.T, r resp, want int) {
 	t.Helper()
 	if r.Code != want {

@@ -5,13 +5,14 @@ defineProps({
   label: { type: String, default: "" },
   hint: { type: String, default: "" },
   required: { type: Boolean, default: false },
+  tag: { type: String, default: "label" },
 });
 </script>
 
 <template>
-  <label class="flex flex-col gap-1 text-[13px]">
+  <component :is="tag" class="flex flex-col gap-1 text-[13px]">
     <span><slot name="label">{{ label }}</slot><span v-if="required" class="text-danger" title="必填"> *</span></span>
     <slot />
     <span v-if="hint || $slots.hint" class="pf-muted"><slot name="hint">{{ hint }}</slot></span>
-  </label>
+  </component>
 </template>

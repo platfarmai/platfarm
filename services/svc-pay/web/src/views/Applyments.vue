@@ -1,8 +1,11 @@
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { api } from "../api.js";
 import { when, applymentStates, stateTone } from "../utils.js";
 import Field from "../components/Field.vue";
+
+const DRAFT_KEY = "svc_pay_applyment_draft_v1";
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
 const err = ref("");
 const msg = ref("");
@@ -16,7 +19,26 @@ const fields = ref(blank());
 const jsonError = ref("");
 const showJson = ref(false);
 const uploading = ref("");
+const uploadProgressName = ref("");
+const uploads = ref({}); // kind -> { previewUrl, blob, filename, size, fileId, url, error, broken }
+const fileInputs = {};
 let writing = false;
+
+const imageNames = {
+  license: "营业执照 / 法人证书",
+  id_front: "法人证件人像面",
+  id_back: "法人证件国徽面 / 反面",
+  contact_id_front: "经办人身份证人像面",
+  contact_id_back: "经办人身份证国徽面",
+  storefront: "门头照",
+  interior: "店内环境照",
+  mp_pic: "公众号页面截图",
+  mini_program_pic: "小程序截图",
+  app_pic: "APP 首页截图",
+  app_pic_2: "APP 尾页截图",
+  app_pic_3: "APP 应用内截图",
+  app_pic_4: "APP 支付页截图",
+};
 
 // 每种证照拍什么、有什么要求。
 const imageHints = {
@@ -150,13 +172,134 @@ const pathLabels = [
 ];
 function humanize(text) {
   let out = String(text);
-  out = out.replace(/images\.([a-z0-9_]+)/g, (_, kind) => "证照「" + (imageKinds.value.find(([k]) => k === kind)?.[1] || kind) + "」");
+  out = out.replace(/images\.([a-z0-9_]+)/g, (_, kind) => "证照「" + (imageKinds.value.find(([k]) => k === kind)?.[1] || imageNames[kind] || kind) + "」");
   out = out.replace(/rates\[\d+\]\.fee_rate_bps/g, "「费率」").replace(/rates\[\d+\]\.way_code/g, "「费率·支付方式」");
   for (const [path, label] of pathLabels) out = out.replaceAll(path, "「" + label + "」");
   return out;
 }
 function fail(e) {
   err.value = humanize(e.message || String(e));
+}
+
+function isNumericId(v) {
+  return typeof v === "string" && /^[1-9]\d*$/.test(v.trim());
+}
+
+function formatBytes(n) {
+  const b = Number(n || 0);
+  if (!b) return "—";
+  if (b < 1024) return b + " B";
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+  return (b / (1024 * 1024)).toFixed(2) + " MB";
+}
+
+function cleanStorageUrl(rawUrl) {
+  if (!rawUrl) return "";
+  try {
+    const u = new URL(rawUrl, window.location.origin);
+    return u.origin + u.pathname;
+  } catch {
+    return String(rawUrl).split("?")[0];
+  }
+}
+
+function mediaUrl(applymentId, kind) {
+  return `/api/pay/admin/applyments/${encodeURIComponent(applymentId)}/media/${encodeURIComponent(kind)}`;
+}
+
+function setFileInput(kind, el) {
+  if (el) fileInputs[kind] = el;
+  else delete fileInputs[kind];
+}
+
+function pickFile(kind) {
+  fileInputs[kind]?.click();
+}
+
+function revokeUpload(kind) {
+  const prev = uploads.value[kind];
+  if (prev?.blob && prev.previewUrl) URL.revokeObjectURL(prev.previewUrl);
+}
+
+function revokeAllUploads() {
+  for (const k of Object.keys(uploads.value)) revokeUpload(k);
+  uploads.value = {};
+}
+
+function previewSrc(kind) {
+  const u = uploads.value[kind];
+  if (u?.broken) return "";
+  const id = String(fields.value.images[kind] || "");
+  if (u?.previewUrl && (!u.fileId || u.fileId === id)) return u.previewUrl;
+  if (!isNumericId(id)) return "";
+  if (current.value?.applyment?.applymentId) {
+    const hit = (current.value.media || []).find((m) => m.kind === kind && String(m.fileId) === id);
+    if (hit) return mediaUrl(current.value.applyment.applymentId, kind);
+  }
+  return `/api/pay/admin/applyment-files/${encodeURIComponent(id)}`;
+}
+
+function onThumbError(kind) {
+  uploads.value = {
+    ...uploads.value,
+    [kind]: { ...(uploads.value[kind] || {}), broken: true },
+  };
+}
+
+function saveLocalDraft() {
+  if (!editing.value || current.value) return;
+  try {
+    const meta = {};
+    for (const [k, u] of Object.entries(uploads.value)) {
+      if (u && (u.fileId || u.filename || u.url)) {
+        meta[k] = { filename: u.filename || "", size: u.size || 0, fileId: u.fileId || "", url: u.url || "" };
+      }
+    }
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+      mchNo: form.value.mchNo,
+      ifCode: form.value.ifCode,
+      fields: fields.value,
+      uploads: meta,
+    }));
+  } catch {
+    // 隐私模式或配额满时忽略本地缓存
+  }
+}
+
+function clearLocalDraft() {
+  try {
+    sessionStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function restoreLocalDraft() {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== "object" || !saved.fields) return false;
+    revokeAllUploads();
+    const first = merchants.value.find((m) => m.isvNo) || merchants.value[0];
+    form.value = {
+      mchNo: saved.mchNo || first?.mchNo || "",
+      ifCode: saved.ifCode || "wxpay_partner",
+      payloadText: "",
+    };
+    current.value = null;
+    fields.value = fill(saved.fields);
+    const restored = {};
+    for (const [k, u] of Object.entries(saved.uploads || {})) {
+      restored[k] = { previewUrl: "", blob: false, filename: u.filename || "", size: u.size || 0, fileId: u.fileId || "", url: u.url || "", error: "", broken: false };
+    }
+    uploads.value = restored;
+    editing.value = true;
+    writeJson();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function blank() {
@@ -216,6 +359,7 @@ function writeJson() {
   writing = true;
   form.value.payloadText = JSON.stringify(fields.value, null, 2);
   jsonError.value = "";
+  saveLocalDraft();
   queueMicrotask(() => { writing = false; });
 }
 
@@ -224,6 +368,7 @@ function readJson() {
   try {
     fields.value = fill(JSON.parse(form.value.payloadText));
     jsonError.value = "";
+    saveLocalDraft();
   } catch (e) {
     jsonError.value = "JSON 还不能解析：" + e.message;
   }
@@ -289,6 +434,7 @@ async function open(id) {
   err.value = "";
   try {
     current.value = await api("GET", "/admin/applyments/" + id);
+    revokeAllUploads();
     editing.value = false;
   } catch (e) {
     fail(e);
@@ -316,13 +462,21 @@ function reject() {
 
 function begin(payload) {
   fields.value = fill(payload);
-  writeJson();
+  err.value = "";
   jsonError.value = "";
   showJson.value = false;
   editing.value = true;
+  writeJson();
 }
 
 function startNew() {
+  if (restoreLocalDraft()) return;
+  resetNewDraft();
+}
+
+function resetNewDraft() {
+  clearLocalDraft();
+  revokeAllUploads();
   // 默认选第一个能进件的商户（已挂服务商）。
   const first = merchants.value.find((m) => m.isvNo) || merchants.value[0];
   form.value = { mchNo: first?.mchNo || "", ifCode: "wxpay_partner", payloadText: "" };
@@ -330,13 +484,35 @@ function startNew() {
   begin(blank());
 }
 
+function cancelEdit() {
+  if (!current.value) clearLocalDraft();
+  revokeAllUploads();
+  err.value = "";
+  editing.value = false;
+}
+
 function startEdit() {
   const a = current.value.applyment;
+  revokeAllUploads();
   // 脱敏字段需重新填写：后端只回传掩码。
   const p = JSON.parse(JSON.stringify(a.payload));
   p.legal_person.id_no = "";
   p.settlement_account.account_no = "";
   if (p.extra?.wx_contact_id_no) p.extra.wx_contact_id_no = "";
+  const existingMedia = {};
+  for (const m of current.value.media || []) {
+    existingMedia[m.kind] = {
+      previewUrl: mediaUrl(a.applymentId, m.kind),
+      blob: false,
+      filename: m.filename || "",
+      size: m.size || 0,
+      fileId: String(m.fileId || p.images?.[m.kind] || ""),
+      url: "",
+      error: "",
+      broken: false,
+    };
+  }
+  uploads.value = existingMedia;
   form.value = { mchNo: a.mchNo, ifCode: a.ifCode, payloadText: "" };
   begin(p);
 }
@@ -354,29 +530,82 @@ function parsePayload() {
   }
 }
 
+function clearImage(kind) {
+  revokeUpload(kind);
+  const nextUploads = { ...uploads.value };
+  delete nextUploads[kind];
+  uploads.value = nextUploads;
+  const nextImages = { ...fields.value.images };
+  delete nextImages[kind];
+  fields.value.images = nextImages;
+  if (!jsonError.value) writeJson();
+  else saveLocalDraft();
+}
+
 async function upload(kind, ev) {
   const file = ev.target.files?.[0];
+  ev.target.value = "";
   if (!file) return;
-  const payload = parsePayload();
-  if (!payload) return;
+  const okType = file.type === "image/jpeg" || file.type === "image/png" || /\.(jpe?g|png)$/i.test(file.name || "");
+  if (!okType) {
+    const m = "只支持 JPG 或 PNG 格式图片";
+    uploads.value = { ...uploads.value, [kind]: { ...(uploads.value[kind] || {}), error: m } };
+    err.value = humanize(`images.${kind}：${m}`);
+    return;
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    const m = `图片大小 ${formatBytes(file.size)} 超过微信限制的 2MB，请先压缩后再上传`;
+    uploads.value = { ...uploads.value, [kind]: { ...(uploads.value[kind] || {}), error: m } };
+    err.value = humanize(`images.${kind}：${m}`);
+    return;
+  }
   uploading.value = kind;
+  uploadProgressName.value = file.name;
   err.value = "";
+  uploads.value = { ...uploads.value, [kind]: { ...(uploads.value[kind] || {}), error: "" } };
   try {
-    const r = await api("POST", "/admin/applyments/upload-url", { filename: file.name, mime: file.type, size: file.size });
+    const r = await api("POST", "/admin/applyments/upload-url", { filename: file.name, mime: file.type || "image/jpeg", size: file.size });
     const put = await fetch(r.uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
     if (!put.ok) throw new Error("上传到对象存储失败 HTTP " + put.status);
-    set("images." + kind, String(r.fileId));
+    const fileId = String(r.fileId);
+    const storageUrl = cleanStorageUrl(r.uploadUrl);
+    revokeUpload(kind);
+    uploads.value = {
+      ...uploads.value,
+      [kind]: {
+        previewUrl: URL.createObjectURL(file),
+        blob: true,
+        filename: file.name,
+        size: file.size,
+        fileId,
+        url: storageUrl,
+        error: "",
+        broken: false,
+      },
+    };
+    fields.value.images[kind] = fileId;
+    if (!jsonError.value) writeJson();
+    else saveLocalDraft();
   } catch (e) {
-    fail(e);
+    const m = humanize(e.message || String(e));
+    uploads.value = { ...uploads.value, [kind]: { ...(uploads.value[kind] || {}), error: m } };
+    err.value = m;
   } finally {
     uploading.value = "";
-    ev.target.value = "";
+    uploadProgressName.value = "";
   }
 }
 
 async function save() {
   const payload = parsePayload();
   if (!payload) return;
+  for (const [kind, val] of Object.entries(payload.images || {})) {
+    const s = String(val ?? "").trim();
+    if (s && !isNumericId(s)) {
+      err.value = humanize(`images.${kind} 必须是上传返回的文件编号（不能直接填写图片 URL，请点击页面上的「选择图片 / 重新上传」按钮上传）`);
+      return;
+    }
+  }
   err.value = "";
   msg.value = "";
   try {
@@ -386,6 +615,8 @@ async function save() {
     } else {
       r = await api("POST", "/admin/applyments", { mchNo: form.value.mchNo, ifCode: form.value.ifCode, payload });
     }
+    clearLocalDraft();
+    revokeAllUploads();
     editing.value = false;
     await open(r.applyment.applymentId);
     await load();
@@ -394,13 +625,17 @@ async function save() {
   }
 }
 
-onMounted(load);
+onMounted(async () => {
+  await load();
+  restoreLocalDraft();
+});
+onUnmounted(revokeAllUploads);
 </script>
 
 <template>
   <div class="flex flex-col gap-3">
-    <pf-alert v-if="err" tone="danger">{{ err }}</pf-alert>
-    <pf-alert v-if="msg" tone="warn">{{ msg }}</pf-alert>
+    <pf-alert v-if="err" :key="'top-' + err" tone="danger">{{ err }}</pf-alert>
+    <pf-alert v-if="msg" :key="'msg-' + msg" tone="warn">{{ msg }}</pf-alert>
 
     <div class="pf-card flex flex-col gap-2">
       <h2 class="m-0 text-[16px] font-semibold">进件是什么、怎么走</h2>
@@ -449,19 +684,22 @@ onMounted(load);
 
     <!-- 新建 / 修改资料 -->
     <div v-if="editing" class="pf-card flex flex-col gap-3">
-      <h2 class="m-0 text-[16px] font-semibold">{{ current ? "修改资料 " + current.applyment.applymentId : "新建进件" }}</h2>
+      <div class="flex items-center gap-2 flex-wrap">
+        <h2 class="m-0 text-[16px] font-semibold">{{ current ? "修改资料 " + current.applyment.applymentId : "新建进件" }}</h2>
+        <pf-button v-if="!current" size="sm" variant="ghost" @click="resetNewDraft">清空重填</pf-button>
+      </div>
       <p class="pf-muted m-0">
         带 <span class="text-danger">*</span> 的必填。这里填的内容会原样报给微信审核，请照着证件原件一字一字填，不要凭印象写。
-        点最下面的「保存草稿」时系统会先检查一遍，缺什么、哪里格式不对会在页面顶部用红色提示逐条列出来。
+        点最下面的「保存草稿」时系统会先检查一遍，缺什么、哪里格式不对会用红色提示逐条列出来。
       </p>
       <div v-if="!current" class="grid grid-cols-2 gap-3">
         <Field label="商户" required hint="给哪个商户进件。列表来自「商户」页；只有挂了服务商的商户才能进件，没挂的保存时会提示「商户未挂服务商」，先去「商户」页编辑它。保存后不能换商户。">
-          <select :value="form.mchNo" class="pf-input" @change="form.mchNo = $event.target.value">
+          <select :value="form.mchNo" class="pf-input" @change="form.mchNo = $event.target.value; saveLocalDraft()">
             <option v-for="m in merchants" :key="m.mchNo" :value="m.mchNo">{{ m.mchName }}（{{ m.mchNo }}）{{ m.isvNo ? "" : " · 未挂服务商" }}</option>
           </select>
         </Field>
         <Field label="渠道" required hint="把资料报给哪个支付渠道。目前本页表单只支持「微信普通服务商」（钱由微信直接结算给商户）。">
-          <select :value="form.ifCode" class="pf-input" @change="form.ifCode = $event.target.value">
+          <select :value="form.ifCode" class="pf-input" @change="form.ifCode = $event.target.value; saveLocalDraft()">
             <option value="wxpay_partner">微信普通服务商</option>
           </select>
         </Field>
@@ -687,30 +925,66 @@ onMounted(load);
       <h3 class="m-0 text-[14px] font-semibold">七、证照（照片）</h3>
       <p class="pf-muted m-0">
         只接受 JPG / PNG，每张不超过 2MB（超过的先压缩再传）。要用彩色原件拍照或扫描，四角完整、文字清晰、没有反光和遮挡，不要用复印件和截图（截图类材料除外）。
-        选好文件就立即上传，标题后面出现「已选」加一串数字表示上传成功；传错了重新选一次即可覆盖。需要哪些照片会随上面的主体类型、联系人身份、经营场景自动增减。
+        点「选择图片」后立即上传，上传成功后卡片会保留缩略图、文件名、文件编号和存储地址；传错了点「重新上传」即可覆盖。需要哪些照片会随上面的主体类型、联系人身份、经营场景自动增减。
       </p>
       <div class="grid grid-cols-2 gap-3">
-        <Field v-for="[kind, label, must] in imageKinds" :key="kind" :required="must" :hint="imageHints[kind] || ''">
+        <Field v-for="[kind, label, must] in imageKinds" :key="kind" tag="div" :required="must" :hint="imageHints[kind] || ''">
           <template #label>
             {{ label }}
-            <span class="pf-muted">{{ fields.images[kind] ? "已选 " + fields.images[kind] : (uploading === kind ? "上传中…" : "未上传") }}</span>
+            <span v-if="uploading === kind" class="pf-dot" data-tone="info">上传中…</span>
+            <span v-else-if="fields.images[kind] && isNumericId(fields.images[kind])" class="pf-dot" data-tone="ok">已上传 #{{ fields.images[kind] }}</span>
+            <span v-else-if="fields.images[kind]" class="pf-dot" data-tone="danger">格式错误</span>
+            <span v-else class="pf-muted">未上传</span>
           </template>
-          <input type="file" accept="image/jpeg,image/png" :disabled="!!uploading" @change="upload(kind, $event)" />
+          <input :ref="(el) => setFileInput(kind, el)" type="file" accept="image/jpeg,image/png" hidden @change="upload(kind, $event)" />
+          <div class="flex flex-col gap-2 p-2 rounded border border-border bg-surface-2">
+            <div v-if="uploading === kind" class="pf-muted">正在上传 {{ uploadProgressName }}…</div>
+            <div v-if="fields.images[kind] && isNumericId(fields.images[kind])" class="flex items-start gap-3">
+              <a v-if="previewSrc(kind)" :href="previewSrc(kind)" target="_blank" rel="noopener" class="shrink-0" title="点击在新标签页查看原图">
+                <img :src="previewSrc(kind)" :alt="label" class="w-20 h-20 object-cover rounded border border-border bg-surface" @error="onThumbError(kind)" />
+              </a>
+              <div class="flex flex-col gap-1 min-w-0 flex-1">
+                <div class="font-medium break-all">{{ uploads[kind]?.filename || ("文件 #" + fields.images[kind]) }}</div>
+                <div class="pf-muted">
+                  文件编号：<span class="pf-code">#{{ fields.images[kind] }}</span>
+                  <template v-if="uploads[kind]?.size"> · {{ formatBytes(uploads[kind].size) }}</template>
+                </div>
+                <div v-if="uploads[kind]?.url" class="pf-muted break-all">
+                  存储地址：<span class="pf-code break-all">{{ uploads[kind].url }}</span>
+                </div>
+                <div v-else-if="previewSrc(kind)" class="pf-muted break-all">
+                  预览地址：<a class="pf-link break-all" :href="previewSrc(kind)" target="_blank" rel="noopener">{{ previewSrc(kind) }}</a>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="fields.images[kind]" class="text-danger break-all">
+              当前填写的「{{ fields.images[kind] }}」不是上传返回的数字文件编号。请不要在 JSON 中直接粘贴图片链接，点击下方「重新上传」即可自动记录。
+            </div>
+            <div v-else-if="uploading !== kind" class="pf-muted">尚未上传图片</div>
+            <div v-if="uploads[kind]?.error" class="text-danger">{{ uploads[kind].error }}</div>
+            <div class="flex flex-wrap items-center gap-2">
+              <pf-button v-if="fields.images[kind]" key="reupload" size="sm" :loading="uploading === kind" :disabled="!!uploading" @click="pickFile(kind)">重新上传</pf-button>
+              <pf-button v-else key="upload" size="sm" :loading="uploading === kind" :disabled="!!uploading" @click="pickFile(kind)">选择图片</pf-button>
+              <pf-button v-if="fields.images[kind] && !uploading" key="clear" size="sm" variant="ghost" @click="clearImage(kind)">移除</pf-button>
+              <a v-if="fields.images[kind] && isNumericId(fields.images[kind]) && previewSrc(kind)" class="pf-link pf-muted" :href="previewSrc(kind)" target="_blank" rel="noopener">查看原图</a>
+            </div>
+          </div>
         </Field>
       </div>
 
       <div class="flex gap-2 items-center">
-        <pf-button size="sm" variant="ghost" @click="showJson = !showJson">{{ showJson ? "收起 JSON" : "查看 / 编辑 JSON" }}</pf-button>
-        <span v-if="jsonError" class="pf-muted">{{ jsonError }}</span>
+        <pf-button :key="String(showJson)" size="sm" variant="ghost" @click="showJson = !showJson">{{ showJson ? "收起 JSON" : "查看 / 编辑 JSON" }}</pf-button>
+        <span v-if="jsonError" class="text-danger">{{ jsonError }}</span>
       </div>
       <textarea v-if="showJson" v-model="form.payloadText" class="pf-input font-mono text-[12px]" rows="18" spellcheck="false" @input="readJson"></textarea>
       <p class="pf-muted m-0">
-        「查看 / 编辑 JSON」是给技术人员批量粘贴资料用的，和上面的表单双向同步，普通录入不用管它。
+        「查看 / 编辑 JSON」是给技术人员批量粘贴资料用的，和上面的表单双向同步，普通录入不用管它（JSON 里的 images 各字段填的是上传生成的数字编号，不要粘贴图片 URL）。
         「保存草稿」只是把资料存到本系统，<b>不会</b>发给微信；保存成功后在详情里点「提交审核」，审核员通过后才会提交给微信。
       </p>
+      <pf-alert v-if="err" :key="'btm-' + err" tone="danger">{{ err }}</pf-alert>
       <div class="flex gap-2">
-        <pf-button variant="primary" size="sm" @click="save">保存草稿</pf-button>
-        <pf-button size="sm" @click="editing = false">取消</pf-button>
+        <pf-button variant="primary" size="sm" :disabled="!!uploading" @click="save">保存草稿</pf-button>
+        <pf-button size="sm" @click="cancelEdit">取消</pf-button>
       </div>
     </div>
 
@@ -754,11 +1028,24 @@ onMounted(load);
       </div>
 
       <table class="pf-table">
-        <thead><tr><th>图片</th><th>文件</th><th>大小</th><th>渠道 media_id</th></tr></thead>
+        <thead><tr><th>预览</th><th>证照项</th><th>文件</th><th>大小</th><th>渠道 media_id</th></tr></thead>
         <tbody>
           <tr v-for="m in current.media" :key="m.kind">
-            <td>{{ m.kind }}</td><td>{{ m.filename }}</td><td>{{ m.size }}</td>
+            <td>
+              <a :href="mediaUrl(current.applyment.applymentId, m.kind)" target="_blank" rel="noopener" title="查看原图">
+                <img :src="mediaUrl(current.applyment.applymentId, m.kind)" :alt="m.kind" class="w-12 h-12 object-cover rounded border border-border bg-surface" />
+              </a>
+            </td>
+            <td>{{ imageNames[m.kind] || m.kind }} <span class="pf-muted">({{ m.kind }})</span></td>
+            <td>
+              <a class="pf-link" :href="mediaUrl(current.applyment.applymentId, m.kind)" target="_blank" rel="noopener">{{ m.filename || ("#" + m.fileId) }}</a>
+              <span class="pf-muted"> · #{{ m.fileId }}</span>
+            </td>
+            <td>{{ formatBytes(m.size) }}</td>
             <td><span class="pf-code">{{ m.mediaId || "—" }}</span></td>
+          </tr>
+          <tr v-if="!current.media?.length">
+            <td colspan="5"><span class="pf-muted">暂无已保存的证照图片。</span></td>
           </tr>
         </tbody>
       </table>

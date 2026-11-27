@@ -89,6 +89,23 @@ func TestApplymentProblems_RequiredImagesAndRateRange(t *testing.T) {
 	}
 }
 
+func TestApplymentProblems_RejectsNonNumericImageID(t *testing.T) {
+	for _, bad := range []string{
+		"https://apipay.sanrun.fun/files/u1/2026/11/27/lic.jpg?X-Amz-Signature=abc",
+		"0",
+		"-5",
+		"../etc/passwd",
+		"file_12",
+	} {
+		a := validApplyment()
+		a.Images["license"] = bad
+		p := strings.Join(a.Problems(), "\n")
+		if !strings.Contains(p, "images.license 必须是上传返回的文件编号") {
+			t.Fatalf("bad=%q expected numeric fileId problem, got %s", bad, p)
+		}
+	}
+}
+
 func TestMaskID(t *testing.T) {
 	if got := MaskID("110101199001011234"); got != "110***1234" {
 		t.Fatalf("got %s", got)

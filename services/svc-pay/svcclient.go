@@ -13,6 +13,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"platfarm/svc-pay/channel"
 )
 
 var svcHTTP = &http.Client{Timeout: 10 * time.Second}
@@ -105,6 +107,9 @@ func proxyUploadURL(ctx context.Context, bearer string, body []byte) (int, []byt
 // fetchFileViaSvcFile 用调用者自己的 token 向 svc-file 换下载链接（归属判定在 svc-file），再拉字节。
 // 直连 svc-file 不经网关，响应是明文 JSON（附录 F 的响应加密只发生在网关）。
 func fetchFileViaSvcFile(ctx context.Context, bearer, fileID string) (fetchedFile, error) {
+	if !channel.IsFileID(fileID) {
+		return fetchedFile{}, fmt.Errorf("无效文件编号")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		envOr("FILE_URL", "http://svc-file:8080")+"/api/file/"+fileID+"/download-url", nil)
 	if err != nil {

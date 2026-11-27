@@ -301,6 +301,31 @@ func TestApplyment_ValidationAndGuards(t *testing.T) {
 		map[string]any{"mchNo": "M-VAL", "ifCode": "stub_channel", "payload": samplePayload()})
 	mustCode(t, res, 200)
 	id := res.Body["applyment"].(map[string]any)["applymentId"].(string)
+
+	// 证照预览接口：支持未保存前按数字 fileId 预览 + 保存后按 kind 解封回显；拒绝非数字 URL。
+	badURL := samplePayload()
+	badURL["images"] = map[string]string{
+		"license":  "https://apipay.sanrun.fun/files/u1/lic.jpg?X-Amz-Signature=1",
+		"id_front": "102",
+		"id_back":  "103",
+	}
+	resURL := call(t, r, "op", http.MethodPost, "/api/pay/admin/applyments",
+		map[string]any{"mchNo": "M-VAL", "ifCode": "stub_channel", "payload": badURL})
+	mustCode(t, resURL, 400)
+	if !strings.Contains(fmt.Sprint(resURL.Body["problems"]), "images.license 必须是上传返回的文件编号") {
+		t.Fatalf("expected non-numeric image id rejection, got %v", resURL.Body)
+	}
+	mustCode(t, call(t, r, "op", http.MethodGet, "/api/pay/admin/applyment-files/bad_id", nil), 400)
+	rawFile := callRaw(t, r, "op", http.MethodGet, "/api/pay/admin/applyment-files/101")
+	if rawFile.Code != 200 || rawFile.Body.String() != "JPG101" || rawFile.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("applyment-files preview failed: code=%d body=%q", rawFile.Code, rawFile.Body.String())
+	}
+	rawMedia := callRaw(t, r, "op", http.MethodGet, "/api/pay/admin/applyments/"+id+"/media/id_front")
+	if rawMedia.Code != 200 || rawMedia.Body.String() != "JPG102" {
+		t.Fatalf("applyment media preview failed: code=%d body=%q", rawMedia.Code, rawMedia.Body.String())
+	}
+	mustCode(t, call(t, r, "op", http.MethodGet, "/api/pay/admin/applyments/"+id+"/media/no_such_kind", nil), 404)
+
 	mustCode(t, call(t, r, "op", http.MethodPost, "/api/pay/admin/applyments/"+id+"/cancel", nil), 200)
 	mustCode(t, call(t, r, "op", http.MethodPost, "/api/pay/admin/applyments/"+id+"/submit-review", nil), 409)
 	mustCode(t, call(t, r, "reviewer", http.MethodPost, "/api/pay/admin/applyments/"+id+"/approve", nil), 409)

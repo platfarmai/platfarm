@@ -187,6 +187,9 @@ func storeMedia(ctx context.Context, bearer, applymentID string, images map[stri
 		}
 	}
 	for kind, fileID := range images {
+		if !channel.IsFileID(fileID) {
+			return fmt.Errorf("images.%s 必须是上传返回的文件编号", kind)
+		}
 		if existing[kind] == fileID {
 			continue
 		}
@@ -823,11 +826,80 @@ func handleApplymentUploadURL(c *gin.Context) {
 	c.Data(code, "application/json", raw)
 }
 
+func writeSafeImage(c *gin.Context, declaredMime string, data []byte) {
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'")
+	ct := http.DetectContentType(data)
+	if ct != "image/jpeg" && ct != "image/png" {
+		if declaredMime == "image/jpeg" || declaredMime == "image/png" {
+			ct = declaredMime
+		} else {
+			ct = "application/octet-stream"
+			c.Header("Content-Disposition", "attachment")
+		}
+	}
+	c.Data(http.StatusOK, ct, data)
+}
+
+// handleGetApplymentMedia GET /admin/applyments/:id/media/:kind：回显已落库（自动解封）的证照原图。
+func handleGetApplymentMedia(c *gin.Context) {
+	claims, ok := requireRole(c, roleOperator)
+	if !ok {
+		return
+	}
+	a, ok := loadApplymentFor(c, claims)
+	if !ok {
+		return
+	}
+	var mime string
+	var content []byte
+	var sealed bool
+	err := db.QueryRow(c.Request.Context(),
+		`SELECT mime, content, content_sealed FROM pay_applyment_media WHERE applyment_id=$1 AND kind=$2`,
+		a.ApplymentID, c.Param("kind")).Scan(&mime, &content, &sealed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "图片不存在"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取图片失败"})
+		return
+	}
+	if sealed {
+		if content, err = openBytes(content); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "解密图片失败"})
+			return
+		}
+	}
+	writeSafeImage(c, mime, content)
+}
+
+// handleGetApplymentFile GET /admin/applyment-files/:fileId：草稿保存前按操作员自身身份从 svc-file 预览图片。
+func handleGetApplymentFile(c *gin.Context) {
+	if _, ok := requireRole(c, roleOperator); !ok {
+		return
+	}
+	fileID := c.Param("fileId")
+	if !channel.IsFileID(fileID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的文件编号"})
+		return
+	}
+	f, err := fetchFile(c.Request.Context(), c.GetHeader("Authorization"), fileID)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "读取上传文件失败: " + err.Error()})
+		return
+	}
+	writeSafeImage(c, f.Mime, f.Content)
+}
+
 func registerApplymentRoutes(g *gin.RouterGroup) {
 	g.POST("/applyments/upload-url", handleApplymentUploadURL)
+	g.GET("/applyment-files/:fileId", handleGetApplymentFile)
 	g.POST("/applyments", handleCreateApplyment)
 	g.GET("/applyments", handleListApplyments)
 	g.GET("/applyments/:id", handleGetApplyment)
+	g.GET("/applyments/:id/media/:kind", handleGetApplymentMedia)
 	g.PUT("/applyments/:id", handleUpdateApplyment)
 	g.POST("/applyments/:id/submit-review", handleSubmitReview)
 	g.POST("/applyments/:id/approve", handleApproveApplyment)

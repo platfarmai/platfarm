@@ -5,7 +5,9 @@ package channel
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -162,7 +164,25 @@ func (a Applyment) Problems() []string {
 	for _, kind := range requiredImages[s.Type] {
 		need(a.Images[kind] != "", "images."+kind+" 必填")
 	}
+	for _, kind := range slices.Sorted(maps.Keys(a.Images)) {
+		if v := a.Images[kind]; v != "" && !IsFileID(v) {
+			p = append(p, "images."+kind+" 必须是上传返回的文件编号")
+		}
+	}
 	return p
+}
+
+// IsFileID 判断是否为 svc-file 返回的正整数文件编号（拒绝误粘贴的预签名 URL 或非法路径）。
+func IsFileID(s string) bool {
+	if s == "" || len(s) > 20 || s[0] < '1' || s[0] > '9' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidPeriod 有效期格式是否为 "YYYY-MM-DD,YYYY-MM-DD" 或 "YYYY-MM-DD,长期"。
