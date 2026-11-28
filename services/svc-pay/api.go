@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -163,6 +164,10 @@ func handleCreateOrder(c *gin.Context) {
 	provider, sub, err := resolveParams(ctx, mch, passage.IfCode)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "渠道参数未配置: " + err.Error()})
+		return
+	}
+	if miss := missingChannelParams(mch, passage.IfCode, provider, sub); miss != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": miss, "code": "channel_params_incomplete"})
 		return
 	}
 
@@ -634,6 +639,36 @@ func resolveParams(ctx context.Context, mch Merchant, ifCode string) (map[string
 		return nil, nil, fmt.Errorf("服务商 %s", mch.IsvNo)
 	}
 	return provider, sub, nil
+}
+
+// missingChannelParams 下单前核对渠道声明为必填的参数，返回给调用方看的说明；齐全返回空串。
+// 缺了就不建单、不调渠道：否则渠道只回一句字段级的参数错误（如微信的“/body/sp_appid 字节数 0”），
+// 还白占一个商户订单号。只在下单处检查——进件、退款用不到全部字段（进件就不需要 sp_appid）。
+// 只管服务商模式：普通商户没有服务商一层，它的参数集合由渠道自己解释。
+func missingChannelParams(mch Merchant, ifCode string, provider, sub map[string]string) string {
+	if mch.MchType == 1 || mch.IsvNo == "" {
+		return ""
+	}
+	missing := func(fields []channel.ParamField, params map[string]string) []string {
+		var out []string
+		for _, f := range fields {
+			if f.Required && strings.TrimSpace(params[f.Key]) == "" {
+				out = append(out, fmt.Sprintf("「%s」（%s）", f.Label, f.Key))
+			}
+		}
+		return out
+	}
+	var parts []string
+	if m := missing(channel.Fields(ifCode, "isv"), provider); len(m) > 0 {
+		parts = append(parts, fmt.Sprintf("服务商 %s 缺少 %s", mch.IsvNo, strings.Join(m, "、")))
+	}
+	if m := missing(channel.Fields(ifCode, "merchant"), sub); len(m) > 0 {
+		parts = append(parts, fmt.Sprintf("商户 %s 缺少 %s", mch.MchNo, strings.Join(m, "、")))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "渠道参数不完整，暂时不能下单：" + strings.Join(parts, "；") + "。请平台运营在后台「应用·通道」页的渠道参数里补全。"
 }
 
 func or(v, def string) string {

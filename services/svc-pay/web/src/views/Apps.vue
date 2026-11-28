@@ -45,6 +45,8 @@ const channel = computed(() => channels.value.find((c) => c.ifCode === owner.val
 const fields = computed(() => (owner.value.type === "isv" ? channel.value?.providerFields : channel.value?.subFields) || []);
 const current = computed(() => configs.value.find((c) => c.ifCode === owner.value.ifCode));
 const stored = (key) => current.value?.fields.find((f) => f.key === key);
+// 已有配置行、但必填项没填全（例如进件用不到 sp_appid，到下单才发现缺）。
+const missingRequired = computed(() => (current.value ? fields.value.filter((f) => f.required && !stored(f.key)?.set).map((f) => f.label) : []));
 // 渠道没有声明、但库里有的键（历史遗留）：只提示存在，不回显。
 const extraKeys = computed(() => {
   const known = new Set(fields.value.map((f) => f.key));
@@ -326,7 +328,8 @@ onMounted(load);
         </Field>
       </div>
       <div>
-        <span class="pf-dot" :data-tone="current ? 'ok' : 'neutral'">{{ current ? "已配置，更新于 " + when(current.updatedAt) : "这个组合还没有配置过" }}</span>
+        <span v-if="missingRequired.length" class="pf-dot" data-tone="danger">已保存，但还缺必填项：{{ missingRequired.join("、") }}。补齐前用这个渠道下单会被拒绝。</span>
+        <span v-else class="pf-dot" :data-tone="current ? 'ok' : 'neutral'">{{ current ? "已配置，更新于 " + when(current.updatedAt) : "这个组合还没有配置过" }}</span>
       </div>
       <p v-if="!owners.length" class="pf-muted m-0">还没有{{ owner.type === "isv" ? "服务商" : "商户" }}，先到「商户」页创建。</p>
       <template v-else-if="fields.length">
