@@ -78,15 +78,16 @@ func stubRoleChecker(_ context.Context, _ string, userID int, role string) (bool
 func testRouter() *gin.Engine {
 	roleChecker = stubRoleChecker
 	r := gin.New()
-	admin := r.Group(mount+"/admin", func(c *gin.Context) {
+	withClaims := func(c *gin.Context) {
 		u, ok := testUsers[c.GetHeader("X-Test-User")]
 		if !ok {
 			c.AbortWithStatusJSON(401, gin.H{"error": "no test user"})
 			return
 		}
 		c.Set("claims", u)
-	})
-	registerAdminRoutes(admin)
+	}
+	registerAdminRoutes(r.Group(mount+"/admin", withClaims))
+	registerPortalRoutes(r.Group(mount+"/portal", withClaims))
 	return r
 }
 

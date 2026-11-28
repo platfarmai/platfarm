@@ -71,6 +71,42 @@ func serviceToken(ctx context.Context) (string, error) {
 	return tokenVal, nil
 }
 
+// ── auth 内网管理接口 ───────────────────────────────────────
+
+// authAdmin 调 auth 的内网管理接口（建用户、签发开放平台 appKey 等）。可被测试替换。
+// auth 要求两样东西同时成立：白名单内的服务 token（AUTH_LOGIN_SERVICES 须包含 svc-pay），
+// 以及代持的平台管理员本人 token —— 本服务自己没有凭空建账号的权力。
+var authAdmin = authAdminHTTP
+
+func authAdminHTTP(ctx context.Context, userToken, method, path string, body any) (int, []byte, error) {
+	tok, err := serviceToken(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	if tok == "" {
+		return 0, nil, fmt.Errorf("未配置 PAY_CLIENT_ID / PAY_CLIENT_SECRET，无法调用账号服务")
+	}
+	var rdr io.Reader
+	if body != nil {
+		raw, _ := json.Marshal(body)
+		rdr = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, envOr("AUTH_URL", "http://auth:8080")+path, rdr)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("X-PF-User-Token", userToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := svcHTTP.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	return resp.StatusCode, raw, nil
+}
+
 // ── svc-file ────────────────────────────────────────────────
 
 const maxMediaBytes = 2 << 20 // 微信进件图片上限 2MB

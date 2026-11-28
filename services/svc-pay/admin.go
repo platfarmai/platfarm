@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -260,28 +261,55 @@ func handleListMerchants(c *gin.Context) {
 		return
 	}
 	if len(nos) > 0 {
-		crows, err := db.Query(c.Request.Context(), `SELECT owner_id, if_code, if_params FROM pay_channel_config
-			WHERE owner_type='merchant' AND state='active' AND owner_id = ANY($1) ORDER BY if_code`, nos)
+		subs, err := merchantSubAccounts(c.Request.Context(), nos)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 			return
 		}
-		defer crows.Close()
-		for crows.Next() {
-			var ownerID, ifCode, sealed string
-			if crows.Scan(&ownerID, &ifCode, &sealed) != nil {
-				continue
-			}
-			plain, err := open(sealed)
-			if err != nil {
-				continue
-			}
-			if no := subAccountNo(parseParams(plain)); no != "" {
-				byNo[ownerID].SubAccounts = append(byNo[ownerID].SubAccounts, subAccount{IfCode: ifCode, SubMchID: no})
+		for no, list := range subs {
+			byNo[no].SubAccounts = list
+		}
+		prows, err := db.Query(c.Request.Context(), `SELECT mch_no, username, open_app_key, state FROM pay_merchant_portal
+			WHERE mch_no = ANY($1)`, nos)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+			return
+		}
+		defer prows.Close()
+		for prows.Next() {
+			var no string
+			var p portalView
+			if prows.Scan(&no, &p.Username, &p.AppKey, &p.State) == nil {
+				byNo[no].Portal = &p
 			}
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// merchantSubAccounts 一批商户各自在各渠道的子商户号。
+func merchantSubAccounts(ctx context.Context, mchNos []string) (map[string][]subAccount, error) {
+	out := map[string][]subAccount{}
+	rows, err := db.Query(ctx, `SELECT owner_id, if_code, if_params FROM pay_channel_config
+		WHERE owner_type='merchant' AND state='active' AND owner_id = ANY($1) ORDER BY if_code`, mchNos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ownerID, ifCode, sealed string
+		if rows.Scan(&ownerID, &ifCode, &sealed) != nil {
+			continue
+		}
+		plain, err := open(sealed)
+		if err != nil {
+			continue
+		}
+		if no := subAccountNo(parseParams(plain)); no != "" {
+			out[ownerID] = append(out[ownerID], subAccount{IfCode: ifCode, SubMchID: no})
+		}
+	}
+	return out, rows.Err()
 }
 
 // subAccount 商户在某个渠道的子商户号（微信特约 / 二级商户号 sub_mchid，支付宝直付通 smid）。
@@ -290,10 +318,11 @@ type subAccount struct {
 	SubMchID string `json:"subMchid"`
 }
 
-// merchantItem 商户列表行：台账字段 + 各渠道的子商户号。子商户号不是密钥，可以回显。
+// merchantItem 商户列表行：台账字段 + 各渠道的子商户号 + 商户登录开通情况。子商户号不是密钥，可以回显。
 type merchantItem struct {
 	Merchant
 	SubAccounts []subAccount `json:"subAccounts"`
+	Portal      *portalView  `json:"portal,omitempty"` // nil = 还没开通商户登录
 }
 
 func subAccountNo(params map[string]string) string {
@@ -332,22 +361,29 @@ func handleCreateApp(c *gin.Context) {
 	if denyOtherTenant(c, claims, mch.TenantID, "商户") {
 		return
 	}
-	secret := newSecret()
-	// 签名校验需要原文，故密封而非哈希；库泄露本身还原不了明文。
-	sealed, err := seal(secret)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成密钥失败"})
-		return
-	}
-	appID := newOrderID("A")
-	_, err = db.Exec(c.Request.Context(), `INSERT INTO pay_app (app_id, app_name, mch_no, app_secret, tenant_id)
-		VALUES ($1,$2,$3,$4,$5)`, appID, in.AppName, in.MchNo, sealed, mch.TenantID)
+	appID, secret, err := createApp(c.Request.Context(), mch, in.AppName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
 		return
 	}
 	// 明文密钥只此一次。
 	c.JSON(http.StatusOK, gin.H{"appId": appID, "appSecret": secret, "note": "密钥仅显示一次"})
+}
+
+// createApp 给商户建一个应用，返回 App-Id 与签名密钥明文。
+// 签名校验需要原文，故密封而非哈希；库泄露本身还原不了明文。
+func createApp(ctx context.Context, mch Merchant, name string) (appID, secret string, err error) {
+	secret = newSecret()
+	sealed, err := seal(secret)
+	if err != nil {
+		return "", "", err
+	}
+	appID = newOrderID("A")
+	if _, err = db.Exec(ctx, `INSERT INTO pay_app (app_id, app_name, mch_no, app_secret, tenant_id)
+		VALUES ($1,$2,$3,$4,$5)`, appID, name, mch.MchNo, sealed, mch.TenantID); err != nil {
+		return "", "", err
+	}
+	return appID, secret, nil
 }
 
 // ── 渠道参数与路由 ──────────────────────────────────────────

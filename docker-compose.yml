@@ -15,6 +15,8 @@ services:
       PF_SELF_REGISTER: ${PF_SELF_REGISTER:-off} # 自助注册开关（specs/018）
       LOKI_URL: ${LOKI_URL:-} # 开放平台日配额强制（specs/023）；空 = fail-open 不强制
       PF_DATA_SECRET: ${PF_DATA_SECRET:-} # 与网关共用；空 = 登录响应不带 dataKey
+      # 允许调用 /internal/auth/* 的服务（仍须代持平台管理员本人 token）。svc-pay：一键开通商户登录
+      AUTH_LOGIN_SERVICES: ${AUTH_LOGIN_SERVICES:-svc-oauth,svc-openapi,svc-users,svc-pay}
     volumes:
       - ./.keys:/keys
     extra_hosts:

@@ -47,17 +47,25 @@ func handleListApps(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
 	scope, args := tenantScope(claims)
-	sql := `SELECT app_id, app_name, mch_no, state, tenant_id, created_at FROM pay_app WHERE ` + scope
 	if mchNo := c.Query("mchNo"); mchNo != "" {
-		sql += ` AND mch_no=$3`
+		scope += ` AND mch_no=$3`
 		args = append(args, mchNo)
 	}
-	rows, err := db.Query(ctx, sql+` ORDER BY created_at DESC LIMIT 200`, args...)
+	items, err := loadAppItems(c.Request.Context(), scope, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// loadAppItems 按条件取应用及其支付通道（最多 200 个，新的在前）。不含密钥。
+func loadAppItems(ctx context.Context, where string, args ...any) ([]*appItem, error) {
+	rows, err := db.Query(ctx, `SELECT app_id, app_name, mch_no, state, tenant_id, created_at FROM pay_app
+		WHERE `+where+` ORDER BY created_at DESC LIMIT 200`, args...)
+	if err != nil {
+		return nil, err
 	}
 	items := []*appItem{}
 	byID := map[string]*appItem{}
@@ -72,26 +80,25 @@ func handleListApps(c *gin.Context) {
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
-		return
+		return nil, err
 	}
-	if len(ids) > 0 {
-		prows, err := db.Query(ctx, `SELECT app_id, way_code, if_code, rate_bps, state FROM pay_passage
-			WHERE app_id = ANY($1) ORDER BY way_code`, ids)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
-			return
-		}
-		defer prows.Close()
-		for prows.Next() {
-			var appID string
-			var p passageItem
-			if prows.Scan(&appID, &p.WayCode, &p.IfCode, &p.RateBps, &p.State) == nil {
-				byID[appID].Passages = append(byID[appID].Passages, p)
-			}
+	if len(ids) == 0 {
+		return items, nil
+	}
+	prows, err := db.Query(ctx, `SELECT app_id, way_code, if_code, rate_bps, state FROM pay_passage
+		WHERE app_id = ANY($1) ORDER BY way_code`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer prows.Close()
+	for prows.Next() {
+		var appID string
+		var p passageItem
+		if prows.Scan(&appID, &p.WayCode, &p.IfCode, &p.RateBps, &p.State) == nil {
+			byID[appID].Passages = append(byID[appID].Passages, p)
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+	return items, prows.Err()
 }
 
 // ownedApp 取应用并确认它属于调用者租户。失败已写响应。
@@ -121,18 +128,25 @@ func handleRotateAppSecret(c *gin.Context) {
 	if !ok {
 		return
 	}
-	secret := newSecret()
-	sealed, err := seal(secret)
+	secret, err := rotateAppSecret(c.Request.Context(), app.AppID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成密钥失败"})
-		return
-	}
-	if _, err := db.Exec(c.Request.Context(), `UPDATE pay_app SET app_secret=$2, updated_at=now() WHERE app_id=$1`,
-		app.AppID, sealed); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "换发失败"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"appId": app.AppID, "appSecret": secret, "note": "密钥仅显示一次"})
+}
+
+// rotateAppSecret 给应用换一把签名密钥并返回明文（只此一次，库里只有密封后的值）。
+func rotateAppSecret(ctx context.Context, appID string) (string, error) {
+	secret := newSecret()
+	sealed, err := seal(secret)
+	if err != nil {
+		return "", err
+	}
+	if _, err := db.Exec(ctx, `UPDATE pay_app SET app_secret=$2, updated_at=now() WHERE app_id=$1`, appID, sealed); err != nil {
+		return "", err
+	}
+	return secret, nil
 }
 
 // handleSetAppState PUT /admin/apps/:appId/state {state}：停用后该应用的开放 API 请求一律 401。

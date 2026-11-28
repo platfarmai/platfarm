@@ -29,8 +29,13 @@ func mustSealParams(v map[string]string) (string, error) {
 // 方法与请求 URI（路径 + 查询串）参与签名：截获的签名不能挪到别的接口、别的单号上用。
 func signPayload(secret, appID, ts, nonce, method, uri, body string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(mac, "%s\n%s\n%s\n%s\n%s\n%s", appID, ts, nonce, method, uri, body)
+	mac.Write([]byte(signingString(appID, ts, nonce, method, uri, body)))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// signingString 签名串：六段用 \n 连接，末尾没有换行。
+func signingString(appID, ts, nonce, method, uri, body string) string {
+	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s", appID, ts, nonce, method, uri, body)
 }
 
 // signFields 下游通知签名：按 key 排序拼 k=v&…，HMAC-SHA256，十六进制小写。

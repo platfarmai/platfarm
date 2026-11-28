@@ -83,35 +83,22 @@ func main() {
 	})
 
 	// 开放 API：网关已验 app token 与 scope，这里再验商户签名。
-	v1 := r.Group(mount + "/v1")
-	v1.POST("/orders", handleCreateOrder)
-	v1.GET("/orders/:mchOrderNo", handleQueryOrder)
-	v1.POST("/orders/:mchOrderNo/close", handleCloseOrder)
-	v1.POST("/orders/:mchOrderNo/mock", handleMockOrder)
-	v1.POST("/refunds", handleCreateRefund)
-	v1.GET("/refunds/:mchRefundNo", handleQueryRefund)
-	v1.POST("/divisions", handleCreateDivision)
-	v1.GET("/divisions/:mchOrderNo", handleQueryDivision)
-	v1.POST("/orders/:mchOrderNo/settle", handleSettleOrder)
-	v1.POST("/withdrawals", handleCreateWithdrawal)
-	v1.GET("/withdrawals/:mchWithdrawNo", handleQueryWithdrawal)
-	v1.GET("/balance", handleBalance)
-	v1.GET("/bills/transactions", handleBillTransactions)
-	v1.GET("/bills/summary", handleBillSummary)
+	registerOpenRoutes(r.Group(mount + "/v1"))
 
 	// 内部回调：svc-jobs cron（服务 token）触发每日对账。
 	r.POST(mount+"/internal/recon/daily", handleDailyRecon)
 
-	// 管理接口：平台 JWT。
-	admin := r.Group(mount+"/admin", func(c *gin.Context) {
+	// 管理接口与商户中心：平台 JWT。
+	withClaims := func(c *gin.Context) {
 		claims, err := identity(c)
 		if err != nil {
 			c.AbortWithStatusJSON(401, gin.H{"error": err.Error()})
 			return
 		}
 		c.Set("claims", claims)
-	})
-	registerAdminRoutes(admin)
+	}
+	registerAdminRoutes(r.Group(mount+"/admin", withClaims))
+	registerPortalRoutes(r.Group(mount+"/portal", withClaims))
 	mountConsole(r)
 
 	srv := &http.Server{Addr: ":8080", Handler: r}
@@ -133,6 +120,25 @@ func main() {
 
 func claimsOf(c *gin.Context) *Claims { return c.MustGet("claims").(*Claims) }
 
+// registerOpenRoutes 商户开放 API 全集。对外经网关（app token + scope），
+// 商户中心的调试工具在进程内直接走同一组处理函数（playground.go）。
+func registerOpenRoutes(v1 *gin.RouterGroup) {
+	v1.POST("/orders", handleCreateOrder)
+	v1.GET("/orders/:mchOrderNo", handleQueryOrder)
+	v1.POST("/orders/:mchOrderNo/close", handleCloseOrder)
+	v1.POST("/orders/:mchOrderNo/mock", handleMockOrder)
+	v1.POST("/refunds", handleCreateRefund)
+	v1.GET("/refunds/:mchRefundNo", handleQueryRefund)
+	v1.POST("/divisions", handleCreateDivision)
+	v1.GET("/divisions/:mchOrderNo", handleQueryDivision)
+	v1.POST("/orders/:mchOrderNo/settle", handleSettleOrder)
+	v1.POST("/withdrawals", handleCreateWithdrawal)
+	v1.GET("/withdrawals/:mchWithdrawNo", handleQueryWithdrawal)
+	v1.GET("/balance", handleBalance)
+	v1.GET("/bills/transactions", handleBillTransactions)
+	v1.GET("/bills/summary", handleBillSummary)
+}
+
 // registerAdminRoutes 管理接口全集；测试用自定义身份中间件挂同一组路由。
 func registerAdminRoutes(admin *gin.RouterGroup) {
 	admin.POST("/isv", handleCreateISV)
@@ -140,6 +146,10 @@ func registerAdminRoutes(admin *gin.RouterGroup) {
 	admin.POST("/merchants", handleCreateMerchant)
 	admin.GET("/merchants", handleListMerchants)
 	admin.PUT("/merchants/:mchNo", handleUpdateMerchant)
+	admin.POST("/merchants/:mchNo/portal", handleProvisionPortal)
+	admin.POST("/merchants/:mchNo/portal/password", handleResetPortalPassword)
+	admin.POST("/merchants/:mchNo/portal/app-secret", handleResetPortalAppSecret)
+	admin.PUT("/merchants/:mchNo/portal/state", handleSetPortalState)
 	admin.POST("/apps", handleCreateApp)
 	admin.GET("/apps", handleListApps)
 	admin.POST("/apps/:appId/secret", handleRotateAppSecret)
