@@ -121,7 +121,7 @@ func TestChannelConfig_viewMasksSecretsAndMergeKeepsOtherKeys(t *testing.T) {
 	}
 
 	mustCode(t, put(map[string]any{"ownerType": "isv", "ownerId": "ISV-CFG", "ifCode": "wxpay_partner", "params": map[string]string{
-		"sp_mchid": "1900000109", "sp_appid": "wx8888", "private_key": "-----BEGIN PRIVATE KEY-----TOPSECRET",
+		"sp_mchid": "1900000109", "sp_appid": "wx8888888888888888", "private_key": "-----BEGIN PRIVATE KEY-----TOPSECRET",
 		"api_v3_key": "0123456789abcdef0123456789abcdef", "legacy_token": "undeclared-secret",
 	}}), 200)
 	// 进件 / 证书同步写进来的键：合并保存不能把它们冲掉。
@@ -162,13 +162,13 @@ func TestChannelConfig_viewMasksSecretsAndMergeKeepsOtherKeys(t *testing.T) {
 
 	// 合并：只带改动的键。非空覆盖、空串删除、没带的（私钥、平台证书序列号）原样保留。
 	mustCode(t, put(map[string]any{"ownerType": "isv", "ownerId": "ISV-CFG", "ifCode": "wxpay_partner", "merge": true,
-		"params": map[string]string{"sp_appid": "wx9999", "legacy_token": ""}}), 200)
+		"params": map[string]string{"sp_appid": "  wx9999999999999999\n", "legacy_token": ""}}), 200)
 	got, err := loadChannelParams(ctx, "isv", "ISV-CFG", "wxpay_partner")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"sp_mchid": "1900000109", "sp_appid": "wx9999", "private_key": "-----BEGIN PRIVATE KEY-----TOPSECRET",
+		"sp_mchid": "1900000109", "sp_appid": "wx9999999999999999", "private_key": "-----BEGIN PRIVATE KEY-----TOPSECRET",
 		"api_v3_key": "0123456789abcdef0123456789abcdef", "wx_platform_cert_serial": "SERIAL-1",
 	}
 	if len(got) != len(want) {
@@ -178,6 +178,21 @@ func TestChannelConfig_viewMasksSecretsAndMergeKeepsOtherKeys(t *testing.T) {
 		if got[k] != v {
 			t.Fatalf("merged %s = %q, want %q", k, got[k], v)
 		}
+	}
+
+	// 格式不对的值（把“APPID”字样一起粘进来、商户号带字母）在保存时就拒绝，原值不动。
+	for _, params := range []map[string]string{
+		{"sp_appid": "APPIDwx9999999999999999"},
+		{"sp_appid": "wx9999"},
+		{"sp_mchid": "mch1900000109"},
+	} {
+		bad := put(map[string]any{"ownerType": "isv", "ownerId": "ISV-CFG", "ifCode": "wxpay_partner", "merge": true, "params": params})
+		if msg, _ := bad.Body["error"].(string); bad.Code != 400 || bad.Body["code"] != "channel_params_format" || !strings.Contains(msg, "格式不对") {
+			t.Fatalf("malformed %v accepted: %d %v", params, bad.Code, bad.Body)
+		}
+	}
+	if p, _ := loadChannelParams(ctx, "isv", "ISV-CFG", "wxpay_partner"); p["sp_appid"] != "wx9999999999999999" || p["sp_mchid"] != "1900000109" {
+		t.Fatalf("rejected save changed stored params: %v", p)
 	}
 
 	// 合并到还没有配置的渠道等于新建。

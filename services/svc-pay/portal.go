@@ -321,9 +321,9 @@ func handleResetPortalAppSecret(c *gin.Context) {
 }
 
 // handleSetPortalState PUT /admin/merchants/:mchNo/portal/state {state}：
-// 停用后该账号进不了商户中心；不影响商户系统用 appKey + 签名调开放 API（那个由商户 / 应用的启停控制）。
+// 同时启停商户中心与绑定的 appKey；本地状态还会拦截已签发 token 的支付 API 请求。
 func handleSetPortalState(c *gin.Context) {
-	claims, ok := requireOperator(c)
+	claims, ok := requirePortalAdmin(c)
 	if !ok {
 		return
 	}
@@ -338,9 +338,47 @@ func handleSetPortalState(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := db.Exec(c.Request.Context(), `UPDATE pay_merchant_portal SET state=$2, updated_at=now() WHERE mch_no=$1`,
-		mch.MchNo, in.State); err != nil {
+	ctx := c.Request.Context()
+	tx, err := db.Begin(ctx)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+		return
+	}
+	defer tx.Rollback(context.Background())
+	// 锁住绑定行，串行处理同一商户的启停；不要缓存旧 appKey。
+	p, err = scanPortal(tx.QueryRow(ctx, `SELECT `+portalCols+` FROM pay_merchant_portal WHERE mch_no=$1 FOR UPDATE`, mch.MchNo))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取绑定失败"})
+		return
+	}
+	if p.OpenAppKey != "" {
+		status := 0
+		if in.State == stateActive {
+			status = 1
+		}
+		st, raw, aerr := authAdmin(ctx, bearerToken(c), http.MethodPatch,
+			"/internal/auth/apps/"+url.PathEscape(p.OpenAppKey), map[string]int{"status": status})
+		if aerr != nil || st != http.StatusOK {
+			// 停用失败仍先关闭本地入口；返回失败让运营重试，同步 auth 的 token 签发状态。
+			// 启用失败则保持原状，绝不能提前放开本地访问。
+			if in.State == stateDisabled {
+				if _, e := tx.Exec(ctx, `UPDATE pay_merchant_portal SET state=$2, updated_at=now() WHERE mch_no=$1`, mch.MchNo, stateDisabled); e == nil {
+					if e = tx.Commit(ctx); e == nil {
+						c.JSON(http.StatusBadGateway, gin.H{"error": "商户中心及支付 API 已停用，但 appKey 停用未确认，请重试以同步账号服务", "code": "portal_state_sync_pending", "state": stateDisabled})
+						return
+					}
+				}
+			}
+			authFailed(c, "同步 appKey 状态，请重试", st, raw, aerr)
+			return
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE pay_merchant_portal SET state=$2, updated_at=now() WHERE mch_no=$1`, mch.MchNo, in.State); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "appKey 状态已同步，但本地保存失败，请重试"})
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "appKey 状态已同步，但本地保存失败，请重试"})
 		return
 	}
 	log.Printf(`{"event":"portal_state","mchNo":%q,"username":%q,"state":%q,"by":%q}`, mch.MchNo, p.Username, in.State, claims.Username)

@@ -110,7 +110,8 @@ func proportional(total, part, whole int64) int64 {
 // orderTerminalEffects 支付单进入终态后的统一动作：成功记手续费/返佣台账；成功或失败入下游通知。
 // tx 非空时与状态推进在同一事务里（见 finishOrder），任何一步失败整体回滚。
 func orderTerminalEffects(ctx context.Context, tx pgx.Tx, o Order, to string) error {
-	if to == orderSuccess {
+	// 沙箱等不动真钱的渠道不记台账：通知照发，账上不留一分不存在的钱。
+	if to == orderSuccess && !channel.Simulated(o.IfCode) {
 		if _, err := postLedger(ctx, tx, append(orderSettledEntries(o), agentShareEntries(o)...)); err != nil {
 			return fmt.Errorf("ledger order %s: %w", o.PayOrderID, err)
 		}
@@ -143,7 +144,7 @@ func refundTerminalEffects(ctx context.Context, tx pgx.Tx, r Refund, to string) 
 	if err := rollupRefund(ctx, q, r.PayOrderID, r.RefundAmount, success); err != nil {
 		return fmt.Errorf("rollup refund %s: %w", r.RefundOrderID, err)
 	}
-	if success {
+	if success && !channel.Simulated(r.IfCode) {
 		o, err := scanOrder(q.QueryRow(ctx, `SELECT `+orderCols+` FROM pay_order WHERE pay_order_id=$1`, r.PayOrderID))
 		if err != nil {
 			return err

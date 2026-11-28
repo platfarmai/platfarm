@@ -152,6 +152,20 @@ func ParamsOptional(ifCode string) bool {
 	return ok && p.ParamsOptional()
 }
 
+// simulated 不动真钱的渠道（可选能力，目前只有沙箱）。
+type simulated interface {
+	Simulated() bool
+}
+
+// Simulated 渠道是否不动真钱。这类渠道的订单不产生返佣、代理商分润，也不记任何台账：
+// 台账里的每一分都得对应真实资金，否则服务商会按不存在的钱给代理商结算。
+func Simulated(ifCode string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	s, ok := registry[ifCode].(simulated)
+	return ok && s.Simulated()
+}
+
 // Ways 返回某渠道支持的支付方式；渠道不存在返回 nil。
 func Ways(ifCode string) []string {
 	mu.RLock()

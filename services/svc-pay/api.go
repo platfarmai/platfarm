@@ -80,6 +80,16 @@ func signedApp(c *gin.Context, body []byte) (App, Merchant, bool) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "商户不存在或已停用"})
 		return App{}, Merchant{}, false
 	}
+	// app token 最长有效 1 小时；仅停止签发还不够，已停用门户的商户在此立即拒绝。
+	p, err := loadPortalByMch(c.Request.Context(), mch.MchNo)
+	if err != nil && !notFound(err) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "商户访问状态暂不可用"})
+		return App{}, Merchant{}, false
+	}
+	if err == nil && p.State != stateActive {
+		c.JSON(http.StatusForbidden, gin.H{"error": "商户登录与 API 访问已停用，请联系平台", "code": "portal_disabled"})
+		return App{}, Merchant{}, false
+	}
 	return app, mch, true
 }
 
@@ -172,7 +182,12 @@ func handleCreateOrder(c *gin.Context) {
 	}
 
 	exp := time.Now().Add(orderTTL)
-	rebateBps := isvRebateRate(ctx, mch.IsvNo)
+	// 不动真钱的渠道（沙箱）：手续费照算给商户看，但没有返佣、没有代理商分润。
+	simulated := channel.Simulated(passage.IfCode)
+	rebateBps := 0
+	if !simulated {
+		rebateBps = isvRebateRate(ctx, mch.IsvNo)
+	}
 	order := Order{
 		PayOrderID: newOrderID("P"), MchNo: mch.MchNo, IsvNo: mch.IsvNo, AppID: app.AppID,
 		MchType: mch.MchType, MchOrderNo: in.MchOrderNo, IfCode: passage.IfCode, WayCode: in.WayCode,
@@ -183,7 +198,9 @@ func handleCreateOrder(c *gin.Context) {
 		RebateRateBps: rebateBps, RebateAmount: feeAmount(in.Amount, rebateBps),
 	}
 	// 代理商分润随订单快照；算不出来就不下单——漏记的分润事后补不回来。
-	order.AgentNo, order.AgentAmount, order.AgentShares, err = orderAgentPlan(ctx, mch, in.Amount, rebateBps)
+	if !simulated {
+		order.AgentNo, order.AgentAmount, order.AgentShares, err = orderAgentPlan(ctx, mch, in.Amount, rebateBps)
+	}
 	if err != nil {
 		log.Printf("order agent plan %s: %v", mch.MchNo, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "建单失败"})

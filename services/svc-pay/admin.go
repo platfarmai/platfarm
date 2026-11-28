@@ -427,6 +427,10 @@ func handlePutChannelConfig(c *gin.Context) {
 	if denyOtherTenant(c, claims, tenant, "参数归属") {
 		return
 	}
+	if bad := channel.CheckParams(in.IfCode, in.OwnerType, in.Params); bad != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": bad, "code": "channel_params_format"})
+		return
+	}
 	if in.Merge {
 		if err := mergeChannelParams(c.Request.Context(), in.OwnerType, in.OwnerID, in.IfCode, in.Params, tenant); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})

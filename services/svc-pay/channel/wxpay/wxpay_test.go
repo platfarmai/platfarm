@@ -101,4 +101,17 @@ func TestFailFromBody(t *testing.T) {
 	if res.State != "FAIL" || res.ErrCode != "PARAM_ERROR" || res.ErrMsg != "缺参数" {
 		t.Fatalf("%+v", res)
 	}
+	// AppID 与商户号不匹配：微信的原话后面补上该去哪里处理，原话保留。
+	for _, raw := range []string{
+		`{"code":"APPID_MCHID_NOT_MATCH","message":"商户号mch_id与appid不匹配"}`,
+		`{"code":"PARAM_ERROR","message":"appid和mch_id不匹配，请检查后再试"}`,
+	} {
+		res = failFromBody([]byte(raw))
+		if res.State != "FAIL" || !strings.Contains(res.ErrMsg, "不匹配") || !strings.Contains(res.ErrMsg, "服务商 AppID") {
+			t.Fatalf("no hint for %s: %+v", raw, res)
+		}
+	}
+	if res = failFromBody([]byte(`{"code":"PARAM_ERROR","message":"sub_mch_id与sub_appid不匹配"}`)); !strings.Contains(res.ErrMsg, "子商户 AppID") {
+		t.Fatalf("sub appid hint: %+v", res)
+	}
 }

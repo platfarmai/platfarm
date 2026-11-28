@@ -46,6 +46,7 @@ func (s *sandbox) IfCode() string       { return IfCode }
 func (s *sandbox) FundMode() string     { return channel.FundDirect }
 func (s *sandbox) Ways() []string       { return append([]string(nil), ways...) }
 func (s *sandbox) ParamsOptional() bool { return true }
+func (s *sandbox) Simulated() bool      { return true }
 
 // ParamFields 沙箱没有渠道参数。
 func (s *sandbox) ParamFields() (provider, sub []channel.ParamField) { return nil, nil }

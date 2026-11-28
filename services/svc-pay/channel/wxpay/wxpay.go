@@ -42,11 +42,19 @@ func (p *partner) Ways() []string   { return []string{"WX_JSAPI", "WX_NATIVE"} }
 // ParamFields 直清与收付通读同一套参数键（doRequest / verifyKeyFor / encryptKey 共用）。
 func (p *partner) ParamFields() ([]channel.ParamField, []channel.ParamField) { return paramFields(true) }
 
+// 保存渠道参数时核对的格式。AppID 是 wx 加 16 位字母数字；商户号是纯数字。
+const (
+	appidPattern = `wx[0-9a-zA-Z]{16}`
+	appidFormat  = " wx 开头、共 18 位的字母数字（形如 wx1234567890abcdef）"
+	mchidPattern = `[0-9]{8,10}`
+	mchidFormat  = " 8–10 位纯数字"
+)
+
 func paramFields(directSettle bool) (provider, sub []channel.ParamField) {
 	provider = []channel.ParamField{
-		{Key: "sp_mchid", Label: "服务商商户号", Required: true,
+		{Key: "sp_mchid", Label: "服务商商户号", Required: true, Pattern: mchidPattern, Format: mchidFormat,
 			Hint: "你自己的微信支付服务商商户号，10 位数字。登录微信支付服务商平台（pay.weixin.qq.com）→ 账户中心 → 商户信息 查看。注意是服务商号，不是下面某个特约商户的号。"},
-		{Key: "sp_appid", Label: "服务商 AppID", Required: true,
+		{Key: "sp_appid", Label: "服务商 AppID", Required: true, Pattern: appidPattern, Format: appidFormat,
 			Hint: "与服务商商户号关联的 AppID，wx 开头共 18 位。只能是已认证的服务号、小程序或开放平台的移动应用，主体要与服务商一致；开放平台「网站应用」的 AppID 不能用。在 服务商平台 → 产品中心 → AppID 账号管理 →「我关联的 AppID 账号」里查看；没关联过先在那里点「关联 AppID」发起，再到公众平台 / 小程序后台确认。做公众号或小程序内支付（WX_JSAPI）时，下单传的 sp_openid 必须是用户在这个 AppID 下的 openid。"},
 		{Key: "mch_serial_no", Label: "商户 API 证书序列号", Required: true,
 			Hint: "40 位十六进制。服务商平台 → 账户中心 → API 安全 → 商户 API 证书 →「管理证书」里能看到。必须和下面的私钥是同一张证书，重新申请证书后两项要一起换。"},
@@ -64,9 +72,9 @@ func paramFields(directSettle bool) (provider, sub []channel.ParamField) {
 			Hint: "同上，由「同步平台证书」自动写入。平台证书会过期，进件或回调提示验签/加密失败时重新同步一次。"},
 	}
 	sub = []channel.ParamField{
-		{Key: "sub_mchid", Label: "特约商户号", Required: true,
+		{Key: "sub_mchid", Label: "特约商户号", Required: true, Pattern: mchidPattern, Format: mchidFormat,
 			Hint: "微信分配给这个商户的特约商户号，10 位数字。走本系统进件的，微信审核通过并签约后会自动写入，不用填；商户早就在你的服务商名下开过户的，把已有的号直接填进来即可，不必重新进件。"},
-		{Key: "sub_appid", Label: "子商户 AppID",
+		{Key: "sub_appid", Label: "子商户 AppID", Pattern: appidPattern, Format: appidFormat,
 			Hint: "选填。只有商户用自己的公众号 / 小程序收款、下单时传的是 channelExtra.sub_openid（用户在商户自己 AppID 下的 openid）才需要，填商户那个 wx 开头的 AppID，并且它要先在服务商平台与该特约商户号完成绑定。用服务商 AppID 下的 openid 下单则留空。"},
 	}
 	if directSettle {
@@ -570,7 +578,19 @@ func failFromBody(raw []byte) channel.Result {
 		Message string `json:"message"`
 	}
 	_ = json.Unmarshal(raw, &d)
-	return channel.Result{State: channel.StateFail, ErrCode: d.Code, ErrMsg: d.Message, Raw: string(raw)}
+	return channel.Result{State: channel.StateFail, ErrCode: d.Code, ErrMsg: d.Message + configHint(d.Code, d.Message), Raw: string(raw)}
+}
+
+// configHint 微信的报错只说“不匹配”，这里补一句该去哪里处理。只认配置类错误，其余原样透出。
+func configHint(code, message string) string {
+	m := strings.ToLower(message)
+	if code == "APPID_MCHID_NOT_MATCH" || (strings.Contains(m, "appid") && strings.Contains(m, "mch") && strings.Contains(m, "不匹配")) {
+		if strings.Contains(m, "sub_appid") || strings.Contains(m, "sub_mch") {
+			return "（平台配置问题：渠道参数里的「子商户 AppID」没有绑定到该特约商户号，需由服务商在微信支付服务商平台为该特约商户配置 AppID，或把该项留空）"
+		}
+		return "（平台配置问题：渠道参数里的「服务商 AppID」没有关联到服务商商户号。需在微信支付服务商平台「产品中心 → AppID 账号管理」关联该 AppID 并在公众平台 / 小程序后台确认，或改填已关联的 AppID）"
+	}
+	return ""
 }
 
 // ambiguousCodes 微信返回这些错误码时请求可能已被执行，或文档要求用原单号重试。

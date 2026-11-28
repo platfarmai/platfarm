@@ -145,6 +145,66 @@ func TestSandbox_payMockRefund(t *testing.T) {
 	}
 }
 
+// 沙箱不动真钱：即使服务商有返佣费率、商户挂了代理商，沙箱单也不带返佣与分润快照，
+// 支付成功和退款都不往台账里写一分钱；下游通知照发。
+func TestSandbox_noMoneyNoLedger(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	app, secret := seedSandboxApp(t, "ISV-SBL", "M-SBL", "A-SBL", "WX_NATIVE")
+	if _, err := db.Exec(ctx, `UPDATE pay_isv SET rebate_rate_bps=38 WHERE isv_no='ISV-SBL'`); err != nil {
+		t.Fatal(err)
+	}
+	agent := createTestAgent(t, "op", map[string]any{"agentNo": "G-SBL-1", "agentName": "一级", "isvNo": "ISV-SBL", "rateBps": 30})
+	mustCode(t, call(t, testRouter(), "op", http.MethodPut, "/api/pay/admin/merchants/M-SBL/agent", map[string]any{"agentNo": agent}), 200)
+	if !channel.Simulated(sandbox.IfCode) || channel.Simulated("stub_channel") || channel.Simulated("wxpay_partner") || channel.Simulated("nope") {
+		t.Fatal("only the sandbox channel is simulated")
+	}
+	r := partnerRouter()
+
+	created := callSigned(t, r, app.AppID, secret, http.MethodPost, "/api/pay/v1/orders", map[string]any{
+		"mchOrderNo": "SBL-1", "wayCode": "WX_NATIVE", "amount": 100000, "subject": "沙箱",
+		"notifyUrl": "https://partner.example.com/notify"})
+	mustCode(t, created, 200)
+	payOrderID := field(t, created, "order", "payOrderId").(string)
+	o, err := findOrder(ctx, payOrderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 手续费照算给商户看（联调要看到和上线后一样的字段），返佣与分润为零。
+	if o.FeeAmount != 600 || o.RebateRateBps != 0 || o.RebateAmount != 0 || o.AgentNo != "" || o.AgentAmount != 0 || len(o.AgentShares) != 0 {
+		t.Fatalf("沙箱单带了返佣或分润: fee=%d rebate=%d/%d agent=%q %d %+v",
+			o.FeeAmount, o.RebateRateBps, o.RebateAmount, o.AgentNo, o.AgentAmount, o.AgentShares)
+	}
+
+	mustCode(t, callSigned(t, r, app.AppID, secret, http.MethodPost, "/api/pay/v1/orders/SBL-1/mock", nil), 200)
+	onOrderTerminal(ctx, payOrderID, orderSuccess) // 补做终态动作也不记
+	refunded := callSigned(t, r, app.AppID, secret, http.MethodPost, "/api/pay/v1/refunds",
+		map[string]any{"mchOrderNo": "SBL-1", "mchRefundNo": "SBL-RF-1", "refundAmount": 30000})
+	mustCode(t, refunded, 200)
+	if field(t, refunded, "refund", "state") != refundSuccess {
+		t.Fatalf("refund: %v", refunded.Body)
+	}
+
+	var rows int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM pay_ledger WHERE mch_no='M-SBL' OR isv_no='ISV-SBL' OR agent_no=$1
+		OR ref_id=$2`, agent, payOrderID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("沙箱单写了 %d 行台账", rows)
+	}
+	if earned, clawed, _ := agentLedger(t, agent); earned != 0 || clawed != 0 {
+		t.Fatalf("沙箱单给代理商记了分润: earned=%d clawed=%d", earned, clawed)
+	}
+	// 其余终态动作不受影响：订单退款额度回写了，下游通知入队了。
+	if got, _ := findOrder(ctx, payOrderID); got.State != orderSuccess || got.RefundAmount != 30000 || got.RefundState != "partial" {
+		t.Fatalf("order after refund: state=%s refund=%d %s", got.State, got.RefundAmount, got.RefundState)
+	}
+	if state, _, _ := notifyRow(t, payOrderID, "pay"); state != "notifying" {
+		t.Fatalf("notify state = %s", state)
+	}
+}
+
 func TestSandbox_amountTailsDriveOutcome(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()

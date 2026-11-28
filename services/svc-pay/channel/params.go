@@ -1,6 +1,11 @@
 package channel
 
-import "sort"
+import (
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+)
 
 // ParamField 渠道参数的一个字段。管理端按它渲染表单；Secret 字段保存后不再回显原文。
 type ParamField struct {
@@ -10,6 +15,34 @@ type ParamField struct {
 	Required  bool   `json:"required"`
 	Multiline bool   `json:"multiline"`
 	Hint      string `json:"hint"`
+	// Pattern 非空时，保存的值必须整体匹配这个正则；Format 是给人看的格式说明（如“wx 开头共 18 位”）。
+	Pattern string `json:"pattern,omitempty"`
+	Format  string `json:"format,omitempty"`
+}
+
+// CheckParams 整理并核对一批要保存的渠道参数：就地去掉值两端的空白，再按字段声明的 Pattern 核对。
+// 空值（表示删除该键）和渠道没有声明的键不检查。返回给操作员看的说明，全部合规返回空串。
+// 拦的是填错格式的值——例如把“APPID”字样连同 AppID 一起粘贴进来——这类错误渠道只会回一句“不匹配”。
+func CheckParams(ifCode, ownerType string, params map[string]string) string {
+	var bad []string
+	for _, f := range Fields(ifCode, ownerType) {
+		v, ok := params[f.Key]
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		params[f.Key] = v
+		if v == "" || f.Pattern == "" {
+			continue
+		}
+		if matched, err := regexp.MatchString("^(?:"+f.Pattern+")$", v); err == nil && !matched {
+			bad = append(bad, fmt.Sprintf("「%s」格式不对，应为%s", f.Label, f.Format))
+		}
+	}
+	if len(bad) == 0 {
+		return ""
+	}
+	return strings.Join(bad, "；") + "。只填值本身，不要带字段名、空格或引号。"
 }
 
 // ParamDescriber 渠道声明自己读取哪些参数（可选能力）。

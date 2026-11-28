@@ -201,9 +201,16 @@ const resetAppSecret = () =>
 const setPortalState = (state) =>
   portalCall("state", async () => {
     const p = portalOf.value;
-    if (state === "disabled" && !(await pfConfirm(`停用 ${p.mchName} 的商户登录？这个账号将进不了商户中心；商家业务系统用 appKey 和签名密钥调支付接口不受影响（要停收款请停用商户）。`, { danger: true }))) return;
+    if (
+      state === "disabled" &&
+      !(await pfConfirm(
+        `停用 ${p.mchName} 的商户登录与接口？这个账号将进不了商户中心，它的 appKey 同时停用：商家业务系统立刻不能再下单、退款、查单（已经换到手的 accessToken 也会被拒绝）。已付款订单的入账和回调不受影响。`,
+        { danger: true },
+      ))
+    )
+      return;
     await api("PUT", "/admin/merchants/" + encodeURIComponent(p.mchNo) + "/portal/state", { state });
-    msg.value = `商户 ${p.mchNo} 的商户登录已${state === "active" ? "启用" : "停用"}`;
+    msg.value = `商户 ${p.mchNo} 的商户登录与 appKey 已${state === "active" ? "启用" : "停用"}`;
   });
 
 // 把这次签发的凭据拼成一段可以直接发给商家的文字。
@@ -430,13 +437,13 @@ onMounted(load);
           <pf-button size="sm" @click="seeAs(portalMch.mchNo)">以商户视角查看</pf-button>
           <pf-button size="sm" :loading="portalBusy === 'password'" @click="resetPassword">重置登录密码</pf-button>
           <pf-button v-if="portalMch.portal.appKey" size="sm" :loading="portalBusy === 'appSecret'" @click="resetAppSecret">换发 appSecret</pf-button>
-          <pf-button v-if="portalMch.portal.state === 'active'" size="sm" variant="ghost" :loading="portalBusy === 'state'" @click="setPortalState('disabled')">停用登录</pf-button>
-          <pf-button v-else size="sm" variant="ghost" :loading="portalBusy === 'state'" @click="setPortalState('active')">启用登录</pf-button>
+          <pf-button v-if="portalMch.portal.state === 'active'" size="sm" variant="ghost" :loading="portalBusy === 'state'" @click="setPortalState('disabled')">停用登录与接口</pf-button>
+          <pf-button v-else size="sm" variant="primary" :loading="portalBusy === 'state'" @click="setPortalState('active')">启用登录与接口</pf-button>
           <pf-button size="sm" variant="ghost" @click="portalOf = null">收起</pf-button>
         </div>
         <p class="pf-muted m-0">
           商家忘了密码点「重置登录密码」；appSecret 遗失或泄露点「换发 appSecret」，新值都只显示一次。应用的签名密钥由商家登录后自己换发，也可以在「应用·通道」页替它换。
-          「停用登录」只是不让这个账号进商户中心，不影响商家系统收款。开通、重置、换发需要平台管理员身份。
+          「停用登录与接口」会同时关掉商户中心登录和这个商户的 appKey：商家进不了后台，它的业务系统也立刻不能下单、退款、查单；已经付款的订单照常入账、照常回调。开通、重置、换发、启停都需要平台管理员身份。
         </p>
       </template>
     </div>

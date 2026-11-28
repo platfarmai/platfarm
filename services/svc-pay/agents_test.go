@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"platfarm/svc-pay/channel"
 )
 
 func chainOf(isvNo string, rates ...int) []Agent {
@@ -218,11 +220,16 @@ func agentLedger(t *testing.T, agentNo string) (earned, clawed, paid int64) {
 	return
 }
 
-// 下单 → 支付成功 → 分三笔退完 → 结算，全程走开放 API 与真实的终态路径（sandbox 渠道）。
+// 下单 → 支付成功 → 分三笔退完 → 结算，全程走开放 API 与真实的终态路径。
+// 用桩渠道而不是沙箱：沙箱不动真钱，不产生分润（见 TestSandbox_noMoneyNoLedger）。
 func TestAgents_CommissionLifecycle(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
-	app, secret := seedSandboxApp(t, "ISV-AGC", "M-AGC", "A-AGC", "WX_NATIVE")
+	stub.resetLifecycle()
+	defer stub.resetLifecycle()
+	app, secret := seedStubMerchant(t, "ISV-AGC", "M-AGC", "A-AGC")
+	mustCode(t, call(t, testRouter(), "op", http.MethodPut, "/api/pay/admin/passages",
+		map[string]any{"appId": app.AppID, "ifCode": "stub_channel", "wayCode": "STUB_PAY", "rateBps": 60}), 200)
 	if _, err := db.Exec(ctx, `UPDATE pay_isv SET rebate_rate_bps=38 WHERE isv_no='ISV-AGC'`); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +240,7 @@ func TestAgents_CommissionLifecycle(t *testing.T) {
 	mustCode(t, call(t, admin, "op", http.MethodPut, "/api/pay/admin/merchants/M-AGC/agent", map[string]any{"agentNo": l3}), 200)
 
 	created := callSigned(t, partner, app.AppID, secret, http.MethodPost, "/api/pay/v1/orders", map[string]any{
-		"mchOrderNo": "AGC-1", "wayCode": "WX_NATIVE", "amount": 100000, "subject": "分润"})
+		"mchOrderNo": "AGC-1", "wayCode": "STUB_PAY", "amount": 100000, "subject": "分润"})
 	mustCode(t, created, 200)
 	// 商户拿到的订单里不带服务商与代理商之间的分润。
 	orderJSON := created.Body["order"].(map[string]any)
@@ -260,7 +267,13 @@ func TestAgents_CommissionLifecycle(t *testing.T) {
 	mustCode(t, call(t, admin, "op", http.MethodPut, "/api/pay/admin/agents/"+l3, map[string]any{"rateBps": 1}), 200)
 	mustCode(t, call(t, admin, "op", http.MethodPut, "/api/pay/admin/merchants/M-AGC/agent", map[string]any{"agentNo": ""}), 200)
 
-	mustCode(t, callSigned(t, partner, app.AppID, secret, http.MethodPost, "/api/pay/v1/orders/AGC-1/mock", nil), 200)
+	// 渠道查单确认已支付。
+	setStub(func(s *stubChannel) {
+		s.queryResult = channel.Result{State: channel.StateSuccess, ChannelOrderNo: "T-AGC-1", Amount: 100000}
+	})
+	if paid, err := reconcileOrder(ctx, o); err != nil || paid.State != orderSuccess {
+		t.Fatalf("支付确认: %s %v", paid.State, err)
+	}
 	onOrderTerminal(ctx, payOrderID, orderSuccess) // 重放不重复记
 	for _, no := range []string{l1, l2, l3} {
 		if earned, clawed, paid := agentLedger(t, no); earned != 100 || clawed != 0 || paid != 0 {

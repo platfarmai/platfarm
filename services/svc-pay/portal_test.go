@@ -20,11 +20,14 @@ type authStub struct {
 	apps     map[string]int // appKey → 已签发次数
 	nextID   int
 	failApps bool
+	// appStatus appKey → 最近一次被改成的 status（1 启用 / 0 停用）；failAppState 让改状态的请求失败。
+	appStatus    map[string]int
+	failAppState bool
 }
 
 func useAuthStub(t *testing.T, firstUserID int) *authStub {
 	t.Helper()
-	s := &authStub{users: map[string]int{}, apps: map[string]int{}, nextID: firstUserID}
+	s := &authStub{users: map[string]int{}, apps: map[string]int{}, appStatus: map[string]int{}, nextID: firstUserID}
 	prev := authAdmin
 	authAdmin = s.handle
 	t.Cleanup(func() { authAdmin = prev })
@@ -71,6 +74,20 @@ func (s *authStub) handle(_ context.Context, userToken, method, path string, bod
 		return reply(200, map[string]any{"appKey": key, "appSecret": fmt.Sprintf("as-%s-%d", key, s.apps[key])})
 	case method == http.MethodPost && strings.HasSuffix(path, "/reset-password"):
 		return reply(200, map[string]any{"password": "pw-reset"})
+	case method == http.MethodPatch && strings.HasPrefix(path, "/internal/auth/apps/"):
+		if s.failAppState {
+			return reply(500, map[string]string{"error": "boom"})
+		}
+		key := strings.TrimPrefix(path, "/internal/auth/apps/")
+		if s.apps[key] == 0 {
+			return reply(404, map[string]string{"error": "not found"})
+		}
+		var in struct{ Status *int }
+		_ = json.Unmarshal(raw, &in)
+		if in.Status != nil {
+			s.appStatus[key] = *in.Status
+		}
+		return reply(200, map[string]any{"ok": true})
 	case method == http.MethodPatch && strings.HasPrefix(path, "/internal/auth/users/"):
 		return reply(200, map[string]any{"ok": true})
 	}
@@ -238,15 +255,56 @@ func TestPortal_provisionAndScope(t *testing.T) {
 	}
 	mustCode(t, call(t, r, "admin", http.MethodPost, "/api/pay/admin/merchants/M-PT2/portal/password", nil), 404)
 
-	// 停用 → 门户 403；恢复 → 可用。
-	mustCode(t, call(t, r, "op", http.MethodPut, base+"/state", map[string]any{"state": "gone"}), 400)
-	mustCode(t, call(t, r, "op", http.MethodPut, base+"/state", map[string]any{"state": stateDisabled}), 200)
+	// 停用：门户 403，绑定的 appKey 在账号服务里一并停用，已经换到手的 token 也调不动支付接口。
+	// 启停要改 appKey，所以和开通一样只有平台管理员能做。
+	openAPI := partnerRouter()
+	queryOrder := func() resp {
+		return callSigned(t, openAPI, appID, plain, http.MethodGet, "/api/pay/v1/orders/NO-SUCH-ORDER", nil)
+	}
+	mustCode(t, queryOrder(), 404) // 签名通过，只是没有这笔单
+	mustCode(t, call(t, r, "admin", http.MethodPut, base+"/state", map[string]any{"state": "gone"}), 400)
+	mustCode(t, call(t, r, "op", http.MethodPut, base+"/state", map[string]any{"state": stateDisabled}), 403)
+	mustCode(t, call(t, r, "admin", http.MethodPut, base+"/state", map[string]any{"state": stateDisabled}), 200)
 	if off := call(t, r, "pt1", http.MethodGet, "/api/pay/portal/me", nil); off.Code != 403 || off.Body["code"] != "portal_disabled" {
 		t.Fatalf("disabled: %d %v", off.Code, off.Body)
 	}
 	mustCode(t, call(t, r, "pt1", http.MethodPost, "/api/pay/portal/apps/"+appID+"/secret", nil), 403)
-	mustCode(t, call(t, r, "op", http.MethodPut, base+"/state", map[string]any{"state": stateActive}), 200)
+	if st, ok := auth.appStatus["mch-m-pt1"]; !ok || st != 0 {
+		t.Fatalf("停用登录要把 appKey 一起停掉: %v %v", auth.appStatus, auth.calls)
+	}
+	if off := queryOrder(); off.Code != 403 || off.Body["code"] != "portal_disabled" {
+		t.Fatalf("已停用商户的支付接口仍可调用: %d %v", off.Code, off.Body)
+	}
+
+	// 启用时账号服务不通：本地不能先放开。
+	auth.failAppState = true
+	mustCode(t, call(t, r, "admin", http.MethodPut, base+"/state", map[string]any{"state": stateActive}), 502)
+	mustCode(t, call(t, r, "pt1", http.MethodGet, "/api/pay/portal/me", nil), 403)
+	mustCode(t, queryOrder(), 403)
+	auth.failAppState = false
+
+	// 恢复：门户、appKey、支付接口都回来。
+	mustCode(t, call(t, r, "admin", http.MethodPut, base+"/state", map[string]any{"state": stateActive}), 200)
 	mustCode(t, call(t, r, "pt1", http.MethodGet, "/api/pay/portal/me", nil), 200)
+	if auth.appStatus["mch-m-pt1"] != 1 {
+		t.Fatalf("启用登录要把 appKey 一起启用: %v", auth.appStatus)
+	}
+	mustCode(t, queryOrder(), 404)
+
+	// 停用时账号服务不通：本地先关（商户立刻进不来、调不动），并告诉运营 appKey 那一半还没确认。
+	auth.failAppState = true
+	pending := call(t, r, "admin", http.MethodPut, base+"/state", map[string]any{"state": stateDisabled})
+	if pending.Code != 502 || pending.Body["code"] != "portal_state_sync_pending" {
+		t.Fatalf("disable with auth down: %d %v", pending.Code, pending.Body)
+	}
+	mustCode(t, call(t, r, "pt1", http.MethodGet, "/api/pay/portal/me", nil), 403)
+	mustCode(t, queryOrder(), 403)
+	auth.failAppState = false
+	// 再点一次补齐。
+	mustCode(t, call(t, r, "admin", http.MethodPut, base+"/state", map[string]any{"state": stateDisabled}), 200)
+	if auth.appStatus["mch-m-pt1"] != 0 {
+		t.Fatalf("重试后 appKey 应已停用: %v", auth.appStatus)
+	}
 }
 
 // 开通到一半（账号建好了、appKey 没签成）：初始密码必须交到操作员手里，再点一次只补没做完的。
